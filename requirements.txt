@@ -1,0 +1,11 @@
+# Install before first run: pip install -r requirements.txt
+# Floors are the proven-working minimums; upper caps stop a redeploy from
+# silently pulling a breaking major (e.g. pydantic 3, mcp 2) months later.
+mcp[cli]>=1.0.0,<2.0.0
+anyio>=4.0.0,<5.0.0
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+httpx>=0.27.0,<1.0.0
+pydantic>=2.0.0,<3.0.0
+python-dotenv>=1.0.0,<2.0.0
+python-multipart>=0.0.12,<1.0.0

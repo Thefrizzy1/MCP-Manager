@@ -1,0 +1,37 @@
+services:
+  plutus-mcp:
+    build: .
+    container_name: plutus-mcp
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+      - "8766:8766"
+    volumes:
+      # Docker socket — read-only by default (set DOCKER_WRITE_ENABLED=true to allow write ops)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # NAS paths for filesystem tools
+      - /srv/dev-disk-by-uuid-YOUR_UUID/01_Offene_Jobs:/01_Offene_Jobs:ro
+      # Config + runtime state persistence (health baseline, recent runs,
+      # beta cache, uploaded CA). Without the data mount this state is lost on
+      # every container rebuild.
+      - ./config:/app/config
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Berlin
+    healthcheck:
+      # Probes the UI server-health endpoint, which in turn verifies the MCP
+      # process is alive (returns 503 if not). In MCP-only mode (UI_ENABLED=false)
+      # port 8766 isn't served, so the check passes trivially instead of flapping.
+      test: ["CMD-SHELL", "[ \"$UI_ENABLED\" = \"false\" ] || curl -f http://localhost:8766/server/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - plutus_mcp_net
+
+networks:
+  plutus_mcp_net:
+    driver: bridge
