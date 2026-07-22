@@ -1,0 +1,75 @@
+# Plutus MCP Server (MCP-Manager) — Docker Compose
+#
+# Pull & run (no local build) — uses the pre-built image from GHCR:
+#   docker compose pull && docker compose up -d
+# Or build locally instead:
+#   docker compose up -d --build
+#
+# Quick start:
+#   1. cp .env.example .env
+#   2. Edit .env — at minimum set UI_PASSWORD (the rest are optional service
+#      integrations; empty ones just stay inactive).
+#   3. (optional) Uncomment a host path under "volumes" to expose it to the
+#      filesystem tools, and add the same in-container path to
+#      FILESYSTEM_ALLOWED_PATHS in .env.
+#   4. docker compose up -d
+#
+#   Dashboard: http://<host>:8766/ui   ·   MCP: http://<host>:8765/mcp
+#   Keep both ports on LAN / Tailscale only — never public.
+
+services:
+  plutus-mcp:
+    # Pre-built image (GHCR). `docker compose pull` fetches this; `--build` uses
+    # the local Dockerfile and tags it the same.
+    image: ghcr.io/thefrizzy1/mcp-manager:latest
+    build: .
+    container_name: plutus-mcp
+    restart: unless-stopped
+    ports:
+      - "8765:8765" # MCP endpoint (streamable HTTP)
+      - "8766:8766" # Web dashboard
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Berlin
+      # Agent runner: either mount ~/.claude below (interactive login, run once)
+      # or bill per-token by uncommenting:
+      # - ANTHROPIC_API_KEY=sk-ant-...
+    volumes:
+      # Docker socket — read-only by default. Powers the Docker/OMV tools.
+      # Set DOCKER_WRITE_ENABLED=true in .env to allow start/stop/restart.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+      # Persistent state: health baseline, recent runs, beta cache, uploaded CA,
+      # agent runs, schedules. Without these, that state is lost on rebuild.
+      - ./config:/app/config
+      - ./data:/app/data
+
+      # Claude Code login for the headless agent runner — survives restarts.
+      # Log in once:  docker exec -it plutus-mcp claude   (follow the OAuth link)
+      - ~/.claude:/root/.claude
+
+      # ── Optional: expose host folders to the filesystem tools ──────────────
+      # Mount any host path you want the filesystem tools to reach, then add
+      # the in-container path to FILESYSTEM_ALLOWED_PATHS in .env. Example
+      # (replace with your own NAS path / UUID):
+      # - /srv/dev-disk-by-uuid-XXXX/MyShare:/data/myshare:ro
+    healthcheck:
+      # Probes the UI server-health endpoint, which also verifies the MCP
+      # process is alive (503 if not). In MCP-only mode (UI_ENABLED=false)
+      # port 8766 isn't served, so the check passes trivially instead of flapping.
+      test:
+        [
+          "CMD-SHELL",
+          '[ "$UI_ENABLED" = "false" ] || curl -f http://localhost:8766/server/health',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - plutus_mcp_net
+
+networks:
+  plutus_mcp_net:
+    driver: bridge

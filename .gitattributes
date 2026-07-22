@@ -1,0 +1,7 @@
+# Normalize line endings to LF for text files. Shell/YAML/Dockerfiles in
+# particular must stay LF so the container build and healthcheck work.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.svg text eol=lf

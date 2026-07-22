@@ -1,0 +1,29 @@
+# Keep secrets, runtime state, and cruft out of the image (COPY . .).
+.env
+.env.*
+!.env.example
+data/
+config/
+*.pem
+
+# VCS / editor
+.git/
+.gitignore
+.cursor/
+.vscode/
+.idea/
+
+# Python caches & test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+tests/
+htmlcov/
+.coverage
+
+# Docs/dev-only — not needed at runtime
+README.md
+requirements-dev.txt
+pytest.ini
