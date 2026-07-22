@@ -24,11 +24,14 @@ class PlutusScheduler:
         self._available = False
         self._run_agent: Callable[[str, str], None] | None = None
         self._run_tool: Callable[[str, dict], object] | None = None
+        self._run_task: Callable[[str], None] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
-    def start(self, *, run_agent: Callable[[str, str], None], run_tool: Callable[[str, dict], object]) -> bool:
+    def start(self, *, run_agent: Callable[[str, str], None], run_tool: Callable[[str, dict], object],
+              run_task: Callable[[str], None] | None = None) -> bool:
         self._run_agent = run_agent
         self._run_tool = run_tool
+        self._run_task = run_task
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
         except Exception as e:  # dependency missing
@@ -82,6 +85,8 @@ class PlutusScheduler:
             try:
                 if kind == "agent" and self._run_agent:
                     self._run_agent(payload.get("prompt", ""), f"sched:{name}")
+                elif kind == "task" and self._run_task:
+                    self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:
                     self._run_tool(payload.get("tool", ""), payload.get("params", {}))
             except Exception as e:

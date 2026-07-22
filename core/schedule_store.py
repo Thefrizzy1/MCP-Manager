@@ -14,7 +14,7 @@ import time
 import uuid
 from pathlib import Path
 
-VALID_KINDS = ("agent", "tool")
+VALID_KINDS = ("agent", "tool", "task")
 
 # Structural 5-field cron check (offline). APScheduler does the authoritative
 # parse when a job is scheduled; this catches obvious mistakes early.
@@ -72,6 +72,9 @@ def _normalize(entry: dict) -> dict:
             raise ValueError("tool schedule requires payload.tool")
         if not isinstance(payload.get("params", {}), dict):
             raise ValueError("payload.params must be an object")
+    elif kind == "task":
+        if not str(payload.get("task_id", "")).strip():
+            raise ValueError("task schedule requires payload.task_id")
     return {
         "id": entry.get("id") or uuid.uuid4().hex[:12],
         "name": (entry.get("name") or "").strip() or f"{kind} schedule",

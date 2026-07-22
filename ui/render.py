@@ -783,6 +783,10 @@ POST /api/v1/health/regression-check?notify=1   (schedule this: alerts on newly-
       </div>
     </div>
 
+    <h3 class="agent-h3" style="margin-top:14px">Playbooks <span class="phint">reusable research tasks that grow a knowledge library — run or schedule</span></h3>
+    <div class="mf" style="max-width:340px"><label>Knowledge library folder (Obsidian folder or path the agents read/write)</label><input type="text" id="agent-library" class="cf-input" placeholder="research" onchange="saveAgentLibrary()"></div>
+    <div id="playbook-list"><span class="phint">Loading…</span></div>
+
     <h3 class="agent-h3" style="margin-top:14px">Recent agent runs <span class="phint" id="agent-cost"></span></h3>
     <div id="agent-runs"><span class="phint">No runs yet.</span></div>
   </div>

@@ -5,6 +5,12 @@ Notable changes to Plutus. Dates are approximate; this project is single-maintai
 ## Unreleased — agents, scheduler & pullable image
 
 ### Features
+- **Research playbooks + knowledge library** (`core/agent_tasks.py`) — named,
+  editable research tasks seeded with a starter set (competitor research, AI/ComfyUI
+  trend scan, channel audit, script draft, weekly digest). Each is instructed to read
+  an accumulating knowledge library first, then add/refine notes — so scheduled runs
+  compound. Schedules can reference a playbook by id (schedule kind `task`). Endpoints
+  `/api/v1/agent/tasks*`; surfaced in the Agents panel with a configurable library folder.
 - **Headless agent runner** (`core/agent_runner.py`) — runs Claude Code
   (`claude -p --output-format stream-json`) as a subprocess and hands it Plutus's
   own MCP endpoint, so an agent can operate all ~193 homelab tools. Live SSE

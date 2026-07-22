@@ -83,6 +83,7 @@ from core.observability import Telemetry
 from core.rate_limit import LoginRateLimiter
 from core.env_store import read_env, update_env
 from core import agent_runner
+from core import agent_tasks
 from core import schedule_store
 from core.scheduler import PlutusScheduler, invoke_tool_sync
 from core.result_status import text_looks_successful
@@ -204,12 +205,29 @@ def _run_tool_scheduled(tool_name: str, params: dict):
     return invoke_tool_sync(tools.raw_manager, tool_name, params)
 
 
+def _run_task_bg(task_id: str) -> None:
+    """Resolve a playbook to its (rendered) prompt and run it as an agent."""
+    task = agent_tasks.get_task(ROOT, task_id)
+    if not task:
+        log.warning("Scheduled task %s not found", task_id)
+        return
+    cfg = agent_runner.load_agent_config(ROOT)
+    prompt = agent_tasks.render_prompt(
+        task["prompt"],
+        library=cfg.get("library", "research"),
+        date=time.strftime("%Y-%m-%d"),
+    )
+    _run_agent_bg(prompt, task.get("name", "playbook")[:40])
+
+
 @asynccontextmanager
 async def _ui_lifespan(_app: FastAPI):
+    ensure_data_dir(ROOT)
+    agent_tasks.seed_if_empty(ROOT)
     loop_task = asyncio.create_task(
         beta_cache_background_loop(ROOT, lambda: tools.raw_manager, _services_live)
     )
-    agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled)
+    agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled, run_task=_run_task_bg)
     yield
     agent_scheduler.shutdown()
     loop_task.cancel()
@@ -387,11 +405,53 @@ class AgentConfigBody(BaseModel):
     give_plutus_tools: bool | None = None
     timeout_min: int | None = None
     max_cost_usd: float | None = None
+    library: str | None = None
 
 
 @ui_app.post("/api/v1/agent/config")
 async def api_v1_agent_config(body: AgentConfigBody, creds=Depends(verify_auth)):
     return {"ok": True, "config": agent_runner.save_agent_config(ROOT, body.model_dump(exclude_none=True))}
+
+
+# ─── Playbooks (reusable research tasks that build a knowledge library) ────────
+
+@ui_app.get("/api/v1/agent/tasks")
+async def api_v1_agent_tasks(creds=Depends(verify_auth)):
+    return {"tasks": agent_tasks.seed_if_empty(ROOT)}
+
+
+class AgentTaskBody(BaseModel):
+    id: str | None = None
+    name: str = Field(..., min_length=1, max_length=80)
+    description: str = ""
+    prompt: str = Field(..., min_length=1, max_length=20000)
+
+
+@ui_app.post("/api/v1/agent/tasks")
+async def api_v1_agent_tasks_save(body: AgentTaskBody, creds=Depends(verify_auth)):
+    try:
+        task = agent_tasks.upsert_task(ROOT, body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "task": task, "tasks": agent_tasks.load_tasks(ROOT)}
+
+
+@ui_app.delete("/api/v1/agent/tasks/{tid}")
+async def api_v1_agent_tasks_delete(tid: str, creds=Depends(verify_auth)):
+    if not agent_tasks.delete_task(ROOT, tid):
+        raise HTTPException(404, "playbook not found")
+    return {"ok": True, "tasks": agent_tasks.load_tasks(ROOT)}
+
+
+@ui_app.post("/api/v1/agent/tasks/{tid}/run")
+async def api_v1_agent_tasks_run(tid: str, creds=Depends(verify_auth)):
+    task = agent_tasks.get_task(ROOT, tid)
+    if not task:
+        raise HTTPException(404, "playbook not found")
+    if agent_runner._current["running"]:
+        return JSONResponse({"ok": False, "error": "An agent run is already in progress."}, status_code=409)
+    _run_task_bg(tid)
+    return {"ok": True}
 
 
 class AgentRunBody(BaseModel):

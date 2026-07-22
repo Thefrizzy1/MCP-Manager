@@ -29,6 +29,20 @@ def test_add_tool_schedule(tmp_path):
     assert entry["kind"] == "tool"
 
 
+def test_add_task_schedule(tmp_path):
+    entry = ss.add_schedule(tmp_path, {
+        "kind": "task", "cron": "0 6 * * *",
+        "payload": {"task_id": "competitor-research"},
+    })
+    assert entry["kind"] == "task"
+    assert entry["payload"]["task_id"] == "competitor-research"
+
+
+def test_task_requires_task_id(tmp_path):
+    with pytest.raises(ValueError):
+        ss.add_schedule(tmp_path, {"kind": "task", "cron": "0 6 * * *", "payload": {}})
+
+
 def test_agent_requires_prompt(tmp_path):
     with pytest.raises(ValueError):
         ss.add_schedule(tmp_path, {"kind": "agent", "cron": "0 3 * * *", "payload": {}})

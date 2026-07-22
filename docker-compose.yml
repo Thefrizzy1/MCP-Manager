@@ -58,10 +58,13 @@ services:
       # Probes the UI server-health endpoint, which also verifies the MCP
       # process is alive (503 if not). In MCP-only mode (UI_ENABLED=false)
       # port 8766 isn't served, so the check passes trivially instead of flapping.
+      # $$ escapes Compose interpolation so the CONTAINER shell evaluates
+      # UI_ENABLED at healthcheck runtime (a single $ would be substituted by
+      # Compose at parse time and the container would never see it).
       test:
         [
           "CMD-SHELL",
-          '[ "$UI_ENABLED" = "false" ] || curl -f http://localhost:8766/server/health',
+          '[ "$$UI_ENABLED" = "false" ] || curl -f http://localhost:8766/server/health',
         ]
       interval: 30s
       timeout: 10s

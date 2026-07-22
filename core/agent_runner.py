@@ -56,6 +56,7 @@ DEFAULT_AGENT_CONFIG = {
     "give_plutus_tools": True,        # expose Plutus's own MCP tools to the agent
     "timeout_min": 20,
     "max_cost_usd": 2.0,
+    "library": "research",            # {{LIBRARY}} folder playbooks read/write (Obsidian folder or path)
 }
 
 
