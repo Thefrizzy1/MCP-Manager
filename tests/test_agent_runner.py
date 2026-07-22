@@ -69,6 +69,23 @@ def test_agent_config_roundtrip(tmp_path):
     assert ar.load_agent_config(tmp_path)["model"] == "claude-opus-4-8"
 
 
+def test_auth_info_api_key_mode(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xyz")
+    info = ar.auth_info()
+    assert info["mode"] == "api_key"
+    assert info["api_key"] is True
+
+
+def test_auth_info_none_when_unauthenticated(monkeypatch, tmp_path):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # Point HOME at an empty dir so no ~/.claude login is detected.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows expanduser
+    info = ar.auth_info()
+    assert info["mode"] in ("none", "subscription")  # 'none' on a clean home
+    assert info["api_key"] is False
+
+
 def test_write_plutus_mcp_config(tmp_path):
     import json
     p = ar.write_plutus_mcp_config(tmp_path, mcp_url="http://127.0.0.1:8765/mcp", token="secret")

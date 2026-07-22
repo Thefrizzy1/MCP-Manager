@@ -165,6 +165,26 @@ def total_cost(root: Path) -> float:
     return round(sum((r.get("cost_usd") or 0) for r in list_runs(root, 9999)), 4)
 
 
+def auth_info() -> dict:
+    """Which billing mode the agent will use.
+
+    - ANTHROPIC_API_KEY set  -> pay-per-token API billing.
+    - otherwise, a Claude Code login (~/.claude) -> your subscription plan's usage.
+    """
+    api_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    claude_home = Path(os.path.expanduser("~/.claude"))
+    logged_in = (claude_home / ".credentials.json").exists() or (
+        claude_home.is_dir() and any(claude_home.glob("*.json"))
+    )
+    if api_key:
+        mode = "api_key"          # bills the Anthropic API per token
+    elif logged_in:
+        mode = "subscription"     # uses your Claude plan's usage
+    else:
+        mode = "none"             # not authenticated yet
+    return {"mode": mode, "api_key": api_key, "logged_in": logged_in}
+
+
 def status(root: Path) -> dict:
     return {
         "running": _current["running"],

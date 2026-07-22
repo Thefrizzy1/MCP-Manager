@@ -27,22 +27,33 @@ State lives in `data/agent_runs/`, `data/agent_config.json`, and
 
 ## 2. One-time setup (container)
 
-The pre-built image already includes Node.js and Claude Code. You only need to
-authenticate the agent once:
+The image includes Node.js and Claude Code. Authenticate the agent once — and the
+method you choose decides how it's billed:
 
-**Option A — interactive login (uses your Claude plan's automated-usage credit):**
+**Option A — log in with your Claude subscription (recommended; uses your plan, not
+API credit):**
 
 ```bash
-docker exec -it plutus-mcp claude      # follow the OAuth link once
+docker exec -it plutus-mcp claude      # follow the OAuth link once, with your Pro/Max account
 ```
 
-The login persists because `~/.claude` is mounted in `docker-compose.yml`.
+`claude -p` then draws from your **plan's Claude Code usage** — the same allowance
+you use interactively — so scheduling playbooks overnight uses the usage window
+you're not touching during the day. The login persists via the `~/.claude` mount.
+**Do not set `ANTHROPIC_API_KEY`** in this mode.
 
-**Option B — API key (bills per token):** set `ANTHROPIC_API_KEY=sk-ant-…` in the
-compose `environment:` block.
+**Option B — API key (pay-per-token):** set `ANTHROPIC_API_KEY=sk-ant-…` in the
+compose `environment:` block. This **overrides** the login and bills the Anthropic
+API per token. Only use it if you specifically want that.
 
-If neither is set, agent runs return *"claude not found / not logged in"* and
+The Agents panel shows which mode is active (green *"using your Claude plan"* vs a
+warning). If neither is set, runs return *"claude not found / not logged in"* and
 nothing else breaks.
+
+> **Note on "usage I don't use at night":** the plan's limit is a rolling window /
+> weekly cap, not banked per-session credit — but running agents while you're asleep
+> means that shared allowance is free for them. Keep the `max_cost_usd`/`timeout_min`
+> guards sensible so a job can't run away with your window.
 
 > **Cost:** agent runs spend real credit/tokens. `data/agent_config.json` has a
 > `max_cost_usd` guard (flags over-budget runs) and a `timeout_min`. Keep

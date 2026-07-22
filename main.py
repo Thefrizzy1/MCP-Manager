@@ -390,6 +390,7 @@ async def api_v1_agent_status(creds=Depends(verify_auth)):
     st["config"] = agent_runner.load_agent_config(ROOT)
     st["claude_available"] = shutil.which("claude") is not None
     st["scheduler_available"] = agent_scheduler.available
+    st["auth"] = agent_runner.auth_info()
     return st
 
 
