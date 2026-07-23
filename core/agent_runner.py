@@ -56,8 +56,33 @@ DEFAULT_AGENT_CONFIG = {
     "give_plutus_tools": True,        # expose Plutus's own MCP tools to the agent
     "timeout_min": 20,
     "max_cost_usd": 2.0,
-    "library": "research",            # {{LIBRARY}} folder playbooks read/write (Obsidian folder or path)
+    # Where playbooks read/write their knowledge library:
+    "output_mode": "obsidian",        # "obsidian" | "filesystem"
+    "obsidian_folder": "research",     # vault-relative folder when output_mode=obsidian
+    "fs_library_path": "/data/library",  # host-mounted path when output_mode=filesystem
+    # Optional ntfy notification after each run:
+    "notify_enabled": False,
+    "notify_on": "all",               # "all" | "error"
 }
+
+
+def resolve_library(cfg: dict) -> tuple[str, str]:
+    """Return ({{LIBRARY}} folder, {{OUTPUT_HINT}}) for the configured destination."""
+    if cfg.get("output_mode") == "filesystem":
+        lib = (cfg.get("fs_library_path") or "/data/library").rstrip("/")
+        hint = (
+            "Persist notes as Markdown files under this path using the filesystem tools "
+            "(fs_write_file, fs_read_file, fs_list_directory, fs_search_files). The path "
+            "must be inside FILESYSTEM_ALLOWED_PATHS."
+        )
+    else:
+        lib = (cfg.get("obsidian_folder") or "research").strip("/")
+        hint = (
+            "Persist notes in Obsidian using the obsidian tools (obsidian_write_note, "
+            "obsidian_append_to_note, obsidian_get_note, obsidian_search, obsidian_list_directory). "
+            "Treat the folder above as a vault-relative path."
+        )
+    return lib, hint
 
 
 def load_agent_config(root: Path) -> dict:
@@ -144,6 +169,35 @@ def handle_event(ev: dict, label: str = "") -> dict:
 
 
 # ── run storage ──────────────────────────────────────────────────────────────
+def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
+    """One quick, non-streaming `claude -p` call that returns plain text.
+
+    Used by the 'build with Claude' playbook generator — it does NOT touch the
+    live console or the single-run lock, so it can run while nothing else is.
+    """
+    cfg = load_agent_config(root)
+    cmd = ["claude", "-p", "--output-format", "text"]
+    if cfg.get("skip_permissions", True):
+        cmd.append("--dangerously-skip-permissions")
+    if cfg.get("model"):
+        cmd += ["--model", cfg["model"]]
+    cmd.append(prompt)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(root), env=dict(os.environ), text=True,
+            capture_output=True, timeout=timeout_min * 60,
+        )
+        if proc.returncode != 0:
+            return {"ok": False, "text": "", "error": (proc.stderr or "claude failed")[-400:]}
+        return {"ok": True, "text": (proc.stdout or "").strip(), "error": None}
+    except FileNotFoundError:
+        return {"ok": False, "text": "", "error": "`claude` not found. Install Claude Code and log in (docs/AGENTS.md)."}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "text": "", "error": f"Timed out after {timeout_min} min."}
+    except Exception as e:
+        return {"ok": False, "text": "", "error": str(e)}
+
+
 def save_run(root: Path, rec: dict) -> None:
     (_runs_dir(root) / (rec["id"] + ".json")).write_text(
         json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8"

@@ -168,5 +168,35 @@ def delete_task(root: Path, tid: str) -> bool:
     return True
 
 
-def render_prompt(prompt: str, *, library: str, date: str) -> str:
-    return prompt.replace("{{LIBRARY}}", library).replace("{{DATE}}", date)
+def render_prompt(prompt: str, *, library: str, date: str, output_hint: str = "") -> str:
+    return (
+        prompt.replace("{{LIBRARY}}", library)
+        .replace("{{DATE}}", date)
+        .replace("{{OUTPUT_HINT}}", output_hint)
+    )
+
+
+# ── AI playbook builder ("build this agent with Claude") ─────────────────────
+def build_meta_prompt(description: str, *, library: str, output_hint: str) -> str:
+    """A prompt that asks Claude to WRITE a playbook prompt from a description.
+
+    The output is a ready-to-save playbook body — not the research itself.
+    """
+    return (
+        "You are helping design a reusable research/automation agent ('playbook') for a "
+        "self-hosted control panel. The agent runs headless on a schedule and can use web "
+        "search/fetch plus the operator's homelab tools (media servers, Home Assistant, "
+        "Obsidian, filesystem, Docker, etc.).\n\n"
+        f"Knowledge is persisted under the folder `{library}`. {output_hint}\n\n"
+        "Write a clear, effective PROMPT for this agent based on the request below. Rules for "
+        "the prompt you write:\n"
+        "- Start by telling the agent to READ the existing library notes first so it builds on "
+        "prior work instead of repeating it.\n"
+        "- Give numbered, concrete steps; require citing source URLs for any claim.\n"
+        "- Tell it to write/append dated notes back into the library so knowledge compounds.\n"
+        "- Use the placeholders {{LIBRARY}} (the folder), {{OUTPUT_HINT}} (how to persist), and "
+        "{{DATE}} (today) verbatim where relevant.\n"
+        "- Keep it focused and free of preamble.\n\n"
+        "Output ONLY the finished prompt text — no explanation, no code fences.\n\n"
+        f"Request: {description.strip()}"
+    )

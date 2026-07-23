@@ -100,6 +100,7 @@ from core.tool_cache import (
     save_prefs,
 )
 from ui.render import dashboard_page
+from ui.agents_page import render_agents_page
 from tools.media import register_media_tools
 from tools.personal import register_personal_tools
 from tools.photos import register_photo_tools
@@ -190,15 +191,31 @@ def _agent_mcp_target() -> tuple[str, str]:
     return url, token
 
 
+def _maybe_notify_agent(rec: dict) -> None:
+    cfg2 = agent_runner.load_agent_config(ROOT)
+    if not cfg2.get("notify_enabled"):
+        return
+    if cfg2.get("notify_on") == "error" and rec.get("ok"):
+        return
+    ok = "OK" if rec.get("ok") else "FAIL"
+    msg = f"{ok} agent '{rec.get('label')}' — ${rec.get('cost_usd')}"
+    if rec.get("error"):
+        msg += f" — {rec['error'][:120]}"
+    try:
+        invoke_tool_sync(tools.raw_manager, "ntfy_send", {"message": msg, "title": "Plutus agent"})
+    except Exception as exc:
+        log.warning("agent ntfy failed: %s", exc)
+
+
 def _run_agent_bg(prompt: str, label: str = "agent") -> None:
     """Launch a headless agent run in a background thread (non-blocking)."""
     url, token = _agent_mcp_target()
-    threading.Thread(
-        target=agent_runner.run_agent,
-        args=(ROOT, prompt),
-        kwargs={"label": label, "mcp_url": url, "bearer_token": token},
-        daemon=True,
-    ).start()
+
+    def _worker():
+        rec = agent_runner.run_agent(ROOT, prompt, label=label, mcp_url=url, bearer_token=token)
+        _maybe_notify_agent(rec)
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):
@@ -212,10 +229,9 @@ def _run_task_bg(task_id: str) -> None:
         log.warning("Scheduled task %s not found", task_id)
         return
     cfg = agent_runner.load_agent_config(ROOT)
+    lib, hint = agent_runner.resolve_library(cfg)
     prompt = agent_tasks.render_prompt(
-        task["prompt"],
-        library=cfg.get("library", "research"),
-        date=time.strftime("%Y-%m-%d"),
+        task["prompt"], library=lib, date=time.strftime("%Y-%m-%d"), output_hint=hint,
     )
     _run_agent_bg(prompt, task.get("name", "playbook")[:40])
 
@@ -346,6 +362,11 @@ async def ui(creds=Depends(verify_auth)):
         headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
     )
 
+@ui_app.get("/agents", response_class=HTMLResponse)
+async def agents_page(creds=Depends(verify_auth)):
+    return HTMLResponse(render_agents_page(), headers={"Cache-Control": "no-store"})
+
+
 @ui_app.get("/health/refresh")
 async def health_refresh(creds=Depends(verify_auth)):
     global _health_cache, _health_ts
@@ -406,7 +427,11 @@ class AgentConfigBody(BaseModel):
     give_plutus_tools: bool | None = None
     timeout_min: int | None = None
     max_cost_usd: float | None = None
-    library: str | None = None
+    output_mode: str | None = None
+    obsidian_folder: str | None = None
+    fs_library_path: str | None = None
+    notify_enabled: bool | None = None
+    notify_on: str | None = None
 
 
 @ui_app.post("/api/v1/agent/config")
@@ -453,6 +478,22 @@ async def api_v1_agent_tasks_run(tid: str, creds=Depends(verify_auth)):
         return JSONResponse({"ok": False, "error": "An agent run is already in progress."}, status_code=409)
     _run_task_bg(tid)
     return {"ok": True}
+
+
+class BuildTaskBody(BaseModel):
+    description: str = Field(..., min_length=3, max_length=4000)
+
+
+@ui_app.post("/api/v1/agent/tasks/build")
+async def api_v1_agent_tasks_build(body: BuildTaskBody, creds=Depends(verify_auth)):
+    """Use the running Claude Code to DRAFT a playbook prompt from a description."""
+    cfg = agent_runner.load_agent_config(ROOT)
+    lib, hint = agent_runner.resolve_library(cfg)
+    meta = agent_tasks.build_meta_prompt(body.description, library=lib, output_hint=hint)
+    res = await asyncio.to_thread(agent_runner.build_text, ROOT, meta)
+    if not res["ok"]:
+        return JSONResponse({"ok": False, "error": res["error"]}, status_code=200)
+    return {"ok": True, "prompt": res["text"]}
 
 
 class AgentRunBody(BaseModel):

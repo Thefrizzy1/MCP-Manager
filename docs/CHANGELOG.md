@@ -2,6 +2,20 @@
 
 Notable changes to Plutus. Dates are approximate; this project is single-maintainer.
 
+## Unreleased — full Agents page
+
+- **Dedicated `/agents` full page** (`ui/agents_page.py` + `ui/static/agents.js`) with
+  tabs: Run, Playbooks, Schedules, Settings, History — replacing the cramped footer
+  panel (the dashboard button now links to it).
+- **Build an agent with Claude** — describe a task in plain language and the running
+  Claude Code drafts a playbook prompt (`core/agent_runner.build_text` +
+  `agent_tasks.build_meta_prompt`, `POST /api/v1/agent/tasks/build`).
+- **Output destination settings** — choose where the knowledge library lives
+  (Obsidian vault folder or a filesystem path); `resolve_library()` fills `{{LIBRARY}}`
+  and a new `{{OUTPUT_HINT}}` placeholder that tells the agent which tools to persist with.
+- **Per-run ntfy notifications** (all runs or failures only).
+- Model / tools / timeout / cost guard all editable in the Settings tab.
+
 ## Unreleased — agents, scheduler & pullable image
 
 ### Features

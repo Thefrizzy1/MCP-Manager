@@ -69,6 +69,18 @@ def test_agent_config_roundtrip(tmp_path):
     assert ar.load_agent_config(tmp_path)["model"] == "claude-opus-4-8"
 
 
+def test_resolve_library_obsidian():
+    lib, hint = ar.resolve_library({"output_mode": "obsidian", "obsidian_folder": "20-research"})
+    assert lib == "20-research"
+    assert "obsidian" in hint.lower()
+
+
+def test_resolve_library_filesystem():
+    lib, hint = ar.resolve_library({"output_mode": "filesystem", "fs_library_path": "/data/lib/"})
+    assert lib == "/data/lib"  # trailing slash stripped
+    assert "filesystem" in hint.lower()
+
+
 def test_auth_info_api_key_mode(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xyz")
     info = ar.auth_info()

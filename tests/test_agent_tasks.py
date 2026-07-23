@@ -44,5 +44,13 @@ def test_delete(tmp_path):
 
 
 def test_render_prompt():
-    out = at.render_prompt("Read {{LIBRARY}}/x on {{DATE}}", library="research", date="2026-07-22")
-    assert out == "Read research/x on 2026-07-22"
+    out = at.render_prompt("Read {{LIBRARY}}/x on {{DATE}} — {{OUTPUT_HINT}}",
+                           library="research", date="2026-07-22", output_hint="use obsidian")
+    assert out == "Read research/x on 2026-07-22 — use obsidian"
+
+
+def test_build_meta_prompt_contains_request_and_rules():
+    meta = at.build_meta_prompt("research comfyui nodes daily", library="research", output_hint="use obsidian")
+    assert "research comfyui nodes daily" in meta
+    assert "{{LIBRARY}}" in meta and "{{DATE}}" in meta
+    assert "ONLY the finished prompt" in meta

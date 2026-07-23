@@ -1,8 +1,17 @@
 # Plutus — Agents & Scheduler
 
 Plutus can run a **headless Claude Code agent** that operates its own ~193 MCP
-tools, and can **schedule** agent tasks or individual tool calls on a cron. Open
-the dashboard → footer → **Agents**.
+tools, and can **schedule** agent tasks or individual tool calls on a cron. It has
+a dedicated full page at **`/agents`** (dashboard → footer → **Agents**) with tabs:
+
+- **Run** — one-off prompt with a live console.
+- **Playbooks** — the library of research tasks, plus **Build an agent with Claude**:
+  describe what you want in plain language and the running Claude Code drafts a
+  playbook prompt you can edit and save.
+- **Schedules** — cron a playbook, an ad-hoc prompt, or a single tool call.
+- **Settings** — model, tools, timeout, cost guard, **where output goes** (Obsidian
+  vault folder or a filesystem path), and ntfy notifications.
+- **History** — every run with cost and output, expandable.
 
 ---
 
@@ -73,7 +82,13 @@ nothing else breaks.
 | `skip_permissions` | `true` | Headless `--dangerously-skip-permissions` |
 | `timeout_min` | `20` | Per-run wall-clock cap |
 | `max_cost_usd` | `2.0` | Over-budget flag threshold |
-| `library` | `"research"` | `{{LIBRARY}}` folder playbooks read/write (Obsidian folder or path) |
+| `output_mode` | `"obsidian"` | Where the library lives: `obsidian` or `filesystem` |
+| `obsidian_folder` | `"research"` | Vault-relative folder when `output_mode=obsidian` |
+| `fs_library_path` | `"/data/library"` | Host-mounted path when `output_mode=filesystem` (must be in `FILESYSTEM_ALLOWED_PATHS`) |
+| `notify_enabled` / `notify_on` | `false` / `all` | Optional ntfy after each run (`all` or `error`) |
+
+All of these are editable on the full **Agents page** (`/ui` → footer → **Agents**,
+or `/agents` directly) under **Settings**.
 
 The agent reaches Plutus at `http://127.0.0.1:8765/mcp` (same container); if
 `MCP_REQUIRE_BEARER=true`, the bearer token is injected automatically.
@@ -141,6 +156,7 @@ All under the dashboard's Basic auth.
 | POST | `/api/v1/agent/tasks` | Create/update a playbook |
 | DELETE | `/api/v1/agent/tasks/{id}` | Delete a playbook |
 | POST | `/api/v1/agent/tasks/{id}/run` | Run a playbook now |
+| POST | `/api/v1/agent/tasks/build` | `{description}` — Claude drafts a playbook prompt |
 | GET | `/api/v1/schedules` | List schedules + next-run times |
 | POST | `/api/v1/schedules` | Add `{name,kind,cron,timezone,payload}` |
 | POST | `/api/v1/schedules/{id}` | Update |

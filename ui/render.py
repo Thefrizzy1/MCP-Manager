@@ -741,62 +741,11 @@ POST /api/v1/health/regression-check?notify=1   (schedule this: alerts on newly-
   </div>
 </div>
 
-<div id="agent-panel" class="wiz-panel" aria-hidden="true">
-  <div class="wiz-inner">
-    <h2 class="wiz-title">Agents &amp; Scheduler</h2>
-    <p class="wiz-desc">Run a headless <strong>Claude Code</strong> agent that can drive Plutus's own MCP tools, and schedule agent tasks or individual tool calls on a cron. <span id="agent-avail" class="phint"></span></p>
-
-    <div class="agent-grid">
-      <div class="agent-col">
-        <h3 class="agent-h3">Run an agent now</h3>
-        <textarea id="agent-prompt" class="cf-input" rows="4" placeholder="e.g. Check which *arr queues are stuck and summarize; list any Docker containers that are unhealthy."></textarea>
-        <div class="brow">
-          <input type="text" id="agent-label" class="cf-input" style="max-width:140px" placeholder="label (optional)">
-          <button type="button" class="btn-tsmoke" id="btn-agent-run" onclick="agentRun()">Run agent</button>
-          <span class="phint" id="agent-status"></span>
-        </div>
-        <pre class="wiz-pre" id="agent-console" style="height:220px;overflow:auto">Idle. Enter a prompt and press Run.</pre>
-      </div>
-
-      <div class="agent-col">
-        <h3 class="agent-h3">Schedules</h3>
-        <div id="sched-list"><span class="phint">Loading…</span></div>
-        <details class="sett" style="margin-top:8px"><summary>Add a schedule</summary>
-          <div class="msec">
-            <div class="mf"><label>Name</label><input type="text" id="sc-name" class="cf-input" placeholder="Nightly homelab check"></div>
-            <div class="mf"><label>Type</label>
-              <select id="sc-kind" class="cf-input" onchange="schedKindChange()">
-                <option value="agent">Agent (prompt)</option>
-                <option value="tool">Tool call</option>
-              </select>
-            </div>
-            <div class="mf"><label>Cron (min hour day month weekday)</label><input type="text" id="sc-cron" class="cf-input" placeholder="0 3 * * *" value="0 3 * * *"></div>
-            <div class="mf"><label>Timezone</label><input type="text" id="sc-tz" class="cf-input" value="Europe/Berlin"></div>
-            <div class="mf" id="sc-agent-fields"><label>Prompt</label><textarea id="sc-prompt" class="cf-input" rows="3" placeholder="What should the agent do on this schedule?"></textarea></div>
-            <div class="mf" id="sc-tool-fields" style="display:none">
-              <label>Tool name</label><input type="text" id="sc-tool" class="cf-input" placeholder="sonarr_queue">
-              <label style="margin-top:6px">Params (JSON)</label><textarea id="sc-params" class="cf-input" rows="2" placeholder="{{}}">{{}}</textarea>
-            </div>
-            <div class="brow"><button type="button" class="mbtn mbp" onclick="addSchedule()">Add schedule</button><span class="phint" id="sc-msg"></span></div>
-          </div>
-        </details>
-      </div>
-    </div>
-
-    <h3 class="agent-h3" style="margin-top:14px">Playbooks <span class="phint">reusable research tasks that grow a knowledge library — run or schedule</span></h3>
-    <div class="mf" style="max-width:340px"><label>Knowledge library folder (Obsidian folder or path the agents read/write)</label><input type="text" id="agent-library" class="cf-input" placeholder="research" onchange="saveAgentLibrary()"></div>
-    <div id="playbook-list"><span class="phint">Loading…</span></div>
-
-    <h3 class="agent-h3" style="margin-top:14px">Recent agent runs <span class="phint" id="agent-cost"></span></h3>
-    <div id="agent-runs"><span class="phint">No runs yet.</span></div>
-  </div>
-</div>
-
 <div class="footer-bar">
   <div class="footer-group" data-label="Discovery">
     <button type="button" class="tbtn tbtn-wiz" id="btn-wiz-toggle" onclick="toggleWizPanel()" aria-expanded="false" title="Auto-discover services on the LAN">Discover</button>
     <button type="button" class="tbtn tbtn-wiz" id="btn-slicer-toggle" onclick="toggleSlicerPanel()" aria-expanded="false" title="Shrink the MCP manifest the AI sees">Slicer</button>
-    <button type="button" class="tbtn tbtn-wiz" id="btn-agent-toggle" onclick="toggleAgentPanel()" aria-expanded="false" title="Run and schedule headless agents">Agents</button>
+    <button type="button" class="tbtn tbtn-wiz" id="btn-agent-toggle" onclick="location.href='/agents'" title="Run, build and schedule headless agents (full page)">Agents</button>
   </div>
   <span class="footer-sep" aria-hidden="true">·</span>
   <div class="footer-group" data-label="Maintenance">
