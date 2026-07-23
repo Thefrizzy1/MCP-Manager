@@ -147,6 +147,9 @@ def upsert_task(root: Path, entry: dict) -> dict:
         "name": name,
         "description": (entry.get("description") or "").strip(),
         "prompt": prompt,
+        # Optional per-playbook overrides ("" = use the global agent config):
+        "permission": (entry.get("permission") or "").strip(),
+        "model": (entry.get("model") or "").strip(),
         "created": entry.get("created") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     for i, t in enumerate(tasks):

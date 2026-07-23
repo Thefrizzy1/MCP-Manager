@@ -26,7 +26,8 @@ from pathlib import Path
 
 # ── shared live state (single run at a time) ─────────────────────────────────
 _LOCK = threading.Lock()
-_current: dict = {"running": False, "id": None, "started": None, "label": None}
+_current: dict = {"running": False, "id": None, "started": None, "label": None,
+                  "proc": None, "cancelled": False}
 LIVE: dict = {"id": None, "lines": [], "done": True}
 
 _MAX_LIVE_LINES = 800
@@ -56,6 +57,8 @@ DEFAULT_AGENT_CONFIG = {
     "give_plutus_tools": True,        # expose Plutus's own MCP tools to the agent
     "timeout_min": 20,
     "max_cost_usd": 2.0,
+    "tool_permission": "safe",        # "strict_read" | "safe" | "all" (blast-radius control)
+    "max_runs_per_day": 20,           # scheduled/queued runs refused past this
     # Where playbooks read/write their knowledge library:
     "output_mode": "obsidian",        # "obsidian" | "filesystem"
     "obsidian_folder": "research",     # vault-relative folder when output_mode=obsidian
@@ -117,21 +120,63 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
     conf = {"mcpServers": {"plutus": server}}
     path = _runs_dir(root).parent / "agent_mcp.json"
     path.write_text(json.dumps(conf), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)  # contains the bearer token (no-op on Windows)
+    except OSError:
+        pass
     return str(path)
 
 
+def _subprocess_env() -> dict:
+    """Process env plus the session OAuth token from .env, so a web login applies
+    without a restart. Session token only — never an API key here."""
+    env = dict(os.environ)
+    try:
+        from core.env_store import read_env
+        tok = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
+        if tok:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
+    except Exception:
+        pass
+    return env
+
+
+def runs_today(root: Path) -> int:
+    today = _now().strftime("%Y%m%d")
+    return sum(1 for r in list_runs(root, 9999) if str(r.get("id", "")).startswith(today))
+
+
+def cancel() -> dict:
+    """Kill the in-flight agent run, if any."""
+    with _LOCK:
+        proc = _current.get("proc")
+        if not (_current.get("running") and proc):
+            return {"ok": False, "error": "No run in progress."}
+        _current["cancelled"] = True
+    try:
+        proc.kill()
+        _emit("run cancelled by user")
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ── command + event parsing (pure, testable) ─────────────────────────────────
-def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = None) -> list[str]:
+def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = None,
+                    disallowed_tools: list[str] | None = None, model: str | None = None) -> list[str]:
     cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
     if cfg.get("skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
     tools = list(cfg.get("allowed_tools") or [])
     if tools:
         cmd += ["--allowedTools", ",".join(tools)]
+    if disallowed_tools:
+        cmd += ["--disallowedTools", ",".join(disallowed_tools)]
     if mcp_config_path:
         cmd += ["--mcp-config", mcp_config_path]
-    if cfg.get("model"):
-        cmd += ["--model", cfg["model"]]
+    chosen_model = model or cfg.get("model")
+    if chosen_model:
+        cmd += ["--model", chosen_model]
     cmd.append(prompt)
     return cmd
 
@@ -172,9 +217,11 @@ def handle_event(ev: dict, label: str = "") -> dict:
 def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
     """One quick, non-streaming `claude -p` call that returns plain text.
 
-    Used by the 'build with Claude' playbook generator — it does NOT touch the
-    live console or the single-run lock, so it can run while nothing else is.
+    Used by the 'build with Claude' playbook generator. Refuses while an agent run
+    is active so we never spawn two `claude` processes at once.
     """
+    if _current.get("running"):
+        return {"ok": False, "text": "", "error": "Agent is busy — try again when the current run finishes."}
     cfg = load_agent_config(root)
     cmd = ["claude", "-p", "--output-format", "text"]
     if cfg.get("skip_permissions", True):
@@ -184,7 +231,7 @@ def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
     cmd.append(prompt)
     try:
         proc = subprocess.run(
-            cmd, cwd=str(root), env=dict(os.environ), text=True,
+            cmd, cwd=str(root), env=_subprocess_env(), text=True,
             capture_output=True, timeout=timeout_min * 60,
         )
         if proc.returncode != 0:
@@ -226,17 +273,25 @@ def auth_info() -> dict:
     - otherwise, a Claude Code login (~/.claude) -> your subscription plan's usage.
     """
     api_key = bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+    session_token = False
+    try:
+        from core.env_store import read_env
+        session_token = bool((read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip())
+    except Exception:
+        pass
     claude_home = Path(os.path.expanduser("~/.claude"))
     logged_in = (claude_home / ".credentials.json").exists() or (
         claude_home.is_dir() and any(claude_home.glob("*.json"))
     )
-    if api_key:
+    if session_token:
+        mode = "session_token"    # OAuth token from the dashboard -> your plan
+    elif api_key:
         mode = "api_key"          # bills the Anthropic API per token
     elif logged_in:
-        mode = "subscription"     # uses your Claude plan's usage
+        mode = "subscription"     # interactive ~/.claude login -> your plan
     else:
         mode = "none"             # not authenticated yet
-    return {"mode": mode, "api_key": api_key, "logged_in": logged_in}
+    return {"mode": mode, "api_key": api_key, "session_token": session_token, "logged_in": logged_in}
 
 
 def status(root: Path) -> dict:
@@ -259,13 +314,16 @@ def run_agent(
     mcp_url: str = "http://127.0.0.1:8765/mcp",
     bearer_token: str = "",
     cwd: str | None = None,
+    disallowed_tools: list[str] | None = None,
+    model: str | None = None,
 ) -> dict:
     """Run one headless Claude Code agent call. Blocking; call in a thread."""
     with _LOCK:
         if _current["running"]:
             return {"ok": False, "error": "An agent run is already in progress."}
         rid = _now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4]
-        _current.update(running=True, id=rid, started=_now().isoformat(), label=label)
+        _current.update(running=True, id=rid, started=_now().isoformat(), label=label,
+                        proc=None, cancelled=False)
         LIVE.update(id=rid, lines=[], done=False)
 
     cfg = load_agent_config(root)
@@ -273,7 +331,7 @@ def run_agent(
         "id": rid, "label": label, "prompt": prompt[:2000],
         "started": _now().isoformat(), "finished": None,
         "ok": False, "cost_usd": 0.0, "turns": None, "result": "",
-        "over_budget": False, "error": None, "log": [],
+        "over_budget": False, "cancelled": False, "error": None, "log": [],
     }
     _emit(f"agent '{label}' starting")
 
@@ -284,12 +342,15 @@ def run_agent(
         except Exception as e:
             _emit(f"warn: could not write MCP config ({e})")
 
-    cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path)
+    cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
+                          disallowed_tools=disallowed_tools, model=model)
     try:
         proc = subprocess.Popen(
-            cmd, cwd=cwd or str(root), env=dict(os.environ), text=True,
+            cmd, cwd=cwd or str(root), env=_subprocess_env(), text=True,
             bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
+        with _LOCK:
+            _current["proc"] = proc
         timer = threading.Timer(int(cfg.get("timeout_min", 20)) * 60, proc.kill)
         timer.start()
         try:
@@ -315,7 +376,10 @@ def run_agent(
             proc.wait()
         finally:
             timer.cancel()
-        if proc.returncode not in (0, None) and not rec["result"]:
+        if _current.get("cancelled"):
+            rec["cancelled"] = True
+            rec["error"] = "Cancelled by user."
+        elif proc.returncode not in (0, None) and not rec["result"]:
             err = (proc.stderr.read() or "")[-400:] if proc.stderr else ""
             rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
             _emit(rec["error"])
@@ -335,5 +399,5 @@ def run_agent(
         save_run(root, rec)
         LIVE["done"] = True
         with _LOCK:
-            _current.update(running=False, id=None, started=None, label=None)
+            _current.update(running=False, id=None, started=None, label=None, proc=None, cancelled=False)
     return rec

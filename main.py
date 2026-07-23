@@ -55,7 +55,7 @@ def _ensure_plutus_runtime_dependencies() -> None:
 
 _ensure_plutus_runtime_dependencies()
 
-import asyncio, errno, json, logging, multiprocessing, os, secrets, shutil, sys, threading, time
+import asyncio, errno, json, logging, multiprocessing, os, queue, secrets, shutil, sys, threading, time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.request import urlopen
@@ -84,6 +84,8 @@ from core.rate_limit import LoginRateLimiter
 from core.env_store import read_env, update_env
 from core import agent_runner
 from core import agent_tasks
+from core import agent_permissions
+from core import agent_login
 from core import schedule_store
 from core.scheduler import PlutusScheduler, invoke_tool_sync
 from core.result_status import text_looks_successful
@@ -207,22 +209,57 @@ def _maybe_notify_agent(rec: dict) -> None:
         log.warning("agent ntfy failed: %s", exc)
 
 
-def _run_agent_bg(prompt: str, label: str = "agent") -> None:
-    """Launch a headless agent run in a background thread (non-blocking)."""
-    url, token = _agent_mcp_target()
+_agent_queue: "queue.Queue" = queue.Queue(maxsize=6)
 
-    def _worker():
-        rec = agent_runner.run_agent(ROOT, prompt, label=label, mcp_url=url, bearer_token=token)
-        _maybe_notify_agent(rec)
 
-    threading.Thread(target=_worker, daemon=True).start()
+def _agent_queue_worker() -> None:
+    """Single serial worker: runs one agent job at a time, honours the daily cap."""
+    while True:
+        job = _agent_queue.get()
+        try:
+            acfg = agent_runner.load_agent_config(ROOT)
+            cap = int(acfg.get("max_runs_per_day", 20) or 0)
+            if cap and not job.get("force") and agent_runner.runs_today(ROOT) >= cap:
+                log.info("Agent daily run cap (%s) reached — skipping scheduled '%s'", cap, job.get("label"))
+                continue
+            url, token = _agent_mcp_target()
+            rec = agent_runner.run_agent(
+                ROOT, job["prompt"], label=job.get("label", "agent"),
+                mcp_url=url, bearer_token=token,
+                disallowed_tools=job.get("disallowed"), model=job.get("model") or None,
+            )
+            _maybe_notify_agent(rec)
+        except Exception as exc:
+            log.warning("Agent worker error: %s", exc)
+        finally:
+            _agent_queue.task_done()
+
+
+def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
+                   model: str | None = None, force: bool = False) -> bool:
+    """Queue an agent run. Disallowed-tool set derived from the effective permission."""
+    acfg = agent_runner.load_agent_config(ROOT)
+    level = agent_permissions.normalize_level(permission or acfg.get("tool_permission"))
+    disallowed = agent_permissions.build_disallowed(tools.tool_names(), level)
+    try:
+        _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
+                                 "model": model, "force": force})
+        return True
+    except queue.Full:
+        log.warning("Agent queue full — dropping '%s'", label)
+        return False
+
+
+def _run_agent_bg(prompt: str, label: str = "agent", *, permission: str | None = None,
+                  model: str | None = None, force: bool = False) -> None:
+    _enqueue_agent(prompt, label, permission=permission, model=model, force=force)
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):
     return invoke_tool_sync(tools.raw_manager, tool_name, params)
 
 
-def _run_task_bg(task_id: str) -> None:
+def _run_task_bg(task_id: str, *, force: bool = False) -> None:
     """Resolve a playbook to its (rendered) prompt and run it as an agent."""
     task = agent_tasks.get_task(ROOT, task_id)
     if not task:
@@ -233,13 +270,15 @@ def _run_task_bg(task_id: str) -> None:
     prompt = agent_tasks.render_prompt(
         task["prompt"], library=lib, date=time.strftime("%Y-%m-%d"), output_hint=hint,
     )
-    _run_agent_bg(prompt, task.get("name", "playbook")[:40])
+    _run_agent_bg(prompt, task.get("name", "playbook")[:40],
+                  permission=task.get("permission") or None, model=task.get("model") or None, force=force)
 
 
 @asynccontextmanager
 async def _ui_lifespan(_app: FastAPI):
     ensure_data_dir(ROOT)
     agent_tasks.seed_if_empty(ROOT)
+    threading.Thread(target=_agent_queue_worker, name="agent-queue", daemon=True).start()
     loop_task = asyncio.create_task(
         beta_cache_background_loop(ROOT, lambda: tools.raw_manager, _services_live)
     )
@@ -408,11 +447,21 @@ async def api_v1_health_regression_check(request: Request, creds=Depends(verify_
 @ui_app.get("/api/v1/agent/status")
 async def api_v1_agent_status(creds=Depends(verify_auth)):
     st = agent_runner.status(ROOT)
-    st["config"] = agent_runner.load_agent_config(ROOT)
+    acfg = agent_runner.load_agent_config(ROOT)
+    st["config"] = acfg
     st["claude_available"] = shutil.which("claude") is not None
     st["scheduler_available"] = agent_scheduler.available
     st["auth"] = agent_runner.auth_info()
+    st["queue_depth"] = _agent_queue.qsize()
+    st["permission_levels"] = list(agent_permissions.LEVELS)
+    st["runs_today"] = agent_runner.runs_today(ROOT)
+    st["max_runs_per_day"] = acfg.get("max_runs_per_day", 20)
     return st
+
+
+@ui_app.post("/api/v1/agent/cancel")
+async def api_v1_agent_cancel(creds=Depends(verify_auth)):
+    return agent_runner.cancel()
 
 
 @ui_app.get("/api/v1/agent/runs")
@@ -432,6 +481,8 @@ class AgentConfigBody(BaseModel):
     fs_library_path: str | None = None
     notify_enabled: bool | None = None
     notify_on: str | None = None
+    tool_permission: str | None = None
+    max_runs_per_day: int | None = None
 
 
 @ui_app.post("/api/v1/agent/config")
@@ -451,6 +502,8 @@ class AgentTaskBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     description: str = ""
     prompt: str = Field(..., min_length=1, max_length=20000)
+    permission: str | None = None
+    model: str | None = None
 
 
 @ui_app.post("/api/v1/agent/tasks")
@@ -474,10 +527,22 @@ async def api_v1_agent_tasks_run(tid: str, creds=Depends(verify_auth)):
     task = agent_tasks.get_task(ROOT, tid)
     if not task:
         raise HTTPException(404, "playbook not found")
-    if agent_runner._current["running"]:
-        return JSONResponse({"ok": False, "error": "An agent run is already in progress."}, status_code=409)
-    _run_task_bg(tid)
-    return {"ok": True}
+    _run_task_bg(tid, force=True)
+    return {"ok": True, "queued": agent_runner._current["running"]}
+
+
+@ui_app.post("/api/v1/agent/tasks/{tid}/preview")
+async def api_v1_agent_tasks_preview(tid: str, creds=Depends(verify_auth)):
+    """Return the fully-rendered prompt for a playbook without running it."""
+    task = agent_tasks.get_task(ROOT, tid)
+    if not task:
+        raise HTTPException(404, "playbook not found")
+    cfg = agent_runner.load_agent_config(ROOT)
+    lib, hint = agent_runner.resolve_library(cfg)
+    prompt = agent_tasks.render_prompt(task["prompt"], library=lib,
+                                       date=time.strftime("%Y-%m-%d"), output_hint=hint)
+    level = agent_permissions.normalize_level(task.get("permission") or cfg.get("tool_permission"))
+    return {"ok": True, "prompt": prompt, "permission": level, "library": lib}
 
 
 class BuildTaskBody(BaseModel):
@@ -503,10 +568,37 @@ class AgentRunBody(BaseModel):
 
 @ui_app.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody, creds=Depends(verify_auth)):
-    if agent_runner._current["running"]:
-        return JSONResponse({"ok": False, "error": "An agent run is already in progress."}, status_code=409)
-    _run_agent_bg(body.prompt, body.label or "agent")
-    return {"ok": True}
+    ok = _enqueue_agent(body.prompt, body.label or "agent", force=True)
+    if not ok:
+        return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
+    return {"ok": True, "queued": agent_runner._current["running"]}
+
+
+# ─── Web login (session/OAuth token — never an API key) ───────────────────────
+
+class LoginTokenBody(BaseModel):
+    token: str = Field(..., min_length=8, max_length=2000)
+
+
+@ui_app.post("/api/v1/agent/login/token")
+async def api_v1_agent_login_token(body: LoginTokenBody, creds=Depends(verify_auth)):
+    res = agent_login.save_token(body.token)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@ui_app.post("/api/v1/agent/login/start")
+async def api_v1_agent_login_start(creds=Depends(verify_auth)):
+    return await asyncio.to_thread(agent_login.start_interactive)
+
+
+class LoginCodeBody(BaseModel):
+    code: str = Field(..., min_length=1, max_length=4000)
+
+
+@ui_app.post("/api/v1/agent/login/finish")
+async def api_v1_agent_login_finish(body: LoginCodeBody, creds=Depends(verify_auth)):
+    res = await asyncio.to_thread(agent_login.finish_interactive, body.code)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @ui_app.get("/api/v1/agent/stream")
@@ -544,7 +636,7 @@ async def api_v1_schedules_get(creds=Depends(verify_auth)):
 class ScheduleBody(BaseModel):
     id: str | None = None
     name: str = ""
-    kind: str = Field(..., pattern="^(agent|tool)$")
+    kind: str = Field(..., pattern="^(agent|tool|task)$")
     cron: str = Field(..., min_length=1, max_length=120)
     timezone: str = "Europe/Berlin"
     enabled: bool = True

@@ -43,7 +43,7 @@ def render_agents_page() -> str:
   <p class="phint">The agent can use Plutus's own ~193 tools plus web search. One run at a time.</p>
   <div class="mf"><label>Label (optional)</label><input type="text" id="run-label" class="cf-input" style="max-width:220px" placeholder="ad-hoc"></div>
   <div class="mf"><label>Prompt</label><textarea id="run-prompt" class="cf-input" rows="5" placeholder="e.g. Check which *arr queues are stuck and summarize; flag any unhealthy Docker containers."></textarea></div>
-  <div class="brow"><button type="button" class="btn-tsmoke" id="run-btn" onclick="agRun()">Run agent</button><span class="phint" id="run-status"></span></div>
+  <div class="brow"><button type="button" class="btn-tsmoke" id="run-btn" onclick="agRun()">Run agent</button><button type="button" class="mbtn mbg" id="stop-btn" onclick="agStop()">Stop</button><span class="phint" id="run-status"></span></div>
   <pre class="wiz-pre ag-console" id="run-console">Idle.</pre>
 </section>
 
@@ -58,6 +58,11 @@ def render_agents_page() -> str:
   <input type="hidden" id="pb-id">
   <div class="mf"><label>Name</label><input type="text" id="pb-name" class="cf-input" placeholder="My research playbook"></div>
   <div class="mf"><label>Description</label><input type="text" id="pb-desc" class="cf-input" placeholder="Short summary"></div>
+  <div class="ag-form">
+    <div class="mf"><label>Tool permission <span class="phint">blank = global default</span></label>
+      <select id="pb-perm" class="cf-input"><option value="">(global default)</option><option value="strict_read">Strict read (audits)</option><option value="safe">Safe (reads + notes)</option><option value="all">All tools</option></select></div>
+    <div class="mf"><label>Model override <span class="phint">blank = global</span></label><input type="text" id="pb-model" class="cf-input" list="model-list" placeholder=""></div>
+  </div>
   <div class="mf"><label>Prompt <span class="phint">— placeholders: {{LIBRARY}} {{OUTPUT_HINT}} {{DATE}}</span></label><textarea id="pb-prompt" class="cf-input" rows="8"></textarea></div>
   <div class="brow"><button type="button" class="mbtn mbp" onclick="agSavePlaybook()">Save playbook</button><button type="button" class="mbtn mbg" onclick="agClearEditor()">New / clear</button><span class="phint" id="pb-status"></span></div>
 
@@ -79,7 +84,18 @@ def render_agents_page() -> str:
         <option value="agent">Agent prompt</option>
         <option value="tool">Tool call</option>
       </select></div>
-    <div class="mf"><label>Cron (min hour day month weekday)</label><input type="text" id="s-cron" class="cf-input" value="0 3 * * *"></div>
+    <div class="mf"><label>When</label>
+      <select id="s-preset" class="cf-input" onchange="agPreset()">
+        <option value="daily">Daily at a time</option>
+        <option value="hourly">Hourly</option>
+        <option value="everyN">Every N minutes</option>
+        <option value="weekly">Weekly on a day</option>
+        <option value="custom">Custom cron</option>
+      </select></div>
+    <div class="mf" id="preset-daily"><label>Time (HH:MM)</label><input type="time" id="p-time" class="cf-input" value="03:00" onchange="agPreset()"></div>
+    <div class="mf hidden" id="preset-everyN"><label>Every N minutes</label><input type="number" id="p-n" class="cf-input" min="1" max="1440" value="30" onchange="agPreset()"></div>
+    <div class="mf hidden" id="preset-weekly"><label>Day</label><select id="p-dow" class="cf-input" onchange="agPreset()"><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option></select></div>
+    <div class="mf"><label>Cron <span class="phint">(auto from above; editable)</span></label><input type="text" id="s-cron" class="cf-input" value="0 3 * * *"></div>
     <div class="mf"><label>Timezone</label><input type="text" id="s-tz" class="cf-input" value="Europe/Berlin"></div>
     <div class="mf" id="s-task-wrap"><label>Playbook</label><select id="s-task" class="cf-input"></select></div>
     <div class="mf hidden" id="s-agent-wrap"><label>Prompt</label><textarea id="s-prompt" class="cf-input" rows="3"></textarea></div>
@@ -98,8 +114,16 @@ def render_agents_page() -> str:
     </div>
     <div class="mf"><label>Timeout (minutes)</label><input type="number" id="c-timeout" class="cf-input" min="1" max="120" value="20"></div>
     <div class="mf"><label>Max cost guard (USD)</label><input type="number" id="c-cost" class="cf-input" min="0" step="0.5" value="2"></div>
+    <div class="mf"><label>Tool permission <span class="phint">blast-radius control</span></label>
+      <select id="c-perm" class="cf-input">
+        <option value="strict_read">Strict read — reads only (audits)</option>
+        <option value="safe">Safe — reads + note-writing (recommended)</option>
+        <option value="all">All — full tool access</option>
+      </select></div>
+    <div class="mf"><label>Max runs per day</label><input type="number" id="c-maxruns" class="cf-input" min="0" max="500" value="20"></div>
     <div class="mf"><label>Allowed tools <span class="phint">comma-separated; mcp__plutus = all Plutus tools</span></label><input type="text" id="c-tools" class="cf-input" placeholder="mcp__plutus,Read,Write,WebSearch,WebFetch"></div>
   </div>
+  <p class="phint" id="c-perm-note"></p>
   <label class="ag-chk"><input type="checkbox" id="c-plutus"> Give the agent Plutus's own MCP tools</label>
   <label class="ag-chk"><input type="checkbox" id="c-skip"> Headless (skip permission prompts)</label>
 
@@ -119,6 +143,20 @@ def render_agents_page() -> str:
   <div class="mf" style="max-width:220px"><label>Notify on</label><select id="c-notifyon" class="cf-input"><option value="all">Every run</option><option value="error">Failures only</option></select></div>
 
   <div class="brow" style="margin-top:12px"><button type="button" class="mbtn mbp" onclick="agSaveSettings()">Save settings</button><span class="phint" id="c-status"></span></div>
+
+  <h2 class="ag-h2" style="margin-top:18px">Connect Claude account (session token — not an API key)</h2>
+  <p class="phint">Uses your Claude <strong>subscription</strong> (session/OAuth token), so runs draw from your plan, not per-token API billing. No container shell needed.</p>
+  <div class="mf"><label>Paste a token from <code>claude setup-token</code> (run it on any machine signed into your Claude account)</label>
+    <input type="password" id="login-token" class="cf-input" placeholder="sk-ant-oat…"></div>
+  <div class="brow"><button type="button" class="mbtn mbp" onclick="agLoginToken()">Save token</button>
+    <button type="button" class="mbtn mbg" onclick="agLoginStart()">Or log in via browser</button>
+    <span class="phint" id="login-status"></span></div>
+  <div id="login-oauth" class="hidden" style="margin-top:8px">
+    <p class="phint">1. Open the authorization page, sign in, approve. 2. Paste the code it gives you.</p>
+    <a id="login-url" class="mbtn mbg" href="#" target="_blank" rel="noopener noreferrer">Open authorization page</a>
+    <div class="mf" style="margin-top:8px"><label>Code</label><input type="text" id="login-code" class="cf-input"></div>
+    <div class="brow"><button type="button" class="mbtn mbp" onclick="agLoginFinish()">Finish login</button></div>
+  </div>
 </section>
 
 <!-- HISTORY -->

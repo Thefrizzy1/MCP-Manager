@@ -37,10 +37,20 @@ State lives in `data/agent_runs/`, `data/agent_config.json`, and
 ## 2. One-time setup (container)
 
 The image includes Node.js and Claude Code. Authenticate the agent once — and the
-method you choose decides how it's billed:
+method you choose decides how it's billed. **All the recommended paths use a
+session/OAuth token from your Claude subscription — never an API key.**
 
-**Option A — log in with your Claude subscription (recommended; uses your plan, not
-API credit):**
+**Option A0 — web login from the dashboard (no container shell):** Agents page →
+**Settings** → *Connect Claude account*. Either
+- paste a token from `claude setup-token` (run it on any machine signed into your
+  Claude account), or
+- click **Log in via browser**, open the authorization link, approve, and paste the
+  code back.
+
+Plutus stores it as `CLAUDE_CODE_OAUTH_TOKEN` and the agent uses it immediately (no
+restart). This is the easiest way and needs no `docker exec`.
+
+**Option A — terminal login with your Claude subscription:**
 
 ```bash
 docker exec -it plutus-mcp claude      # follow the OAuth link once, with your Pro/Max account
@@ -82,6 +92,8 @@ nothing else breaks.
 | `skip_permissions` | `true` | Headless `--dangerously-skip-permissions` |
 | `timeout_min` | `20` | Per-run wall-clock cap |
 | `max_cost_usd` | `2.0` | Over-budget flag threshold |
+| `tool_permission` | `"safe"` | Blast-radius control: `strict_read` / `safe` / `all` (see below) |
+| `max_runs_per_day` | `20` | Scheduled/queued runs are refused past this (manual runs override) |
 | `output_mode` | `"obsidian"` | Where the library lives: `obsidian` or `filesystem` |
 | `obsidian_folder` | `"research"` | Vault-relative folder when `output_mode=obsidian` |
 | `fs_library_path` | `"/data/library"` | Host-mounted path when `output_mode=filesystem` (must be in `FILESYSTEM_ALLOWED_PATHS`) |
@@ -126,11 +138,33 @@ Placeholders in a playbook prompt: `{{LIBRARY}}` (your library folder) and
 Schedule kinds: `agent` (ad-hoc prompt), `task` (a playbook by id — edits to the
 playbook flow through), or `tool` (a single Plutus tool call).
 
+## 4b. Tool permissions (blast-radius control)
+
+The agent runs headless (skip-permissions) and can reach Plutus's tools while reading
+untrusted web pages — a prompt-injection route to destructive actions. A permission
+level (Settings → *Tool permission*, or per-playbook) decides what it may touch:
+
+| Level | The agent can… |
+|---|---|
+| `strict_read` | read only — no writes at all (pure audits) |
+| `safe` *(default)* | read **and** write notes to your library, but **not** infrastructure/irreversible tools (docker stop/restart, deletes, `ssh_run`/`ssh_exec`, HA control, `send_email`, torrent delete, `n8n_trigger_webhook`, image gen) |
+| `all` | everything — full access |
+
+Enforced via Claude Code `--disallowedTools`. Per-playbook `permission` overrides the
+global default. Server-side gates (`DOCKER_WRITE_ENABLED` off, SSH read-only) remain the
+backstop. See [SECURITY.md](SECURITY.md).
+
+Other controls: a **Stop** button cancels the running agent; the Run tab shows
+**runs today / daily cap** and **queue depth**; **Preview** shows a playbook's fully
+rendered prompt before running; runs are **queued** (not rejected) when one is active.
+
 ## 5. Scheduling
 
-**Cron** is standard 5-field (`min hour day month weekday`), with a timezone.
-Examples: `0 3 * * *` (daily 03:00), `*/30 * * * *` (every 30 min),
-`0 8 * * 1` (Mondays 08:00).
+You don't have to write cron: the schedule form has a **preset builder** (Daily at a
+time / Hourly / Every N minutes / Weekly on a day) that fills the cron for you. Raw
+cron stays available as "Custom" and is standard 5-field
+(`min hour day month weekday`): `0 3 * * *` (daily 03:00), `*/30 * * * *` (every 30
+min), `0 8 * * 1` (Mondays 08:00).
 
 - Add/remove schedules in the Agents panel, or via the API (below).
 - A misfired job (container was down) coalesces and runs once with a 1h grace.

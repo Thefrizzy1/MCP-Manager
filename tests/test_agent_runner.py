@@ -14,6 +14,30 @@ def test_build_cmd_basic():
     assert cmd[-1] == "do the thing"  # prompt is last
 
 
+def test_build_cmd_disallowed_and_model_override():
+    cmd = ar.build_agent_cmd("hi", {"skip_permissions": True, "allowed_tools": ["mcp__plutus"], "model": "sonnet"},
+                             disallowed_tools=["mcp__plutus__docker_stop_container"], model="opus")
+    assert "--disallowedTools" in cmd and "mcp__plutus__docker_stop_container" in cmd
+    # explicit model arg overrides the config model
+    assert cmd[cmd.index("--model") + 1] == "opus"
+
+
+def test_runs_today_counts_today(tmp_path):
+    import datetime
+    today = datetime.datetime.now().astimezone().strftime("%Y%m%d")
+    ar.save_run(tmp_path, {"id": today + "-120000-aaaa", "cost_usd": 0})
+    ar.save_run(tmp_path, {"id": "20200101-000000-bbbb", "cost_usd": 0})  # old
+    assert ar.runs_today(tmp_path) == 1
+
+
+def test_auth_info_session_token_mode(monkeypatch):
+    from core import env_store
+    monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x"})
+    info = ar.auth_info()
+    assert info["mode"] == "session_token"
+    assert info["session_token"] is True
+
+
 def test_build_cmd_minimal():
     cmd = ar.build_agent_cmd("hi", {"skip_permissions": False, "allowed_tools": [], "model": ""})
     assert "--dangerously-skip-permissions" not in cmd

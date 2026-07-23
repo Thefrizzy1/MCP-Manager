@@ -2,6 +2,35 @@
 
 Notable changes to Plutus. Dates are approximate; this project is single-maintainer.
 
+## Unreleased — agent hardening & UX overhaul
+
+Audit-driven pass on the agent subsystem.
+
+### Security
+- **Tool permission system** (`core/agent_permissions.py`) — the headless agent's tool
+  access is capped by a level: `strict_read` / `safe` (default) / `all`, enforced via Claude
+  Code `--disallowedTools`. `safe` allows note-writing but blocks docker control, deletes,
+  ssh, HA control, email, torrent delete, n8n triggers, and image generation. Per-playbook
+  override. Addresses the prompt-injection blast-radius of research playbooks reading
+  untrusted web pages. Documented in `docs/SECURITY.md`.
+- `data/agent_mcp.json` (holds the MCP bearer token) written `0600`.
+
+### Web login (session/OAuth token, never an API key)
+- **Connect Claude account** in the Agents Settings tab: paste a `claude setup-token`
+  token, or run the OAuth flow in-dashboard (get the link, approve, paste the code).
+  Stored as `CLAUDE_CODE_OAUTH_TOKEN` and used immediately — no `docker exec`.
+  (`core/agent_login.py`, `/api/v1/agent/login/*`.)
+
+### Operability
+- **Stop button** cancels the running agent (`/api/v1/agent/cancel`).
+- **Run queue** — runs are queued (serial) instead of rejected when one is active.
+- **Daily run cap** (`max_runs_per_day`) protects the plan usage window.
+- **Schedule presets** — Daily/Hourly/Every-N/Weekly builder generates cron; no hand-writing.
+- **Preview** a playbook's fully-rendered prompt before running.
+- Per-playbook **model** and **permission** overrides; **build-with-Claude** refuses while a
+  run is active (no double `claude` processes).
+- Header shows billing mode, runs-today/cap, and queue depth.
+
 ## Unreleased — full Agents page
 
 - **Dedicated `/agents` full page** (`ui/agents_page.py` + `ui/static/agents.js`) with

@@ -45,6 +45,8 @@ internet surface (see [§5](#5-exposure-posture)).
 | Env tampering | UI-writable env keys allowlisted; `PATH`/`LD_PRELOAD`/etc. blocked; newlines rejected; atomic writes | `config.py`, `core/env_store.py` |
 | Destructive actions | Docker writes gated by `DOCKER_WRITE_ENABLED` (default off); SSH hosts read-only by default | `tools/system.py`, `tools/ssh_smb.py` |
 | Input validation | All tool inputs are pydantic models with `extra="forbid"` | `tools/*` |
+| Agent blast-radius | Headless agent's tool access is capped by a permission level (`strict_read`/`safe`/`all`, default `safe`); destructive tools blocked via Claude Code `--disallowedTools` | `core/agent_permissions.py` |
+| Agent auth | Web login stores a session/OAuth token (`CLAUDE_CODE_OAUTH_TOKEN`), never an API key | `core/agent_login.py` |
 | Secrets at rest | `.env`, `data/` excluded from image & VCS | `.dockerignore`, `.gitignore` |
 
 No `eval`/`exec`/`pickle`/`yaml.load`/`shell=True` is used anywhere in the codebase.
@@ -75,6 +77,27 @@ consolidation of the two `.env` writers into `core/env_store.py` also closed
 information-leak and data-race inconsistencies surfaced during the review.
 
 ---
+
+## 3b. Agent prompt-injection & permission model
+
+The headless agent runs with `--dangerously-skip-permissions` and, when researching,
+reads untrusted web pages. Treat any such page as capable of trying to steer the agent
+into destructive tool calls. Mitigations, layered:
+
+- **Permission level** (`core/agent_permissions.py`) caps which Plutus tools the agent may
+  invoke — default `safe` blocks docker control, deletes, `ssh_run`/`ssh_exec`, HA control,
+  `send_email`, torrent delete, `n8n_trigger_webhook`, and image generation, while still
+  allowing note-writing so research can persist. `strict_read` blocks all writes.
+- **Server-side gates** remain the backstop even at `all`: `DOCKER_WRITE_ENABLED=false`
+  and SSH hosts `readonly: true` mean the most dangerous actions are refused by the tools
+  themselves regardless of what the agent is talked into.
+- **Cost/usage guards**: `max_cost_usd`, `timeout_min`, `max_runs_per_day`, single-run
+  serialization, and a Stop button.
+- Keep research playbooks at `safe`; only raise a playbook to `all` when you trust its task
+  and have a reason.
+
+The agent's session token and the MCP bearer token live under `data/` (git/image-excluded);
+`data/agent_mcp.json` is written `0600`.
 
 ## 4. Hardening checklist
 
