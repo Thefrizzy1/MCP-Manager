@@ -40,15 +40,17 @@ The image includes Node.js and Claude Code. Authenticate the agent once — and 
 method you choose decides how it's billed. **All the recommended paths use a
 session/OAuth token from your Claude subscription — never an API key.**
 
-**Option A0 — web login from the dashboard (no container shell):** Agents page →
-**Settings** → *Connect Claude account*. Either
-- paste a token from `claude setup-token` (run it on any machine signed into your
-  Claude account), or
-- click **Log in via browser**, open the authorization link, approve, and paste the
-  code back.
-
+**Option A0 — web login from the dashboard (no container shell, recommended):**
+Agents page → **Settings** → *Connect Claude account*. On any machine signed into
+your Claude account, run `claude setup-token` in a terminal (it opens your browser,
+you approve, and it prints a token); paste that token into the dashboard and Save.
 Plutus stores it as `CLAUDE_CODE_OAUTH_TOKEN` and the agent uses it immediately (no
-restart). This is the easiest way and needs no `docker exec`.
+restart, no `docker exec`).
+
+> There's intentionally no "click to log in via browser inside the dashboard": the
+> container has no browser and the OAuth localhost callback isn't reachable, so that
+> flow can't work. Running `setup-token` on your own machine and pasting the token is
+> the supported path.
 
 **Option A — terminal login with your Claude subscription:**
 

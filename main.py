@@ -586,21 +586,6 @@ async def api_v1_agent_login_token(body: LoginTokenBody, creds=Depends(verify_au
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
-@ui_app.post("/api/v1/agent/login/start")
-async def api_v1_agent_login_start(creds=Depends(verify_auth)):
-    return await asyncio.to_thread(agent_login.start_interactive)
-
-
-class LoginCodeBody(BaseModel):
-    code: str = Field(..., min_length=1, max_length=4000)
-
-
-@ui_app.post("/api/v1/agent/login/finish")
-async def api_v1_agent_login_finish(body: LoginCodeBody, creds=Depends(verify_auth)):
-    res = await asyncio.to_thread(agent_login.finish_interactive, body.code)
-    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
-
-
 @ui_app.get("/api/v1/agent/stream")
 async def api_v1_agent_stream(creds=Depends(verify_auth)):
     """Server-sent live console for the current/last agent run."""

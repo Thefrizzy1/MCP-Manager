@@ -2,6 +2,23 @@
 
 Notable changes to Plutus. Dates are approximate; this project is single-maintainer.
 
+## Unreleased — Agents page redesign, app-wide teal palette, audit
+
+- **Agents page redesigned** (`ui/agents_page.py`): a persistent launcher (prompt +
+  one-click playbook chips) at the top, collapsible live console, and powerful controls
+  (permissions, model, login, scheduling, editing) organised into clean tabbed cards —
+  progressive disclosure. New button/card/field/tab design system in `dashboard.css`.
+- **App-wide colour palette** recolored to an aqua/teal system (turquoise primary,
+  verdigris secondary, light-green success, aquamarine highlight, dark-teal depth) across
+  the whole dashboard, both dark and light modes, via CSS variables.
+- **Fixed the broken "log in via browser" flow** — removed the in-container OAuth capture
+  (a headless container can't run the browser handshake) and its endpoints; the reliable
+  token-paste path (`claude setup-token` → paste) is now the single, clearly-documented way.
+- Fixed the header showing "not connected" when a session token was set (`loadState`
+  didn't handle the `session_token` auth mode; also corrected a stale CSS class).
+- Documented the agent audit in `docs/AGENT_AUDIT.md`.
+- Verified every agent/schedule endpoint end-to-end via a TestClient smoke (24/24).
+
 ## Unreleased — agent hardening & UX overhaul
 
 Audit-driven pass on the agent subsystem.
