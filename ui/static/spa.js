@@ -245,6 +245,7 @@ async function pageAgents(){
   const c=page('Agents','Launch, schedule and monitor headless agents',
     '<button class="btn" onclick="agToggleWizard()">＋ New agent</button>');
   c.innerHTML='<div id="ag-wizard" class="hidden"></div>'+
+    '<div class="grid stat-grid" id="ag-usage" style="margin-bottom:16px"></div>'+
     '<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Running &amp; recent</h3><div class="spacer"></div><span class="hint" id="ag-budget"></span></div><div id="ag-running"><p class="hint">Loading…</p></div></div>'+
     '<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Scheduled jobs</h3></div><div id="ag-sched"><p class="hint">Loading…</p></div></div>'+
     '<details class="card" id="ag-console-card"><summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none">Live console</summary><pre class="out" id="ag-console" style="margin-top:12px">Idle.</pre></details>';
@@ -256,6 +257,7 @@ async function agLoadStatus(){
   try{const d=await api('/api/v1/agent/status');_agentCfg=d.config||{};
     const am=(d.auth&&d.auth.mode)||'none';const onPlan=(am==='session_token'||am==='subscription');
     $('#ag-budget').textContent=(onPlan?'plan · ':(am==='api_key'?'API billing · ':'⚠ not connected · '))+'today '+(d.runs_today||0)+'/'+(d.max_runs_per_day||0)+' · $'+(d.total_cost_usd||0);
+    agRenderUsage(d);
     const runs=(await api('/api/v1/agent/runs')).runs||[];
     const running=d.running;
     let html='';
@@ -264,6 +266,20 @@ async function agLoadStatus(){
     $('#ag-running').innerHTML=html||'<p class="hint">No runs yet.</p>';
     if(running&&(!_agentES))agStream();
   }catch(e){$('#ag-running').innerHTML='<p class="hint">Error: '+esc(e)+'</p>';}
+}
+function agRenderUsage(d){const box=$('#ag-usage');if(!box)return;
+  const cap=+(d.max_runs_per_day||0),used=+(d.runs_today||0),left=cap?Math.max(0,cap-used):null;
+  const am=(d.auth&&d.auth.mode)||'none';const onPlan=(am==='session_token'||am==='subscription');
+  const auth=onPlan?{n:'Plan',l:'🟢 Connected',cls:'ok'}:(am==='api_key'?{n:'API',l:'API billing',cls:'warn'}:{n:'Off',l:'🔴 Not connected',cls:'bad'});
+  const runCls=cap&&used>=cap?'bad':(cap&&used>=cap*0.8?'warn':'');
+  const stats=[
+    {n:used+(cap?('/'+cap):''),l:'Runs today',cls:runCls},
+    {n:left==null?'∞':left,l:'Remaining today',cls:left===0?'bad':''},
+    {n:'$'+(Math.round((d.total_cost_usd||0)*100)/100),l:'Cost (all-time)',cls:''},
+    {n:d.queue_depth||0,l:'Queued',cls:(d.queue_depth||0)>0?'warn':''},
+    auth,
+  ];
+  box.innerHTML=stats.map(s=>'<div class="card stat '+s.cls+'"><div class="n">'+esc(''+s.n)+'</div><div class="l">'+s.l+'</div></div>').join('');
 }
 function agStream(){const con=$('#ag-console');$('#ag-console-card').open=true;if(_agentES){try{_agentES.close();}catch{}}_agentES=new EventSource('/api/v1/agent/stream');con.textContent='';_agentES.onmessage=ev=>{let l=ev.data;try{l=JSON.parse(ev.data);}catch{}con.textContent+=(con.textContent&&con.textContent!=='Idle.'?'\n':'')+l;con.scrollTop=con.scrollHeight;};_agentES.addEventListener('end',()=>{_agentES.close();_agentES=null;agLoadStatus();});_agentES.onerror=()=>{if(_agentES){_agentES.close();_agentES=null;}};}
 async function agStop(){try{await api('/api/v1/agent/cancel',{method:'POST'});}catch{}}
