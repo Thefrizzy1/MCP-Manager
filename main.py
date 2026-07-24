@@ -390,7 +390,7 @@ def _tool_count():
     return tools.count()
 
 @ui_app.get("/", response_class=HTMLResponse)
-async def root(): return RedirectResponse(url="/ui")
+async def root(): return RedirectResponse(url="/app")
 
 @ui_app.get("/ui", response_class=HTMLResponse)
 async def ui(creds=Depends(verify_auth)):
@@ -407,9 +407,10 @@ async def spa(creds=Depends(verify_auth)):
     return HTMLResponse(render_spa(), headers={"Cache-Control": "no-store"})
 
 
-@ui_app.get("/agents", response_class=HTMLResponse)
+@ui_app.get("/agents")
 async def agents_page(creds=Depends(verify_auth)):
-    return HTMLResponse(render_agents_page(), headers={"Cache-Control": "no-store"})
+    # The agent workspace now lives inside the SPA.
+    return RedirectResponse(url="/app#/agents")
 
 
 @ui_app.get("/health/refresh")

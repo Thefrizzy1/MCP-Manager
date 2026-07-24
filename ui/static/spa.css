@@ -123,4 +123,14 @@ pre.out{background:var(--bg);border:1px solid var(--b);border-radius:8px;padding
 .set-row label{font-size:13px;min-width:170px;color:var(--tx)}
 .set-row .hint{flex-basis:100%}
 .hidden{display:none!important}
+/* agent workspace */
+.ag-field{display:flex;flex-direction:column;gap:5px}
+.ag-field label{font-size:11px;color:var(--dim);font-weight:600}
+.ag-field .field,.ag-field textarea.field{width:100%;font-family:inherit}
+.ag-card-run{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--b);border-radius:9px;background:var(--bg);margin-bottom:8px}
+.ag-item-main{min-width:0;flex:1}
+.card.ag-accent{border-left:3px solid var(--ac)}
+.dot.breathing::before{animation:breathe 1.7s ease-in-out infinite}
+@keyframes breathe{0%,100%{box-shadow:0 0 0 0 rgba(122,229,130,.55)}50%{box-shadow:0 0 0 6px rgba(122,229,130,0)}}
+details#ag-console-card>summary::-webkit-details-marker{display:none}
 @media(max-width:760px){.sb{position:fixed;left:0;z-index:50;transform:translateX(-100%);transition:.2s}.sb.open{transform:none}.main{width:100%}}

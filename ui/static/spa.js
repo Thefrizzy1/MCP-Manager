@@ -141,7 +141,42 @@ function connApply(){
 async function connRefresh(){try{await api('/health/refresh');pageConnections();}catch(e){alert(e);}}
 async function connTestAll(btn){btn.disabled=true;btn.textContent='Testing…';try{await api('/health/full-report',{method:'POST'});await pageConnections();}catch(e){alert(e);}btn.disabled=false;}
 async function connTest(id,btn){if(btn){btn.disabled=true;btn.textContent='…';}try{const d=await api('/service/test/'+id);const row=_conns.find(x=>x.id===id);if(row)row.health=d.ok?true:(d.tri==='uncfg'?null:false);connApply();}catch(e){alert(e);}if(btn)btn.disabled=false;}
-function connAdd(){location.hash='#/settings';setTimeout(()=>alert('Add a connection under Settings → Custom integrations (full add-connection form coming in the next phase).'),50);}
+// ── Modal helper ──────────────────────────────────────────────────────
+function modal(title,bodyHtml,footHtml){
+  closeModal();
+  const bg=el('div','drawer-bg');bg.id='modal-bg';bg.style.zIndex='60';bg.onclick=e=>{if(e.target===bg)closeModal();};
+  const box=el('div','card');box.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:61;width:min(560px,94vw);max-height:88vh;overflow:auto';
+  box.innerHTML='<div class="card-h"><h3>'+esc(title)+'</h3><div class="spacer"></div><button class="btn btn-ico" onclick="closeModal()">✕</button></div>'+bodyHtml+(footHtml?('<div class="set-row" style="margin-top:14px">'+footHtml+'</div>'):'');
+  bg.appendChild(box);document.body.appendChild(bg);requestAnimationFrame(()=>bg.classList.add('open'));
+}
+function closeModal(){const m=$('#modal-bg');if(m)m.remove();}
+
+async function connAdd(){
+  modal('Add connection',
+    '<p class="hint" style="margin-bottom:12px">Add a custom service card (base-URL env + health path). Stored in data/custom_integrations.json.</p>'+
+    '<div class="set-row"><label>Name</label><input class="field" id="ac-label" placeholder="Audiobookshelf" style="flex:1"></div>'+
+    '<div class="set-row"><label>Id (slug)</label><input class="field" id="ac-id" placeholder="audiobookshelf" style="flex:1"></div>'+
+    '<div class="set-row"><label>Env key (URL)</label><input class="field" id="ac-urlenv" placeholder="AUDIOBOOKSHELF_URL" style="flex:1"></div>'+
+    '<div class="set-row"><label>URL</label><input class="field" id="ac-url" placeholder="http://192.168.1.111:13378" style="flex:1"></div>'+
+    '<div class="set-row"><label>Health path</label><input class="field" id="ac-health" value="/" style="flex:1"></div>',
+    '<button class="btn btn-primary" onclick="connAddSave(this)">Add connection</button><span class="hint" id="ac-msg"></span>');
+}
+async function connAddSave(btn){
+  const id=($('#ac-id').value||'').trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
+  const label=($('#ac-label').value||'').trim();
+  if(!id||!label){$('#ac-msg').textContent='Name and id required.';return;}
+  const one={id,label,description:label,url_env:($('#ac-urlenv').value||id.toUpperCase()+'_URL').trim(),url_placeholder:($('#ac-url').value||'').trim(),health_path:($('#ac-health').value||'/').trim()};
+  btn.disabled=true;
+  try{
+    const full=await api('/settings/custom-integrations');
+    const list=Array.isArray(full.integrations)?full.integrations:[];
+    list.push(one);
+    await api('/settings/custom-integrations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:full.version||1,integrations:list})});
+    // also save the URL value if provided
+    if(one.url_placeholder)await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[one.url_env]:one.url_placeholder})});
+    closeModal();pageConnections();
+  }catch(e){$('#ac-msg').textContent='Error: '+e;btn.disabled=false;}
+}
 
 async function connDetails(id){
   const s=_conns.find(x=>x.id===id);if(!s)return;
@@ -198,29 +233,141 @@ async function doSlice(){const q=($('#s-intent')?.value||'').trim();try{const d=
   $('#s-out').innerHTML='<div class="stat" style="margin-bottom:12px"><div class="n">'+d.exposed+'</div><div class="l">exposed · '+d.blocked+' blocked · '+d.matched+'/'+d.total+' matched</div></div><div class="chips">'+secs+'</div>';
 }catch(e){$('#s-out').innerHTML='<p class="hint">Error: '+esc(e)+'</p>';}}
 
-// ── Agents / Chat ─────────────────────────────────────────────────────
-function pageAgents(){const c=page('Agents','Headless Claude Code automation');
-  c.innerHTML='<div class="empty"><div class="big">🤖</div><h3>Agent platform</h3><p>Run and schedule headless agents that drive your MCP tools. The full agent workspace opens in a dedicated view.</p><div style="margin-top:18px"><a class="btn btn-primary" href="/agents">Open Agents workspace →</a></div></div>';}
+// ── Agents workspace ──────────────────────────────────────────────────
+let _agentCfg={},_agentES=null,_healthyConns=[];
+async function pageAgents(){
+  const c=page('Agents','Launch, schedule and monitor headless agents',
+    '<button class="btn" onclick="agToggleWizard()">＋ New agent</button>');
+  c.innerHTML='<div id="ag-wizard" class="hidden"></div>'+
+    '<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Running &amp; recent</h3><div class="spacer"></div><span class="hint" id="ag-budget"></span></div><div id="ag-running"><p class="hint">Loading…</p></div></div>'+
+    '<div class="card" style="margin-bottom:16px"><div class="card-h"><h3>Scheduled jobs</h3></div><div id="ag-sched"><p class="hint">Loading…</p></div></div>'+
+    '<details class="card" id="ag-console-card"><summary style="cursor:pointer;font-weight:700;font-size:14px;list-style:none">Live console</summary><pre class="out" id="ag-console" style="margin-top:12px">Idle.</pre></details>';
+  await Promise.all([agLoadStatus(),agLoadSched(),agLoadHealthy()]);
+  agRenderWizard();
+}
+async function agLoadHealthy(){try{const d=await api('/api/v1/dashboard?sections=services');_healthyConns=(d.services||[]).filter(s=>s.configured);}catch{_healthyConns=[];}}
+async function agLoadStatus(){
+  try{const d=await api('/api/v1/agent/status');_agentCfg=d.config||{};
+    const am=(d.auth&&d.auth.mode)||'none';const onPlan=(am==='session_token'||am==='subscription');
+    $('#ag-budget').textContent=(onPlan?'plan · ':(am==='api_key'?'API billing · ':'⚠ not connected · '))+'today '+(d.runs_today||0)+'/'+(d.max_runs_per_day||0)+' · $'+(d.total_cost_usd||0);
+    const runs=(await api('/api/v1/agent/runs')).runs||[];
+    const running=d.running;
+    let html='';
+    if(running)html+='<div class="ag-card-run"><span class="dot ok breathing"></span><div class="ag-item-main"><strong>'+esc(d.current_label||'agent')+'</strong><div class="hint">running…</div></div><button class="btn btn-sm btn-danger" onclick="agStop()">Stop</button></div>';
+    html+=runs.slice(0,8).map(r=>{const ic=r.cancelled?'⏹':(r.ok?'🟢':(r.error?'🔴':'•'));return '<div class="ag-card-run"><span>'+ic+'</span><div class="ag-item-main"><strong>'+esc(r.label||r.id)+'</strong> '+(r.cost_usd!=null?('<span class="muted">$'+r.cost_usd+'</span>'):'')+'<div class="hint">'+esc((r.result||r.error||'').slice(0,90))+'</div></div><span class="muted">'+esc((r.started||'').replace('T',' ').slice(5,16))+'</span></div>';}).join('');
+    $('#ag-running').innerHTML=html||'<p class="hint">No runs yet.</p>';
+    if(running&&(!_agentES))agStream();
+  }catch(e){$('#ag-running').innerHTML='<p class="hint">Error: '+esc(e)+'</p>';}
+}
+function agStream(){const con=$('#ag-console');$('#ag-console-card').open=true;if(_agentES){try{_agentES.close();}catch{}}_agentES=new EventSource('/api/v1/agent/stream');con.textContent='';_agentES.onmessage=ev=>{let l=ev.data;try{l=JSON.parse(ev.data);}catch{}con.textContent+=(con.textContent&&con.textContent!=='Idle.'?'\n':'')+l;con.scrollTop=con.scrollHeight;};_agentES.addEventListener('end',()=>{_agentES.close();_agentES=null;agLoadStatus();});_agentES.onerror=()=>{if(_agentES){_agentES.close();_agentES=null;}};}
+async function agStop(){try{await api('/api/v1/agent/cancel',{method:'POST'});}catch{}}
+async function agLoadSched(){try{const d=await api('/api/v1/schedules');const items=(d.schedules||[]).filter(s=>s.kind==='agent'||s.kind==='task');
+  $('#ag-sched').innerHTML=items.length?('<table class="tbl"><thead><tr><th>Name</th><th>Schedule</th><th>Next run</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody>'+items.map(s=>'<tr><td class="name">'+esc(s.name)+'</td><td class="muted">'+esc(s.cron)+'</td><td class="muted">'+esc(s.next_run?s.next_run.replace('T',' ').slice(0,16):'—')+'</td><td><span class="dot '+(s.enabled?'ok':'warn')+'">'+(s.enabled?'Enabled':'Paused')+'</span></td><td><div class="row-actions"><button class="btn btn-sm" onclick="agSchToggle(\''+s.id+'\','+(!s.enabled)+')">'+(s.enabled?'Pause':'Resume')+'</button><button class="btn btn-sm" onclick="agSchRun(\''+s.id+'\')">Run</button><button class="btn btn-sm btn-danger" onclick="agSchDel(\''+s.id+'\')">Delete</button></div></td></tr>').join('')+'</tbody></table>'):'<p class="hint">No scheduled agents.</p>';
+}catch(e){$('#ag-sched').innerHTML='<p class="hint">Error: '+esc(e)+'</p>';}}
+async function agSchToggle(id,en){try{const s=(await api('/api/v1/schedules')).schedules.find(x=>x.id===id);if(!s)return;await api('/api/v1/schedules/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:s.name,kind:s.kind,cron:s.cron,timezone:s.timezone,enabled:en,payload:s.payload})});agLoadSched();}catch(e){alert(e);}}
+async function agSchRun(id){try{await api('/api/v1/schedules/'+id+'/run-now',{method:'POST'});setTimeout(()=>{agStream();agLoadStatus();},400);}catch(e){alert(e);}}
+async function agSchDel(id){if(!confirm('Delete schedule?'))return;try{await api('/api/v1/schedules/'+id,{method:'DELETE'});agLoadSched();}catch(e){alert(e);}}
+
+function agToggleWizard(){const w=$('#ag-wizard');w.classList.toggle('hidden');if(!w.classList.contains('hidden'))w.scrollIntoView({behavior:'smooth'});}
+function agRenderWizard(){
+  const cfg=_agentCfg||{};
+  $('#ag-wizard').innerHTML='<div class="card ag-accent" style="margin-bottom:16px;border-left:3px solid var(--ac)">'+
+    '<div class="card-h"><h3>Launch an agent</h3></div>'+
+    '<div class="grid" style="grid-template-columns:1fr 1fr;gap:12px">'+
+      '<div class="ag-field"><label>Name</label><input class="field" id="w-name" placeholder="Morning research"></div>'+
+      '<div class="ag-field"><label>Model</label><input class="field" id="w-model" list="w-models" placeholder="default"><datalist id="w-models"><option value="opus"><option value="sonnet"><option value="haiku"></datalist></div>'+
+    '</div>'+
+    '<div class="ag-field" style="margin-top:12px"><label>Goal / prompt</label><textarea class="field" id="w-prompt" rows="3" placeholder="What should the agent do?"></textarea></div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">'+
+      '<div class="ag-field"><label>Schedule</label><select class="field" id="w-sched" onchange="agWizSched()"><option value="now">Run now</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="cron">Custom cron</option></select></div>'+
+      '<div class="ag-field" id="w-time-wrap"><label>Time</label><input type="time" class="field" id="w-time" value="07:00"></div>'+
+      '<div class="ag-field hidden" id="w-dow-wrap"><label>Day</label><select class="field" id="w-dow"><option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option><option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option></select></div>'+
+      '<div class="ag-field hidden" id="w-cron-wrap"><label>Cron</label><input class="field" id="w-cron" value="0 7 * * *"></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">'+
+      '<div class="ag-field"><label>MCP access level</label><select class="field" id="w-perm"><option value="strict_read">Strict read</option><option value="safe" selected>Safe (reads + notes)</option><option value="all">All tools</option></select></div>'+
+      '<div class="ag-field"><label>Timeout (min)</label><input type="number" class="field" id="w-timeout" value="'+(cfg.timeout_min||20)+'" min="1" max="120"></div>'+
+    '</div>'+
+    '<div class="ag-field" style="margin-top:14px"><label>MCP connections the agent may use</label>'+
+      '<div style="margin:6px 0"><button class="btn btn-sm" onclick="agWizSel(true)">Select all</button> <button class="btn btn-sm" onclick="agWizSel(false)">Select none</button></div>'+
+      '<div id="w-mcp" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;max-height:180px;overflow:auto">'+
+        _healthyConns.map(s=>{const st=statusOf(s);return '<label class="chip" style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" class="w-mcp-c" value="'+s.id+'" checked><span class="dot '+st.cls+'" style="width:auto"></span>'+esc(s.label)+'</label>';}).join('')||'<span class="hint">No configured connections.</span>'+
+      '</div><p class="hint" style="margin-top:4px">Access is enforced by the level above; per-server ACLs are on the roadmap.</p></div>'+
+    '<div class="set-row" style="margin-top:14px"><button class="btn btn-primary" onclick="agWizLaunch(this)">🚀 Launch</button><span class="hint" id="w-msg"></span></div>'+
+  '</div>';
+}
+function agWizSched(){const v=$('#w-sched').value;$('#w-time-wrap').classList.toggle('hidden',!(v==='daily'||v==='weekly'));$('#w-dow-wrap').classList.toggle('hidden',v!=='weekly');$('#w-cron-wrap').classList.toggle('hidden',v!=='cron');}
+function agWizSel(on){document.querySelectorAll('.w-mcp-c').forEach(c=>c.checked=on);}
+function agWizCron(){const v=$('#w-sched').value;const t=($('#w-time').value||'07:00').split(':');const hh=+t[0],mm=+t[1];if(v==='daily')return mm+' '+hh+' * * *';if(v==='weekly')return mm+' '+hh+' * * '+$('#w-dow').value;if(v==='cron')return $('#w-cron').value.trim();return null;}
+async function agWizLaunch(btn){
+  const name=($('#w-name').value||'agent').trim(),prompt=($('#w-prompt').value||'').trim();
+  if(!prompt){$('#w-msg').textContent='Enter a goal/prompt.';return;}
+  btn.disabled=true;$('#w-msg').textContent='…';
+  try{
+    // save launch options as defaults
+    await api('/api/v1/agent/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_permission:$('#w-perm').value,timeout_min:+$('#w-timeout').value||20,model:($('#w-model').value||'').trim()})});
+    const cron=agWizCron();
+    if(cron){await api('/api/v1/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind:'agent',cron,timezone:'Europe/Berlin',enabled:true,payload:{prompt}})});$('#w-msg').textContent='Scheduled.';agLoadSched();}
+    else{await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name})});$('#w-msg').textContent='Launched.';agStream();agLoadStatus();}
+    setTimeout(()=>{agToggleWizard();},600);
+  }catch(e){$('#w-msg').textContent='Error: '+e;}
+  btn.disabled=false;
+}
 function pageChat(){const c=page('Chat','Coming soon');
   c.innerHTML='<div class="empty"><div class="big">💬</div><h3>Chat — Coming soon</h3><p>A conversational interface to talk to your homelab through Plutus\' tools. This lands in a future release.</p></div>';}
 
 // ── Settings ──────────────────────────────────────────────────────────
 async function pageSettings(){
   const c=page('Settings','Configure Plutus');
-  const theme=document.documentElement.getAttribute('data-theme')||'dark';
   c.innerHTML=
     '<div class="set-sec"><h3>Appearance</h3>'+
       '<div class="set-row"><label>Theme</label><button class="btn" onclick="applyTheme(\'dark\')">Dark</button><button class="btn" onclick="applyTheme(\'light\')">Light</button></div></div>'+
-    '<div class="set-sec"><h3>MCP</h3>'+
-      '<div class="set-row"><label>Bearer auth</label><span class="hint" id="set-bearer">…</span></div>'+
-      '<div class="set-row"><label>Export client config</label><a class="btn" href="/ui#">Connection Manager (classic UI)</a><span class="hint">Full manager arrives in the redesigned Connections page.</span></div></div>'+
+    '<div class="set-sec"><h3>MCP endpoint</h3>'+
+      '<div class="set-row"><label>LAN URL</label><code id="set-lan" class="hint"></code></div>'+
+      '<div class="set-row"><label>Public HTTPS base</label><input class="field" id="set-pub" placeholder="https://mcp.your-ts.net" style="flex:1"></div>'+
+      '<div class="set-row"><label>LAN host</label><input class="field" id="set-host" style="flex:1"></div>'+
+      '<div class="set-row"><label></label><button class="btn btn-primary" onclick="setSaveEndpoints(this)">Save URLs</button><span class="hint">restart Plutus to apply</span></div>'+
+      '<div class="set-row"><label>Require bearer</label><input type="checkbox" id="set-req"><button class="btn" onclick="setSaveBearer()">Save</button></div>'+
+      '<div class="set-row"><label>Token</label><code id="set-tok" class="hint">…</code><button class="btn" onclick="setGenToken(this)">Generate</button></div>'+
+      '<div class="set-row"><label>Connect a client</label><button class="btn" onclick="cmOpen()">Export config (Claude, Cursor, …)</button></div></div>'+
     '<div class="set-sec"><h3>Custom integrations</h3>'+
-      '<div class="set-row"><label>Add / edit</label><a class="btn" href="/ui" target="_blank">Open classic settings</a><span class="hint">The native add-connection form is coming to this page next phase.</span></div></div>'+
+      '<div class="set-row hint" style="flex-basis:100%">Extra service cards (JSON). Or use ＋ Add on the Connections page.</div>'+
+      '<textarea class="field" id="set-ci" spellcheck="false" style="width:100%;height:150px;font-family:ui-monospace,monospace;font-size:11px"></textarea>'+
+      '<div class="set-row"><button class="btn btn-primary" onclick="setSaveCI(this)">Save integrations</button><span class="hint" id="set-ci-msg"></span></div></div>'+
+    '<div class="set-sec"><h3>Defaults</h3>'+
+      '<div class="set-row"><label>Weather city</label><input class="field" id="set-city"><button class="btn" onclick="setSaveCity(this)">Save</button></div>'+
+      '<div class="set-row"><label>UI username</label><input class="field" id="set-user"></div>'+
+      '<div class="set-row"><label>New password</label><input type="password" class="field" id="set-pass" placeholder="blank = keep"><button class="btn" onclick="setSaveCreds(this)">Save</button></div></div>'+
+    '<div class="set-sec"><h3>Maintenance</h3>'+
+      '<div class="set-row"><button class="btn" onclick="setReset(\'urls\',this)">Reset URLs</button><button class="btn" onclick="setReset(\'weather\',this)">Reset weather</button><button class="btn btn-danger" onclick="setReset(\'custom_integrations\',this)">Clear custom cards</button></div></div>'+
     '<div class="set-sec"><h3>About</h3><div class="set-row"><label>Version</label><span id="set-ver" class="hint">…</span></div>'+
-      '<div class="set-row"><label>Classic dashboard</label><a class="btn" href="/ui">Open /ui</a></div></div>';
-  try{const d=await api('/api/v1/dashboard?sections=auth,networking');$('#set-bearer').textContent=d.auth&&d.auth.mcp_require_bearer?('Required'+(d.auth.mcp_bearer_configured?' · token set':' · no token!')):'Off';}catch{}
+      '<div class="set-row"><label>Bearer status</label><span class="hint" id="set-bearer">…</span></div></div>';
+  try{const d=await api('/api/v1/dashboard?sections=auth,networking');const n=d.networking||{};
+    $('#set-lan').textContent=n.http_local||'';$('#set-pub').value=n.public_base||'';$('#set-host').value=n.mcp_lan_host||'';$('#set-req').checked=!!(d.auth&&d.auth.mcp_require_bearer);
+    $('#set-bearer').textContent=d.auth&&d.auth.mcp_require_bearer?('Required'+(d.auth.mcp_bearer_configured?' · token set':' · NO token set!')):'Off';
+    $('#set-tok').textContent=d.auth&&d.auth.mcp_bearer_configured?'configured (hidden)':'not set';
+  }catch{}
+  try{const ci=await api('/settings/custom-integrations');$('#set-ci').value=JSON.stringify(ci,null,2);}catch{}
   try{const h=await api('/server/health');$('#set-ver').textContent='Plutus v'+(h.version||'?');}catch{}
+  $('#set-city').placeholder='Hamburg';
 }
+async function setSaveEndpoints(b){b.disabled=true;try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({PUBLIC_MCP_BASE:$('#set-pub').value.trim(),MCP_LAN_HOST:$('#set-host').value.trim()})});b.textContent='Saved';}catch(e){alert(e);}setTimeout(()=>{b.disabled=false;b.textContent='Save URLs';},1500);}
+async function setSaveBearer(){try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({MCP_REQUIRE_BEARER:$('#set-req').checked})});alert('Saved — takes effect within seconds.');}catch(e){alert(e);}}
+async function setGenToken(b){b.disabled=true;try{const d=await api('/settings/generate-token',{method:'POST'});$('#set-tok').textContent=d.token||'error';}catch(e){alert(e);}b.disabled=false;}
+async function setSaveCI(b){let o;try{o=JSON.parse($('#set-ci').value);}catch(e){$('#set-ci-msg').textContent='Invalid JSON';return;}b.disabled=true;try{await api('/settings/custom-integrations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(o)});$('#set-ci-msg').textContent='Saved — reload to see cards.';}catch(e){$('#set-ci-msg').textContent=''+e;}b.disabled=false;}
+async function setSaveCity(b){try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({WEATHER_DEFAULT_LOCATION:$('#set-city').value.trim()})});b.textContent='Saved';setTimeout(()=>b.textContent='Save',1200);}catch(e){alert(e);}}
+async function setSaveCreds(b){const d={UI_USERNAME:$('#set-user').value.trim()};const p=$('#set-pass').value;if(p)d.UI_PASSWORD=p;try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});alert('Saved — restart to apply.');}catch(e){alert(e);}}
+async function setReset(scope,b){if(!confirm('Reset '+scope+'?'))return;try{await api('/api/v1/settings/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scopes:[scope]})});alert('Reset done.');pageSettings();}catch(e){alert(e);}}
+// Connection Manager (export client configs)
+let _cmData=null;
+async function cmOpen(){
+  modal('Connect a client','<p class="hint" style="margin-bottom:10px">Download a ready-to-use config for any MCP client.</p><label class="hint" style="display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="cm-tok" onchange="cmLoad()"> embed bearer token</label><div id="cm-list"><span class="hint">Loading…</span></div><pre class="out hidden" id="cm-pre" style="margin-top:10px"></pre>','<button class="btn btn-primary hidden" id="cm-dl" onclick="cmDownload()">Download</button>');
+  cmLoad();
+}
+async function cmLoad(){try{const q=$('#cm-tok')&&$('#cm-tok').checked?'?include_token=1':'';_cmData=await api('/api/v1/mcp/connections'+q);$('#cm-list').innerHTML='<div class="chips">'+(_cmData.clients||[]).map(cc=>'<button class="chip" style="cursor:pointer" onclick="cmPick(\''+cc.id+'\')">'+esc(cc.label)+'</button>').join('')+'</div>';}catch(e){$('#cm-list').innerHTML='<span class="hint">Error: '+esc(e)+'</span>';}}
+let _cmSel=null;
+function cmPick(id){_cmSel=id;const cc=(_cmData.clients||[]).find(x=>x.id===id);if(!cc)return;const pre=$('#cm-pre');pre.classList.remove('hidden');pre.textContent=cc.content;$('#cm-dl').classList.remove('hidden');}
+function cmDownload(){const cc=(_cmData.clients||[]).find(x=>x.id===_cmSel);if(!cc)return;const b=new Blob([cc.content],{type:(cc.mime||'text/plain')+';charset=utf-8'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=cc.download_name||'mcp.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}
 
 // ── Router ────────────────────────────────────────────────────────────
 const ROUTES={dashboard:pageDashboard,connections:pageConnections,discover:pageDiscover,slicer:pageSlicer,agents:pageAgents,chat:pageChat,settings:pageSettings};
