@@ -313,7 +313,7 @@ function agRenderWizard(){
     '<div class="ag-field" style="margin-top:14px"><label>MCP connections the agent may use</label>'+
       '<div style="margin:6px 0"><button class="btn btn-sm" onclick="agWizSel(true)">Select all</button> <button class="btn btn-sm" onclick="agWizSel(false)">Select none</button></div>'+
       '<div id="w-mcp" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;max-height:180px;overflow:auto">'+
-        _healthyConns.map(s=>{const st=statusOf(s);return '<label class="chip" style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" class="w-mcp-c" value="'+s.id+'" checked><span class="dot '+st.cls+'" style="width:auto"></span>'+esc(s.label)+'</label>';}).join('')||'<span class="hint">No configured connections.</span>'+
+        (_healthyConns.map(s=>{const st=statusOf(s);return '<label class="chip" style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" class="w-mcp-c" value="'+s.id+'" checked><span class="dot '+st.cls+'" style="width:auto"></span>'+esc(s.label)+'</label>';}).join('')||'<span class="hint">No configured connections.</span>')+
       '</div><p class="hint" style="margin-top:4px">Unchecked connections are blocked for this run (Run now). Web/file/utility tools stay available.</p></div>'+
     '<div class="set-row" style="margin-top:14px"><button class="btn btn-primary" onclick="agWizLaunch(this)">🚀 Launch</button><span class="hint" id="w-msg"></span></div>'+
   '</div>';
