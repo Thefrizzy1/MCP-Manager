@@ -171,7 +171,11 @@ async function connAddSave(btn){
   const id=($('#ac-id').value||'').trim().toLowerCase().replace(/[^a-z0-9_]/g,'_');
   const label=($('#ac-label').value||'').trim();
   if(!id||!label){$('#ac-msg').textContent='Name and id required.';return;}
-  const one={id,label,description:label,url_env:($('#ac-urlenv').value||id.toUpperCase()+'_URL').trim(),url_placeholder:($('#ac-url').value||'').trim(),health_path:($('#ac-health').value||'/').trim()};
+  // Env var names must be UPPER_SNAKE (backend enforces ^[A-Z][A-Z0-9_]*$);
+  // normalize so a mixed-case entry doesn't fail with a confusing 400.
+  let urlEnv=(($('#ac-urlenv').value||id.toUpperCase()+'_URL').trim().toUpperCase().replace(/[^A-Z0-9_]/g,'_'));
+  if(!/^[A-Z]/.test(urlEnv))urlEnv='X_'+urlEnv;
+  const one={id,label,description:label,url_env:urlEnv,url_placeholder:($('#ac-url').value||'').trim(),health_path:($('#ac-health').value||'/').trim()};
   btn.disabled=true;
   try{
     const full=await api('/settings/custom-integrations');
