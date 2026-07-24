@@ -28,10 +28,8 @@ def mcp_urls(local_ip_hint: str = "192.168.1.111") -> dict[str, Any]:
     http_local = f"http://{local_ip_hint}:{cfg.mcp_port}/mcp"
     pub = (cfg.public_mcp_base or "").strip().rstrip("/")
     https_url = None
-    tls_ready = False
     if pub:
         if pub.startswith("https://"):
-            tls_ready = True
             https_url = pub + "/mcp"
         elif pub.startswith("http://"):
             https_url = pub + "/mcp"

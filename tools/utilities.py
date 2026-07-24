@@ -8,7 +8,7 @@ import urllib.parse
 from pathlib import Path
 
 import httpx
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
@@ -312,7 +312,7 @@ def register_utility_tools(mcp: FastMCP):
                         count += 1
 
             if not abstract and not topics:
-                result += f"No results found. Try a different search term.\n"
+                result += "No results found. Try a different search term.\n"
                 result += f"Direct search: https://duckduckgo.com/?q={params.query.replace(' ', '+')}\n"
 
             return result

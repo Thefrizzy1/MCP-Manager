@@ -3,14 +3,12 @@ tools/comfyui.py — ComfyUI tools
 Covers: queue, history, models, system info, interrupt
 """
 
-import json
 import httpx
-from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 
 from config import cfg
-from client import fmt_json, fmt_size, TIMEOUT, _handle_error
+from client import fmt_size, TIMEOUT, _handle_error
 
 
 def register_comfyui_tools(mcp: FastMCP):

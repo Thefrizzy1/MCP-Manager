@@ -5,7 +5,6 @@ Only works when Obsidian is open on the PC.
 """
 
 import httpx
-from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 

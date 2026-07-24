@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from core.service_registry import all_services, service_tool_map
+from core.service_registry import service_tool_map
 from core.tool_registry import tool_safety_level
 
 

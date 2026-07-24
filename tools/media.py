@@ -3,7 +3,6 @@ tools/media.py — Media server tools.
 Covers: Jellyfin, Sonarr, Radarr, Lidarr, Jellyseerr, qBittorrent
 """
 
-import json
 from contextlib import asynccontextmanager
 
 import httpx
@@ -12,7 +11,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 
 from config import cfg
-from client import arr_get, arr_post, arr_delete, lidarr_get, lidarr_post, fmt_json, fmt_size, TIMEOUT, _handle_error
+from client import arr_get, arr_post, lidarr_get, fmt_size, TIMEOUT, _handle_error
 
 
 def register_media_tools(mcp: FastMCP):

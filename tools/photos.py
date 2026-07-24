@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 
 from config import cfg
-from client import fmt_json, TIMEOUT, _handle_error
+from client import TIMEOUT, _handle_error
 
 
 def register_photo_tools(mcp: FastMCP):

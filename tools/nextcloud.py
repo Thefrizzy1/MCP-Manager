@@ -568,7 +568,7 @@ def register_nextcloud_tools(mcp: FastMCP):
             ical = re.sub(r"STATUS:[^\r\n]+", "STATUS:COMPLETED", ical)
             ical = re.sub(r"PERCENT-COMPLETE:[^\r\n]+", "PERCENT-COMPLETE:100", ical)
             if "PERCENT-COMPLETE" not in ical:
-                ical = ical.replace("STATUS:COMPLETED", f"STATUS:COMPLETED\r\nPERCENT-COMPLETE:100")
+                ical = ical.replace("STATUS:COMPLETED", "STATUS:COMPLETED\r\nPERCENT-COMPLETE:100")
             if "COMPLETED:" not in ical:
                 ical = ical.replace("STATUS:COMPLETED", f"STATUS:COMPLETED\r\nCOMPLETED:{now_str}")
 
@@ -1083,7 +1083,6 @@ def register_nextcloud_tools(mcp: FastMCP):
             result = f"## Nextcloud Notes ({len(notes)} total)\n\n"
             for note in notes[:params.limit]:
                 title = note.get("title", "Untitled")
-                modified = note.get("modified", 0)
                 category = note.get("category", "")
                 favorite = "⭐ " if note.get("favorite") else ""
                 note_id = note.get("id")

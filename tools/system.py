@@ -4,14 +4,13 @@ Covers: Docker, OMV, Ntfy, Filesystem
 """
 
 import os
-import json
 import httpx
 from typing import Optional
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
 
 from config import cfg
-from client import fmt_json, fmt_size, TIMEOUT, _handle_error
+from client import fmt_size, TIMEOUT, _handle_error
 from core.path_guard import is_within_any
 from core.redact import redact_secrets
 
@@ -525,9 +524,9 @@ def register_system_tools(mcp: FastMCP):
     async def fs_move_file(params: FsMoveInput) -> str:
         """Move or rename a file within allowed paths."""
         if not _check_path(params.source):
-            return f"Error: Source path not in allowed directories."
+            return "Error: Source path not in allowed directories."
         if not _check_path(params.destination):
-            return f"Error: Destination path not in allowed directories."
+            return "Error: Destination path not in allowed directories."
         try:
             import shutil
             os.makedirs(os.path.dirname(params.destination), exist_ok=True)
@@ -546,7 +545,7 @@ def register_system_tools(mcp: FastMCP):
     async def fs_recent_files(params: FsRecentInput) -> str:
         """List recently modified files in a directory."""
         if not _check_path(params.path):
-            return f"Error: Path not in allowed directories."
+            return "Error: Path not in allowed directories."
         try:
             import time
             cutoff = time.time() - (params.days * 86400)

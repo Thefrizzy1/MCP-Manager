@@ -6,7 +6,6 @@ SMB: list shares, autodiscover folders, read files from mounted shares
 import asyncio
 import json
 import os
-import subprocess
 from typing import Optional
 
 from pydantic import BaseModel, Field, ConfigDict

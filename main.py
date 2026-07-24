@@ -66,7 +66,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from mcp.server.fastmcp import FastMCP
-from config import DEFAULT_UI_PASSWORD, allow_empty_ui_password, cfg, is_ui_writable_env_key
+from config import DEFAULT_UI_PASSWORD, allow_empty_ui_password, cfg
 from core.batch_health import run_health_batch_for_ui
 from core.capabilities import CapabilityCatalog
 from core.dashboard_api import build_dashboard_payload

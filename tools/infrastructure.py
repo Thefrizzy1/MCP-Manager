@@ -3,7 +3,6 @@ tools/infrastructure.py — Infrastructure & security tools
 Covers: Syncthing, Tailscale, Fail2ban, Proton Bridge (plan), SSH exec, Test-All report
 """
 
-import os
 import re
 import json
 import asyncio
