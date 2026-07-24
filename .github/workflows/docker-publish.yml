@@ -1,11 +1,13 @@
-name: Build & publish Docker image
+name: CI & publish Docker image
 
-# Builds the container and pushes it to GitHub Container Registry (GHCR) so the
-# NAS can `docker compose pull` instead of building locally.
+# Runs the offline test suite + syntax/lint checks on every push and PR, and
+# (only when tests pass) builds the container and pushes it to GitHub Container
+# Registry (GHCR).
 #
 # Image: ghcr.io/thefrizzy1/mcp-manager
 #   - push to main        -> tags :latest and :main-<sha>
 #   - push a tag vX.Y.Z   -> tags :X.Y.Z, :X.Y, :latest
+#   - pull request        -> tests only, no publish
 #
 # No secrets to configure: GITHUB_TOKEN is provided automatically. Ensure the
 # repo's package visibility is set as you want under Packages settings.
@@ -14,6 +16,8 @@ on:
   push:
     branches: [main]
     tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -21,7 +25,37 @@ env:
   IMAGE_NAME: ${{ github.repository_owner }}/mcp-manager
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+          pip install pyflakes
+
+      - name: Check SPA JavaScript syntax
+        run: node --check ui/static/spa.js
+
+      - name: Lint (pyflakes — informational)
+        continue-on-error: true
+        run: python -m pyflakes main.py config.py core/*.py tools/*.py ui/*.py
+
+      - name: Run offline test suite
+        run: python -m pytest -q
+
   build-and-push:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
