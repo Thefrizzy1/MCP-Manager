@@ -145,7 +145,7 @@ function connApply(){
   $('#c-count').textContent=rows.length+' of '+_conns.length;
 }
 async function connRefresh(){try{await api('/health/refresh');pageConnections();}catch(e){alert(e);}}
-async function connTestAll(btn){btn.disabled=true;btn.textContent='Testing…';try{await api('/health/full-report',{method:'POST'});await pageConnections();}catch(e){alert(e);}btn.disabled=false;}
+async function connTestAll(btn){btn.disabled=true;btn.textContent='Testing…';try{const d=await api('/health/full-report',{method:'POST'});await pageConnections();modal('Health report','<pre class="out">'+esc(d.markdown||'(no report)')+'</pre>','<button class="btn" onclick="closeModal()">Close</button>');}catch(e){alert(e);}btn.disabled=false;}
 async function connTest(id,btn){if(btn){btn.disabled=true;btn.textContent='…';}try{const d=await api('/service/test/'+id);const row=_conns.find(x=>x.id===id);if(row)row.health=d.ok?true:(d.tri==='uncfg'?null:false);connApply();}catch(e){alert(e);}if(btn)btn.disabled=false;}
 // ── Modal helper ──────────────────────────────────────────────────────
 function modal(title,bodyHtml,footHtml){
@@ -341,6 +341,9 @@ async function pageSettings(){
       '<div class="set-row hint" style="flex-basis:100%">Extra service cards (JSON). Or use ＋ Add on the Connections page.</div>'+
       '<textarea class="field" id="set-ci" spellcheck="false" style="width:100%;height:150px;font-family:ui-monospace,monospace;font-size:11px"></textarea>'+
       '<div class="set-row"><button class="btn btn-primary" onclick="setSaveCI(this)">Save integrations</button><span class="hint" id="set-ci-msg"></span></div></div>'+
+    '<div class="set-sec"><h3>Tool exposure</h3>'+
+      '<div class="set-row hint" style="flex-basis:100%">Hide whole tool categories from every MCP client. Disabling a section stops those tools being offered — reconnect clients to apply.</div>'+
+      '<div id="set-gate" class="set-row" style="flex-wrap:wrap;gap:8px"><span class="hint">Loading…</span></div></div>'+
     '<div class="set-sec"><h3>Defaults</h3>'+
       '<div class="set-row"><label>Weather city</label><input class="field" id="set-city"><button class="btn" onclick="setSaveCity(this)">Save</button></div>'+
       '<div class="set-row"><label>UI username</label><input class="field" id="set-user"></div>'+
@@ -356,8 +359,13 @@ async function pageSettings(){
   }catch{}
   try{const ci=await api('/settings/custom-integrations');$('#set-ci').value=JSON.stringify(ci,null,2);}catch{}
   try{const h=await api('/server/health');$('#set-ver').textContent='Plutus v'+(h.version||'?');}catch{}
+  gateRender();
   $('#set-city').placeholder='Hamburg';
 }
+const GATE_SECTIONS=[['selfhosted','Self-hosted','Media, system, infra, automation'],['public','Public APIs','Weather, maps, search, finance'],['custom','Custom','Your custom integration cards']];
+async function gateRender(){const box=$('#set-gate');if(!box)return;let dis=[];try{const g=await api('/api/v1/tools/gate');dis=g.disabled_sections||[];}catch(e){box.innerHTML='<span class="hint">Unavailable: '+esc(''+e)+'</span>';return;}
+  box.innerHTML=GATE_SECTIONS.map(([id,name,desc])=>{const off=dis.indexOf(id)>=0;return '<div class="card" style="flex:1;min-width:190px;padding:12px;display:flex;flex-direction:column;gap:6px"><div style="display:flex;align-items:center;gap:8px"><span class="dot '+(off?'bad':'ok')+'"></span><strong>'+esc(name)+'</strong></div><div class="hint">'+esc(desc)+'</div><button class="btn btn-sm '+(off?'btn-primary':'btn-danger')+'" onclick="gateSec(\''+id+'\','+(off?'false':'true')+',this)">'+(off?'Enable':'Disable')+'</button></div>';}).join('');}
+async function gateSec(section,disabled,b){b.disabled=true;try{await api('/api/v1/tools/gate/section',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section,disabled})});await gateRender();}catch(e){alert(e);b.disabled=false;}}
 async function setSaveEndpoints(b){b.disabled=true;try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({PUBLIC_MCP_BASE:$('#set-pub').value.trim(),MCP_LAN_HOST:$('#set-host').value.trim()})});b.textContent='Saved';}catch(e){alert(e);}setTimeout(()=>{b.disabled=false;b.textContent='Save URLs';},1500);}
 async function setSaveBearer(){try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({MCP_REQUIRE_BEARER:$('#set-req').checked})});alert('Saved — takes effect within seconds.');}catch(e){alert(e);}}
 async function setGenToken(b){b.disabled=true;try{const d=await api('/settings/generate-token',{method:'POST'});$('#set-tok').textContent=d.token||'error';}catch(e){alert(e);}b.disabled=false;}
