@@ -327,11 +327,15 @@ async function agWizLaunch(btn){
   if(!prompt){$('#w-msg').textContent='Enter a goal/prompt.';return;}
   btn.disabled=true;$('#w-msg').textContent='…';
   try{
-    // save launch options as defaults
-    await api('/api/v1/agent/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_permission:$('#w-perm').value,timeout_min:+$('#w-timeout').value||20,model:($('#w-model').value||'').trim()})});
+    const perm=$('#w-perm').value;
+    const sel=[...document.querySelectorAll('.w-mcp-c:checked')].map(c=>c.value);
+    // Persist only run-invariant defaults (timeout, model). Permission and the
+    // per-connection selection travel with each run/schedule so an ad-hoc "All
+    // tools" launch never becomes the silent default for scheduled agents.
+    await api('/api/v1/agent/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({timeout_min:+$('#w-timeout').value||20,model:($('#w-model').value||'').trim()})});
     const cron=agWizCron();
-    if(cron){await api('/api/v1/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind:'agent',cron,timezone:'Europe/Berlin',enabled:true,payload:{prompt}})});$('#w-msg').textContent='Scheduled.';agLoadSched();}
-    else{const sel=[...document.querySelectorAll('.w-mcp-c:checked')].map(c=>c.value);await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name,permission:$('#w-perm').value,mcp_services:sel})});$('#w-msg').textContent='Launched.';agStream();agLoadStatus();}
+    if(cron){await api('/api/v1/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind:'agent',cron,timezone:'Europe/Berlin',enabled:true,payload:{prompt,permission:perm,mcp_services:sel}})});$('#w-msg').textContent='Scheduled.';agLoadSched();}
+    else{await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name,permission:perm,mcp_services:sel})});$('#w-msg').textContent='Launched.';agStream();agLoadStatus();}
     setTimeout(()=>{agToggleWizard();},600);
   }catch(e){$('#w-msg').textContent='Error: '+e;}
   btn.disabled=false;

@@ -266,8 +266,12 @@ def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
 
 
 def _run_agent_bg(prompt: str, label: str = "agent", *, permission: str | None = None,
-                  model: str | None = None, force: bool = False) -> None:
-    _enqueue_agent(prompt, label, permission=permission, model=model, force=force)
+                  model: str | None = None, force: bool = False,
+                  mcp_services: list[str] | None = None) -> None:
+    # mcp_services=None means "no per-connection restriction" (back-compat for
+    # callers and older schedules that never stored a selection).
+    _enqueue_agent(prompt, label, permission=permission, model=model, force=force,
+                   extra_disallowed=_agent_service_disallow(mcp_services))
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):

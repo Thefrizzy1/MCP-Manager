@@ -22,12 +22,12 @@ class PlutusScheduler:
         self.root = root
         self._sched = None
         self._available = False
-        self._run_agent: Callable[[str, str], None] | None = None
+        self._run_agent: Callable[..., None] | None = None
         self._run_tool: Callable[[str, dict], object] | None = None
         self._run_task: Callable[[str], None] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
-    def start(self, *, run_agent: Callable[[str, str], None], run_tool: Callable[[str, dict], object],
+    def start(self, *, run_agent: Callable[..., None], run_tool: Callable[[str, dict], object],
               run_task: Callable[[str], None] | None = None) -> bool:
         self._run_agent = run_agent
         self._run_tool = run_tool
@@ -84,7 +84,9 @@ class PlutusScheduler:
         def _job() -> None:
             try:
                 if kind == "agent" and self._run_agent:
-                    self._run_agent(payload.get("prompt", ""), f"sched:{name}")
+                    self._run_agent(payload.get("prompt", ""), f"sched:{name}",
+                                    permission=payload.get("permission") or None,
+                                    mcp_services=payload.get("mcp_services"))
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:
