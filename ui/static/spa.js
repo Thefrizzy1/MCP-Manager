@@ -3,6 +3,8 @@
 const $=(s,r=document)=>r.querySelector(s);
 const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
 const esc=s=>s==null?'':String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const jsesc=s=>String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+const fmtSize=n=>{n=+n||0;const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++;}return n.toFixed(i?1:0)+' '+u[i];};
 async function api(path,opts){const r=await fetch(path,opts);const t=await r.text();let d;try{d=JSON.parse(t);}catch{d=t;}if(!r.ok)throw (d&&d.detail)||('HTTP '+r.status);return d;}
 
 const NAV=[
@@ -13,7 +15,11 @@ const NAV=[
  {id:'slicer',label:'Slicer',ico:'▤'},
  {sec:'Automation'},
  {id:'agents',label:'Agents',ico:'🤖'},
+ {id:'builder',label:'AI Builder',ico:'✨'},
  {id:'chat',label:'Chat',ico:'💬',soon:true},
+ {sec:'Library'},
+ {id:'files',label:'Files',ico:'📁'},
+ {id:'integrations',label:'Integrations',ico:'🧩'},
 ];
 
 function applyTheme(m){document.documentElement.setAttribute('data-theme',m==='light'?'light':'dark');localStorage.setItem('plutus_theme',m);}
@@ -295,6 +301,7 @@ function agRenderWizard(){
       '</div><p class="hint" style="margin-top:4px">Access is enforced by the level above; per-server ACLs are on the roadmap.</p></div>'+
     '<div class="set-row" style="margin-top:14px"><button class="btn btn-primary" onclick="agWizLaunch(this)">🚀 Launch</button><span class="hint" id="w-msg"></span></div>'+
   '</div>';
+  if(window._agentDraft){const n=$('#w-name'),p=$('#w-prompt');if(n)n.value=window._agentDraft.name||'';if(p)p.value=window._agentDraft.prompt||'';window._agentDraft=null;}
 }
 function agWizSched(){const v=$('#w-sched').value;$('#w-time-wrap').classList.toggle('hidden',!(v==='daily'||v==='weekly'));$('#w-dow-wrap').classList.toggle('hidden',v!=='weekly');$('#w-cron-wrap').classList.toggle('hidden',v!=='cron');}
 function agWizSel(on){document.querySelectorAll('.w-mcp-c').forEach(c=>c.checked=on);}
@@ -369,8 +376,74 @@ let _cmSel=null;
 function cmPick(id){_cmSel=id;const cc=(_cmData.clients||[]).find(x=>x.id===id);if(!cc)return;const pre=$('#cm-pre');pre.classList.remove('hidden');pre.textContent=cc.content;$('#cm-dl').classList.remove('hidden');}
 function cmDownload(){const cc=(_cmData.clients||[]).find(x=>x.id===_cmSel);if(!cc)return;const b=new Blob([cc.content],{type:(cc.mime||'text/plain')+';charset=utf-8'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download=cc.download_name||'mcp.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);}
 
+// ── File manager ──────────────────────────────────────────────────────
+let _fpath='';
+async function pageFiles(){
+  const c=page('Files','Browse and manage generated files (within your allowed paths)');
+  c.innerHTML='<div id="f-crumb" class="toolbar"></div><div class="card" style="padding:0;overflow:hidden"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead><tbody id="f-body"></tbody></table></div><pre class="out hidden" id="f-preview" style="margin-top:14px"></pre>';
+  filesLoad(_fpath);
+}
+async function filesLoad(path){_fpath=path;const body=$('#f-body');if(body)body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Loading…</span></td></tr>';$('#f-preview')?.classList.add('hidden');
+  try{const d=await api('/api/v1/files/list?path='+encodeURIComponent(path||''));
+    const crumb=$('#f-crumb');const parts=['<button class="btn btn-sm" onclick="filesLoad(\'\')">Roots</button>'];
+    if(d.path){parts.push('<span class="hint">'+esc(d.path)+'</span>');if(d.parent)parts.push('<button class="btn btn-sm" onclick="filesLoad(\''+jsesc(d.parent)+'\')">↑ Up</button>');}
+    crumb.innerHTML=parts.join(' ');
+    const items=d.items||[];
+    if(!items.length){body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Empty.</span></td></tr>';return;}
+    body.innerHTML=items.map(it=>{const isdir=it.type==='dir';const icon=isdir?'📁':'📄';
+      const acts=isdir?'':'<button class="btn btn-sm" onclick="event.stopPropagation();filesPreview(\''+jsesc(it.path)+'\')">Preview</button><a class="btn btn-sm" href="/api/v1/files/download?path='+encodeURIComponent(it.path)+'">Download</a><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();filesDelete(\''+jsesc(it.path)+'\')">Delete</button>';
+      const click=isdir?"filesLoad('"+jsesc(it.path)+"')":"filesPreview('"+jsesc(it.path)+"')";
+      return '<tr onclick="'+click+'"><td class="name">'+icon+' '+esc(it.name)+(it.exists===false?' <span class="muted">(not mounted)</span>':'')+'</td><td class="muted">'+(isdir?'—':fmtSize(it.size))+'</td><td class="muted">'+(it.mtime?new Date(it.mtime*1000).toLocaleString():'')+'</td><td><div class="row-actions" onclick="event.stopPropagation()">'+acts+'</div></td></tr>';}).join('');
+  }catch(e){body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Error: '+esc(e)+'</span></td></tr>';}}
+async function filesPreview(path){const p=$('#f-preview');p.classList.remove('hidden');p.textContent='Loading…';p.scrollIntoView({behavior:'smooth'});try{const d=await api('/api/v1/files/read?path='+encodeURIComponent(path));p.textContent=d.text||'(empty)';}catch(e){p.textContent='Error: '+e;}}
+async function filesDelete(path){if(!confirm('Delete this file?'))return;try{await api('/api/v1/files/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});filesLoad(_fpath);}catch(e){alert(e);}}
+
+// ── AI Builder ────────────────────────────────────────────────────────
+async function pageBuilder(){
+  const c=page('AI Builder','Describe an agent in plain language — Claude drafts it');
+  c.innerHTML='<div class="card ag-accent" style="border-left:3px solid var(--ac)"><div class="card-h"><h3>Describe your agent</h3></div>'+
+    '<p class="hint" style="margin-bottom:10px">e.g. "Every morning research new low-VRAM ComfyUI workflows and log the best ones to my notes with source links."</p>'+
+    '<textarea class="field" id="b-desc" rows="3" style="width:100%"></textarea>'+
+    '<div class="set-row" style="margin-top:12px"><button class="btn btn-primary" id="b-gen" onclick="builderGen(this)">✨ Draft with Claude</button><span class="hint" id="b-msg"></span></div></div>'+
+    '<div class="card hidden" id="b-review" style="margin-top:16px"><div class="card-h"><h3>Review &amp; launch</h3></div>'+
+      '<div class="ag-field"><label>Name</label><input class="field" id="b-name"></div>'+
+      '<div class="ag-field" style="margin-top:10px"><label>Goal / prompt</label><textarea class="field" id="b-prompt" rows="7" style="width:100%"></textarea></div>'+
+      '<div class="set-row" style="margin-top:12px"><button class="btn btn-primary" onclick="builderLaunch(this)">🚀 Create &amp; run now</button><button class="btn" onclick="builderToWizard()">Open in launch wizard →</button></div></div>';
+}
+async function builderGen(btn){const desc=($('#b-desc').value||'').trim();if(desc.length<5){$('#b-msg').textContent='Describe what it should do.';return;}btn.disabled=true;$('#b-msg').textContent='Claude is drafting… (up to ~1 min)';
+  try{const d=await api('/api/v1/agent/tasks/build',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:desc})});
+    if(!d.ok){$('#b-msg').textContent=d.error||'failed — connect your Claude account in Settings';btn.disabled=false;return;}
+    $('#b-msg').textContent='Drafted — review and launch.';$('#b-review').classList.remove('hidden');
+    $('#b-name').value=desc.slice(0,50);$('#b-prompt').value=d.prompt||'';$('#b-review').scrollIntoView({behavior:'smooth'});
+  }catch(e){$('#b-msg').textContent=''+e;}btn.disabled=false;}
+async function builderLaunch(btn){const name=($('#b-name').value||'agent').trim(),prompt=($('#b-prompt').value||'').trim();if(!prompt)return;btn.disabled=true;try{await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name})});location.hash='#/agents';}catch(e){alert(e);btn.disabled=false;}}
+function builderToWizard(){window._agentDraft={name:($('#b-name').value||'').trim(),prompt:($('#b-prompt').value||'').trim()};location.hash='#/agents';setTimeout(()=>{const w=$('#ag-wizard');if(w&&w.classList.contains('hidden'))agToggleWizard();},350);}
+
+// ── Integrations catalog ──────────────────────────────────────────────
+const CATALOG=[
+ {c:'Google',items:['YouTube','Google Drive','Gmail','Google Docs','Google Sheets','Google Calendar','Google Analytics']},
+ {c:'Microsoft',items:['Outlook','OneDrive','Teams','Excel','SharePoint']},
+ {c:'Websites',items:['WordPress','WooCommerce','Shopify','Ghost','Webflow']},
+ {c:'Social',items:['Reddit','X (Twitter)','Facebook','Instagram','LinkedIn','TikTok','Bluesky','Mastodon','Discord','Telegram']},
+ {c:'Development',items:['GitHub','GitLab','Docker','Kubernetes']},
+ {c:'Productivity',items:['Notion','Obsidian','Slack','Trello','Jira','Asana','Airtable']},
+ {c:'AI services',items:['OpenAI','Anthropic','Gemini','Perplexity']},
+ {c:'Storage',items:['Dropbox','S3-compatible']},
+ {c:'Creator & payments',items:['Buy Me a Coffee','Patreon','Stripe','PayPal']},
+];
+function pageIntegrations(){
+  const c=page('Integrations','Curated MCP catalog — add a connection to configure it');
+  c.innerHTML='<div class="toolbar"><input class="field search" id="i-q" placeholder="Search integrations…" oninput="intFilter()"><div class="spacer"></div><span class="hint">Each needs its own MCP server; Add creates the connection card.</span></div><div id="i-grid"></div>';
+  intFilter();
+}
+function intFilter(){const q=($('#i-q')?.value||'').toLowerCase();
+  $('#i-grid').innerHTML=CATALOG.map(cat=>{const items=cat.items.filter(n=>!q||n.toLowerCase().includes(q));if(!items.length)return '';
+    return '<div class="set-sec"><h3>'+esc(cat.c)+'</h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr))">'+items.map(n=>'<div class="card" style="display:flex;align-items:center;gap:10px;padding:12px"><span style="font-size:19px">🧩</span><div class="ag-item-main"><strong>'+esc(n)+'</strong><div class="hint">'+esc(cat.c)+'</div></div><button class="btn btn-sm" onclick="intAdd(\''+jsesc(n)+'\')">Add</button></div>').join('')+'</div></div>';}).join('')||'<p class="hint">No matches.</p>';
+}
+function intAdd(name){connAdd();setTimeout(()=>{const l=$('#ac-label');if(l)l.value=name;const id=$('#ac-id');if(id)id.value=name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');},70);}
+
 // ── Router ────────────────────────────────────────────────────────────
-const ROUTES={dashboard:pageDashboard,connections:pageConnections,discover:pageDiscover,slicer:pageSlicer,agents:pageAgents,chat:pageChat,settings:pageSettings};
+const ROUTES={dashboard:pageDashboard,connections:pageConnections,discover:pageDiscover,slicer:pageSlicer,agents:pageAgents,builder:pageBuilder,chat:pageChat,files:pageFiles,integrations:pageIntegrations,settings:pageSettings};
 function router(){const r=(location.hash.replace(/^#\//,'')||'dashboard');const fn=ROUTES[r]||pageDashboard;setActive(r in ROUTES?r:'dashboard');closeDrawer();fn();}
 applyTheme(localStorage.getItem('plutus_theme')||'dark');
 buildShell();

@@ -62,7 +62,7 @@ from urllib.request import urlopen
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from starlette.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse, FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from mcp.server.fastmcp import FastMCP
@@ -405,6 +405,98 @@ async def ui(creds=Depends(verify_auth)):
 @ui_app.get("/app", response_class=HTMLResponse)
 async def spa(creds=Depends(verify_auth)):
     return HTMLResponse(render_spa(), headers={"Cache-Control": "no-store"})
+
+
+# ─── File manager (browse the library / allowed filesystem paths) ─────────────
+
+def _fs_roots() -> list[str]:
+    return list(cfg.filesystem_allowed_paths or [])
+
+
+@ui_app.get("/api/v1/files/list")
+async def api_v1_files_list(request: Request, creds=Depends(verify_auth)):
+    """List a directory inside the allowed filesystem roots. Empty path = the roots."""
+    from core.path_guard import is_within_any
+    path = (request.query_params.get("path") or "").strip()
+    roots = _fs_roots()
+    if not path:
+        items = []
+        for r in roots:
+            exists = os.path.isdir(r)
+            items.append({"name": r, "path": r, "type": "dir", "exists": exists})
+        return {"path": "", "parent": None, "items": items, "is_root": True}
+    if not is_within_any(path, roots):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    ap = os.path.realpath(path)
+    if not os.path.isdir(ap):
+        raise HTTPException(400, "Not a directory")
+    items = []
+    try:
+        for name in sorted(os.listdir(ap), key=str.lower):
+            fp = os.path.join(ap, name)
+            try:
+                st = os.stat(fp)
+                is_dir = os.path.isdir(fp)
+                items.append({"name": name, "path": fp, "type": "dir" if is_dir else "file",
+                              "size": 0 if is_dir else st.st_size, "mtime": int(st.st_mtime)})
+            except OSError:
+                continue
+    except PermissionError:
+        raise HTTPException(403, "Permission denied")
+    parent = os.path.dirname(ap)
+    return {"path": ap, "parent": parent if is_within_any(parent, roots) else "", "items": items}
+
+
+@ui_app.get("/api/v1/files/read")
+async def api_v1_files_read(request: Request, creds=Depends(verify_auth)):
+    """Return a text preview of a file (secrets redacted, size-capped)."""
+    from core.path_guard import is_within_any
+    from core.redact import redact_secrets
+    path = (request.query_params.get("path") or "").strip()
+    if not is_within_any(path, _fs_roots()):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    ap = os.path.realpath(path)
+    if not os.path.isfile(ap):
+        raise HTTPException(404, "Not a file")
+    if os.path.getsize(ap) > 1024 * 1024:
+        return {"text": "(file larger than 1 MB — download to view)", "truncated": True}
+    try:
+        txt = Path(ap).read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        raise HTTPException(400, f"Cannot read: {e}")
+    red, _ = redact_secrets(txt)
+    return {"text": red[:200000], "truncated": len(red) > 200000}
+
+
+@ui_app.get("/api/v1/files/download")
+async def api_v1_files_download(request: Request, creds=Depends(verify_auth)):
+    from core.path_guard import is_within_any
+    path = (request.query_params.get("path") or "").strip()
+    if not is_within_any(path, _fs_roots()):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    ap = os.path.realpath(path)
+    if not os.path.isfile(ap):
+        raise HTTPException(404, "Not a file")
+    return FileResponse(ap, filename=os.path.basename(ap))
+
+
+class FilePathBody(BaseModel):
+    path: str = Field(..., min_length=1, max_length=4096)
+
+
+@ui_app.post("/api/v1/files/delete")
+async def api_v1_files_delete(body: FilePathBody, creds=Depends(verify_auth)):
+    from core.path_guard import is_within_any
+    if not is_within_any(body.path, _fs_roots()):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    ap = os.path.realpath(body.path)
+    if not os.path.isfile(ap):
+        raise HTTPException(400, "Only files can be deleted here")
+    try:
+        os.remove(ap)
+    except OSError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
 
 
 @ui_app.get("/agents")
