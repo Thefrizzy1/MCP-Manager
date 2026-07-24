@@ -236,12 +236,28 @@ def _agent_queue_worker() -> None:
             _agent_queue.task_done()
 
 
+def _agent_service_disallow(selected: list[str] | None) -> list[str]:
+    """Per-connection ACL: deny tools that belong to a service the user did NOT
+    select. `None` = no restriction. Tools not tied to any service (web, fs,
+    utilities, public APIs) stay available so research still works."""
+    if selected is None:
+        return []
+    from core.dashboard_api import tool_to_service_map
+    sel = set(selected)
+    # Only self-hosted/system services are "connections"; public-API and utility
+    # tools (web search/fetch, weather, maps, …) always stay available.
+    conn_ids = {s["id"] for s in _services_live() if "public" not in (s.get("section") or "").lower()}
+    tmap = tool_to_service_map()
+    return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
+
+
 def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
-                   model: str | None = None, force: bool = False) -> bool:
-    """Queue an agent run. Disallowed-tool set derived from the effective permission."""
+                   model: str | None = None, force: bool = False,
+                   extra_disallowed: list[str] | None = None) -> bool:
+    """Queue an agent run. Disallowed-tool set = permission level + per-connection ACL."""
     acfg = agent_runner.load_agent_config(ROOT)
     level = agent_permissions.normalize_level(permission or acfg.get("tool_permission"))
-    disallowed = agent_permissions.build_disallowed(tools.tool_names(), level)
+    disallowed = sorted(set(agent_permissions.build_disallowed(tools.tool_names(), level)) | set(extra_disallowed or []))
     try:
         _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
                                  "model": model, "force": force})
@@ -663,11 +679,15 @@ async def api_v1_agent_tasks_build(body: BuildTaskBody, creds=Depends(verify_aut
 class AgentRunBody(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=20000)
     label: str = Field(default="agent", max_length=40)
+    permission: str | None = None
+    mcp_services: list[str] | None = None  # per-connection ACL; None = no restriction
 
 
 @ui_app.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody, creds=Depends(verify_auth)):
-    ok = _enqueue_agent(body.prompt, body.label or "agent", force=True)
+    extra = _agent_service_disallow(body.mcp_services)
+    ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
+                        permission=body.permission, extra_disallowed=extra)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}

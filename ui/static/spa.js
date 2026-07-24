@@ -251,7 +251,7 @@ async function pageAgents(){
   await Promise.all([agLoadStatus(),agLoadSched(),agLoadHealthy()]);
   agRenderWizard();
 }
-async function agLoadHealthy(){try{const d=await api('/api/v1/dashboard?sections=services');_healthyConns=(d.services||[]).filter(s=>s.configured);}catch{_healthyConns=[];}}
+async function agLoadHealthy(){try{const d=await api('/api/v1/dashboard?sections=services');_healthyConns=(d.services||[]).filter(s=>s.configured&&(s.section||'').toLowerCase().indexOf('public')<0);}catch{_healthyConns=[];}}
 async function agLoadStatus(){
   try{const d=await api('/api/v1/agent/status');_agentCfg=d.config||{};
     const am=(d.auth&&d.auth.mode)||'none';const onPlan=(am==='session_token'||am==='subscription');
@@ -298,7 +298,7 @@ function agRenderWizard(){
       '<div style="margin:6px 0"><button class="btn btn-sm" onclick="agWizSel(true)">Select all</button> <button class="btn btn-sm" onclick="agWizSel(false)">Select none</button></div>'+
       '<div id="w-mcp" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;max-height:180px;overflow:auto">'+
         _healthyConns.map(s=>{const st=statusOf(s);return '<label class="chip" style="display:flex;gap:7px;align-items:center;cursor:pointer"><input type="checkbox" class="w-mcp-c" value="'+s.id+'" checked><span class="dot '+st.cls+'" style="width:auto"></span>'+esc(s.label)+'</label>';}).join('')||'<span class="hint">No configured connections.</span>'+
-      '</div><p class="hint" style="margin-top:4px">Access is enforced by the level above; per-server ACLs are on the roadmap.</p></div>'+
+      '</div><p class="hint" style="margin-top:4px">Unchecked connections are blocked for this run (Run now). Web/file/utility tools stay available.</p></div>'+
     '<div class="set-row" style="margin-top:14px"><button class="btn btn-primary" onclick="agWizLaunch(this)">🚀 Launch</button><span class="hint" id="w-msg"></span></div>'+
   '</div>';
   if(window._agentDraft){const n=$('#w-name'),p=$('#w-prompt');if(n)n.value=window._agentDraft.name||'';if(p)p.value=window._agentDraft.prompt||'';window._agentDraft=null;}
@@ -315,7 +315,7 @@ async function agWizLaunch(btn){
     await api('/api/v1/agent/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool_permission:$('#w-perm').value,timeout_min:+$('#w-timeout').value||20,model:($('#w-model').value||'').trim()})});
     const cron=agWizCron();
     if(cron){await api('/api/v1/schedules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,kind:'agent',cron,timezone:'Europe/Berlin',enabled:true,payload:{prompt}})});$('#w-msg').textContent='Scheduled.';agLoadSched();}
-    else{await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name})});$('#w-msg').textContent='Launched.';agStream();agLoadStatus();}
+    else{const sel=[...document.querySelectorAll('.w-mcp-c:checked')].map(c=>c.value);await api('/api/v1/agent/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt,label:name,permission:$('#w-perm').value,mcp_services:sel})});$('#w-msg').textContent='Launched.';agStream();agLoadStatus();}
     setTimeout(()=>{agToggleWizard();},600);
   }catch(e){$('#w-msg').textContent='Error: '+e;}
   btn.disabled=false;
