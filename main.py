@@ -101,8 +101,6 @@ from core.tool_cache import (
     refresh_all_cached_tools,
     save_prefs,
 )
-from ui.render import dashboard_page
-from ui.agents_page import render_agents_page
 from ui.spa_page import render_spa
 from tools.media import register_media_tools
 from tools.personal import register_personal_tools
@@ -409,14 +407,9 @@ def _tool_count():
 async def root(): return RedirectResponse(url="/app")
 
 @ui_app.get("/ui", response_class=HTMLResponse)
-async def ui(creds=Depends(verify_auth)):
-    health = await get_health()
-    ensure_data_dir(ROOT); recent = load_recent(ROOT)
-    html = dashboard_page(health_cache=health, tool_count=_tool_count(), recent=recent)
-    return HTMLResponse(
-        content=html,
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
-    )
+async def ui():
+    # The classic dashboard was retired; the SPA at /app is the only UI now.
+    return RedirectResponse(url="/app")
 
 @ui_app.get("/app", response_class=HTMLResponse)
 async def spa(creds=Depends(verify_auth)):

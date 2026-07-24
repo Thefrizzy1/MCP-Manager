@@ -20,7 +20,7 @@ The dashboard's Settings panels write through it.
 |---|---|---|
 | `MCP_HOST` | `0.0.0.0` | MCP bind address |
 | `MCP_PORT` | `8765` | MCP streamable-HTTP port (`/mcp`) |
-| `UI_PORT` | `8766` | Web dashboard port (`/ui`) |
+| `UI_PORT` | `8766` | Web dashboard port (`/app`) |
 | `UI_ENABLED` | `true` | `false` = MCP-only (no dashboard, lower RAM) |
 | `UI_USERNAME` | `admin` | Dashboard Basic-auth user |
 | `UI_PASSWORD` | `adminadmin` | Dashboard Basic-auth password — **set this** |

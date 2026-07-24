@@ -5,7 +5,7 @@ dashboard for configuration, health, and client setup. ~193 tools across media, 
 home automation, productivity, infrastructure, and public APIs.
 
 - **MCP endpoint:** `http://<host>:8765/mcp` (streamable HTTP)
-- **Web dashboard:** `http://<host>:8766/ui` (HTTP Basic auth)
+- **Web dashboard:** `http://<host>:8766/app` (HTTP Basic auth; `/ui` and `/` redirect here)
 
 > 📚 **Full docs:** [Architecture](docs/ARCHITECTURE.md) ·
 > [Security](docs/SECURITY.md) · [Operations](docs/OPERATIONS.md) ·
@@ -54,7 +54,7 @@ instead: `docker compose up -d --build`.
    docker compose up -d
    ```
 
-5. Open the dashboard: `http://<host>:8766/ui` (login `admin` / your `UI_PASSWORD`).
+5. Open the dashboard: `http://<host>:8766/app` (login `admin` / your `UI_PASSWORD`).
 
 ## Connect an MCP client
 

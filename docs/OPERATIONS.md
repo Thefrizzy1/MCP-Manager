@@ -34,7 +34,7 @@ docker compose up -d --build
 docker compose logs -f plutus-mcp
 ```
 
-Open the dashboard at `http://<host>:8766/ui` (Basic auth — set `UI_PASSWORD`).
+Open the dashboard at `http://<host>:8766/app` (Basic auth — set `UI_PASSWORD`).
 The MCP endpoint is `http://<host>:8765/mcp`.
 
 **MCP-only mode (lower RAM):** set `UI_ENABLED=false`. The dashboard is not served; the
@@ -147,7 +147,7 @@ the MCP gate reads live. See [CONFIGURATION.md](CONFIGURATION.md).
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| `/ui` returns 503 | `UI_PASSWORD` unset | Set it in `.env`, restart |
+| `/app` returns 503 | `UI_PASSWORD` unset | Set it in `.env`, restart |
 | 429 on login | Login lockout after repeated failures | Wait out `Retry-After`; check for a misconfigured client |
 | 403 "Cross-origin … (CSRF)" | Browser request from an unexpected Origin / proxy host | Confirm you're on the dashboard's own URL; if a proxy false-positives, set `PLUTUS_DISABLE_CSRF=1` |
 | Tool: "Cannot connect to X" | Service down or URL unreachable **from the container** (e.g. `localhost` instead of LAN IP) | `docker exec plutus-mcp curl -I <URL>`; fix the URL/port |

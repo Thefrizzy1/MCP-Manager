@@ -78,6 +78,8 @@ order for a future refactor pass, not loose ends:
    the scattered timeout literals (`main.py`) into named constants. Lower priority — the
    current class-level-default singleton works and is load-bearing, so change carefully.
 
-The `ui/render.py` single-page HTML builder is intentionally **kept as-is** — it's
-decomposed into helpers and escapes user input; introducing a template engine for one
-page would be over-engineering.
+The UI is a framework-free SPA (`ui/spa_page.py` shell + `ui/static/spa.{css,js}`),
+served at `/app`. The old server-rendered dashboard (`ui/render.py`) and the standalone
+`/agents` page were retired once the SPA reached parity — `/`, `/ui`, and `/agents` now
+redirect into it. A build toolchain is intentionally avoided so the container stays a
+plain `docker compose build`.

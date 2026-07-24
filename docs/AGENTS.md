@@ -2,7 +2,8 @@
 
 Plutus can run a **headless Claude Code agent** that operates its own ~193 MCP
 tools, and can **schedule** agent tasks or individual tool calls on a cron. It has
-a dedicated full page at **`/agents`** (dashboard → footer → **Agents**) with tabs:
+a dedicated workspace in the SPA at **`/app#/agents`** (sidebar → **Agents**; the
+old `/agents` URL redirects there). Key areas:
 
 - **Run** — one-off prompt with a live console.
 - **Playbooks** — the library of research tasks, plus **Build an agent with Claude**:
@@ -101,8 +102,8 @@ nothing else breaks.
 | `fs_library_path` | `"/data/library"` | Host-mounted path when `output_mode=filesystem` (must be in `FILESYSTEM_ALLOWED_PATHS`) |
 | `notify_enabled` / `notify_on` | `false` / `all` | Optional ntfy after each run (`all` or `error`) |
 
-All of these are editable on the full **Agents page** (`/ui` → footer → **Agents**,
-or `/agents` directly) under **Settings**.
+All of these are configured from the **Agents** workspace in the SPA
+(`/app#/agents`, or the redirecting `/agents`).
 
 The agent reaches Plutus at `http://127.0.0.1:8765/mcp` (same container); if
 `MCP_REQUIRE_BEARER=true`, the bearer token is injected automatically.
