@@ -422,6 +422,7 @@ def dashboard_page(health_cache: dict, tool_count: int, recent: list) -> str:
   <div class="tb-spacer"></div>
   <button type="button" class="tlink" id="btn-mcp-copy" title="Copy MCP URL for Claude Desktop / clients"><span>MCP URL</span> <code id="mcp-url-code">{html.escape(primary_copy_url)}</code></button>
   <button type="button" class="tbtn" id="btn-hide-uncfg" onclick="toggleHideUnconfigured()">Hide unconfigured</button>
+  <button type="button" class="tbtn tbtn-on" onclick="location.href='/app'" title="Open the new management console (beta)">✦ New console</button>
   <button type="button" class="tbtn" id="btn-theme" onclick="toggleTheme()" title="Dark / light">Theme</button>
   <button type="button" class="tbtn" onclick="document.getElementById('modal').classList.add('open')">Settings</button>
 </div>

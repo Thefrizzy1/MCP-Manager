@@ -103,6 +103,7 @@ from core.tool_cache import (
 )
 from ui.render import dashboard_page
 from ui.agents_page import render_agents_page
+from ui.spa_page import render_spa
 from tools.media import register_media_tools
 from tools.personal import register_personal_tools
 from tools.photos import register_photo_tools
@@ -400,6 +401,11 @@ async def ui(creds=Depends(verify_auth)):
         content=html,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
     )
+
+@ui_app.get("/app", response_class=HTMLResponse)
+async def spa(creds=Depends(verify_auth)):
+    return HTMLResponse(render_spa(), headers={"Cache-Control": "no-store"})
+
 
 @ui_app.get("/agents", response_class=HTMLResponse)
 async def agents_page(creds=Depends(verify_auth)):
