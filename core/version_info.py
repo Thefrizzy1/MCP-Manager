@@ -1,3 +1,3 @@
 """Single place for the dashboard / update-check version string."""
 
-VERSION = "5.2.0"
+VERSION = "5.2.1"

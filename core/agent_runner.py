@@ -129,8 +129,15 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
 
 def _subprocess_env() -> dict:
     """Process env plus the session OAuth token from .env, so a web login applies
-    without a restart. Session token only — never an API key here."""
+    without a restart. Session token only — never an API key here.
+
+    We also set IS_SANDBOX=1: Claude Code refuses ``--dangerously-skip-permissions``
+    when it detects it is running as root, unless the environment is flagged as a
+    sandbox. A container IS a sandbox, so this is the intended, safe mechanism — it
+    does not elevate anything, it just tells Claude Code the isolation already exists.
+    """
     env = dict(os.environ)
+    env.setdefault("IS_SANDBOX", "1")
     try:
         from core.env_store import read_env
         tok = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
@@ -381,7 +388,15 @@ def run_agent(
             rec["error"] = "Cancelled by user."
         elif proc.returncode not in (0, None) and not rec["result"]:
             err = (proc.stderr.read() or "")[-400:] if proc.stderr else ""
-            rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
+            low = err.lower()
+            if "root" in low and "permission" in low:
+                rec["error"] = ("Claude Code refused to run as root. Plutus now sets IS_SANDBOX=1 "
+                                "for the container — rebuild the image so this fix is present, or run "
+                                "the container as a non-root user.")
+            elif "not logged in" in low or "authentication" in low or "unauthorized" in low:
+                rec["error"] = "Claude Code isn't authenticated. Connect your account: Settings → Connect Claude account."
+            else:
+                rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
             _emit(rec["error"])
     except FileNotFoundError:
         rec["error"] = "`claude` not found. Install Claude Code in the container and log in (see docs/AGENTS.md)."
