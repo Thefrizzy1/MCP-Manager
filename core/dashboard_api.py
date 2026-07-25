@@ -8,7 +8,8 @@ from typing import Any
 from config import cfg
 from core.capabilities import build_capability_registry
 from core.service_registry import all_services, service_tool_map
-from core.service_utils import is_service_configured
+from core.service_utils import is_service_configured, service_url
+from core.ui_prefs import load_ignored_services
 
 
 def project_root() -> Path:
@@ -110,6 +111,9 @@ def build_dashboard_payload(
         ]
 
     if not sections or "services" in sections:
+        from core.env_store import read_env
+        env = read_env()
+        ignored = set(load_ignored_services(root))
         rows = []
         for s in slist:
             sid = s["id"]
@@ -117,8 +121,12 @@ def build_dashboard_payload(
                 {
                     "id": sid,
                     "label": s["label"],
+                    "icon": s.get("icon", "🔌"),
+                    "tag": s.get("tag", ""),
                     "section": s["section"],
+                    "url": service_url(s, env),
                     "configured": is_service_configured(s, cfg),
+                    "ignored": sid in ignored,
                     "health": health_cache.get(sid),
                     "tool_count": len(s.get("tools", [])),
                     "tool_names": [t["name"] for t in s.get("tools", [])],

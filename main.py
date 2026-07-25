@@ -881,6 +881,39 @@ async def service_smoke_tools(sid: str, creds=Depends(verify_auth)):
     return rep
 
 
+@ui_app.get("/api/v1/service/{sid}/config")
+async def api_v1_service_config(sid: str, creds=Depends(verify_auth)):
+    """Editable env fields for a service's inline Configure form (secrets masked)."""
+    from core.env_store import read_env
+    from core.service_utils import service_config_fields, service_url
+    svc = next((s for s in _services_live() if s["id"] == sid), None)
+    if not svc:
+        raise HTTPException(404, "Unknown service")
+    env = read_env()
+    return {
+        "id": sid,
+        "label": svc["label"],
+        "icon": svc.get("icon", "🔌"),
+        "url": service_url(svc, env),
+        "fields": service_config_fields(svc, env),
+        "documentation_url": svc.get("documentation_url", ""),
+    }
+
+
+class ServiceIgnoreBody(BaseModel):
+    ignored: bool = True
+
+
+@ui_app.post("/api/v1/service/{sid}/ignore")
+async def api_v1_service_ignore(sid: str, body: ServiceIgnoreBody, creds=Depends(verify_auth)):
+    """Hide/show a connection: ignored services grey out and drop out of stats."""
+    from core.ui_prefs import set_service_ignored
+    svc = next((s for s in _services_live() if s["id"] == sid), None)
+    if not svc:
+        raise HTTPException(404, "Unknown service")
+    return {"ok": True, "ignored": set_service_ignored(ROOT, sid, body.ignored)}
+
+
 @ui_app.get("/api/v1/dashboard")
 async def api_v1_dashboard(request: Request, creds=Depends(verify_auth)):
     """Structured dashboard JSON. Query: ?sections=networking,main,tools,services,auth,recent (comma-sep). Omit for all."""

@@ -35,3 +35,39 @@ def save_tag_override(root: Path, tool_name: str, tag: str) -> None:
     else:
         cur[tool_name] = tag
     tag_overrides_path(root).write_text(json.dumps(cur, indent=2), encoding="utf-8")
+
+
+# ── Ignored connections ───────────────────────────────────────────────────────
+# Services the user has chosen to hide: they grey out, drop out of the stats, and
+# are excluded from the agent connection picker. Stored as a list of service ids.
+
+def ignored_services_path(root: Path) -> Path:
+    return root / "data" / "ignored_services.json"
+
+
+def load_ignored_services(root: Path) -> list[str]:
+    path = ignored_services_path(root)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return sorted({str(x) for x in data if str(x).strip()})
+    except Exception as exc:
+        log.warning("Failed to load ignored services from %s: %s", path, exc)
+    return []
+
+
+def set_service_ignored(root: Path, service_id: str, ignored: bool) -> list[str]:
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    cur = set(load_ignored_services(root))
+    sid = str(service_id).strip()
+    if not sid:
+        return sorted(cur)
+    if ignored:
+        cur.add(sid)
+    else:
+        cur.discard(sid)
+    out = sorted(cur)
+    ignored_services_path(root).write_text(json.dumps(out, indent=2), encoding="utf-8")
+    return out
