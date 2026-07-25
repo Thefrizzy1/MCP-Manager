@@ -91,7 +91,17 @@ html[data-theme="light"] .btn-primary:hover{color:#fff}
 .dot.ok{color:var(--ok)}.dot.ok::before{background:var(--ok);box-shadow:0 0 8px rgba(122,229,130,.6)}
 .dot.warn{color:var(--warn)}.dot.warn::before{background:var(--warn);box-shadow:0 0 8px rgba(245,181,68,.5)}
 .dot.bad{color:var(--bad)}.dot.bad::before{background:var(--bad);box-shadow:0 0 8px rgba(245,107,107,.5)}
-.row-actions{display:flex;gap:6px;justify-content:flex-end}
+.dot.off{color:var(--dim)}.dot.off::before{background:var(--dim);box-shadow:none}
+.row-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.svc-ico{font-size:15px;margin-right:2px}
+.sort-ind{color:var(--ac);font-size:10px}
+.tbl th.num,.tbl td.num{text-align:right}
+.chk{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;cursor:pointer}
+.chk input{cursor:pointer}
+tr.row-ignored{opacity:.42}
+tr.row-ignored:hover{opacity:.7}
+.cat-grp{margin-bottom:12px}
+.cat-h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:700;margin-bottom:6px}
 .tag{display:inline-block;font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(37,161,142,.15);color:var(--ac2);border:1px solid rgba(37,161,142,.3);font-weight:600}
 
 /* ── Details drawer ──────────────────────────────────────────────────── */

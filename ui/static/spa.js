@@ -10,26 +10,31 @@ async function api(path,opts){const r=await fetch(path,opts);const t=await r.tex
 const NAV=[
  {sec:'Main'},
  {id:'dashboard',label:'Dashboard',ico:'▦'},
- {id:'connections',label:'MCP Connections',ico:'🔌'},
+ {id:'connections',label:'Connections',ico:'🔌'},
  {id:'discover',label:'Discover',ico:'🔍'},
  {id:'slicer',label:'Slicer',ico:'▤'},
  {sec:'Automation'},
  {id:'agents',label:'Agents',ico:'🤖'},
  {id:'builder',label:'AI Builder',ico:'✨'},
  {id:'chat',label:'Chat',ico:'💬',soon:true},
- {sec:'Library'},
+ {sec:'Storage'},
  {id:'files',label:'Files',ico:'📁'},
- {id:'integrations',label:'Integrations',ico:'🧩'},
 ];
 
 function applyTheme(m){document.documentElement.setAttribute('data-theme',m==='light'?'light':'dark');localStorage.setItem('plutus_theme',m);}
 function toggleTheme(){applyTheme((document.documentElement.getAttribute('data-theme')||'dark')==='dark'?'light':'dark');}
 
 // ── status mapping ────────────────────────────────────────────────────
+// tri-state: red = unconfigured/unreachable, orange = probe OK but tools don't
+// work (or not yet tool-tested), green = probe OK and tools verified.
+const _toolHealth={};   // service id -> bool, set after a tool test ("Try")
 function statusOf(s){
+  if(s.ignored) return {cls:'off',label:'Ignored'};
   if(!s.configured) return {cls:'bad',label:'Not configured'};
-  if(s.health===true) return {cls:'ok',label:'Healthy'};
-  if(s.health===false) return {cls:'bad',label:'Failed'};
+  if(s.health===false) return {cls:'bad',label:'Unreachable'};
+  const th=_toolHealth[s.id];
+  if(th===false) return {cls:'warn',label:'Tools failing'};
+  if(s.health===true) return {cls:'ok',label:th===true?'Healthy':'Reachable'};
   return {cls:'warn',label:'Configured'};
 }
 
@@ -73,7 +78,7 @@ async function pageDashboard(){
   c.innerHTML='<p class="hint">Loading…</p>';
   try{
     const d=await api('/api/v1/dashboard?sections=main,services,recent');
-    const svcs=d.services||[];const m=d.main||{};
+    const svcs=(d.services||[]).filter(s=>!s.ignored);const m=d.main||{};
     let ok=0,warn=0,bad=0;
     svcs.forEach(s=>{const st=statusOf(s).cls;if(st==='ok')ok++;else if(st==='warn')warn++;else bad++;});
     const stats=[
@@ -105,48 +110,87 @@ async function pageDashboard(){
   }catch(e){c.innerHTML='<p class="hint">Error: '+esc(e)+'</p>';}
 }
 
-// ── Connections ───────────────────────────────────────────────────────
-let _conns=[],_filter={q:'',status:'',sort:'name'};
+// ── Connections (unified MCP connections + integrations) ──────────────
+let _conns=[],_filter={q:'',status:''},_sort={col:'status',dir:1},_showIgnored=false,_hideUncfg=false;
+const _COLS=[['name','Name'],['section','Category'],['tool_count','Tools'],['url','Address'],['status','Status']];
 async function pageConnections(){
-  const c=page('MCP Connections','Manage the services this MCP server connects to',
+  const c=page('Connections','Every service this MCP server can reach — configure, test and manage',
     '<button class="btn btn-primary" onclick="connAdd()">＋ Add</button>'+
+    '<button class="btn" onclick="connCatalog()">🧩 Catalog</button>'+
     '<button class="btn" onclick="connRefresh()">⟳ Refresh</button>'+
     '<button class="btn" onclick="connTestAll(this)">✓ Test all</button>');
+  const heads=_COLS.map(([k,l])=>'<th onclick="connSort(\''+k+'\')" style="cursor:pointer;user-select:none"'+(k==='tool_count'?' class="num"':'')+'>'+l+' <span class="sort-ind" id="si-'+k+'"></span></th>').join('');
   c.innerHTML='<div class="toolbar">'+
     '<input class="field search" id="c-q" placeholder="Search…" oninput="connApply()">'+
     '<select class="field" id="c-status" onchange="connApply()"><option value="">All status</option><option value="ok">🟢 Healthy</option><option value="warn">🟡 Configured</option><option value="bad">🔴 Needs attention</option></select>'+
-    '<select class="field" id="c-sort" onchange="connApply()"><option value="name">Sort: Name</option><option value="status">Sort: Status</option><option value="section">Sort: Category</option></select>'+
+    '<label class="hint chk"><input type="checkbox" id="c-hideu" onchange="connApply()"> Hide unconfigured</label>'+
+    '<label class="hint chk"><input type="checkbox" id="c-showign" onchange="connApply()"> Show ignored</label>'+
     '<div class="spacer"></div><span class="hint" id="c-count"></span></div>'+
-    '<div class="card" style="padding:0;overflow:hidden"><table class="tbl"><thead><tr><th>Name</th><th>Category</th><th>Tools</th><th>Status</th><th style="text-align:right">Actions</th></tr></thead><tbody id="c-body"><tr><td colspan="5" style="padding:20px"><span class="hint">Loading…</span></td></tr></tbody></table></div>';
+    '<div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr>'+heads+'<th style="text-align:right">Actions</th></tr></thead><tbody id="c-body"><tr><td colspan="6" style="padding:20px"><span class="hint">Loading…</span></td></tr></tbody></table></div>';
   try{const d=await api('/api/v1/dashboard?sections=services');_conns=d.services||[];connApply();}
-  catch(e){$('#c-body').innerHTML='<tr><td colspan="5" style="padding:20px"><span class="hint">Error: '+esc(e)+'</span></td></tr>';}
+  catch(e){$('#c-body').innerHTML='<tr><td colspan="6" style="padding:20px"><span class="hint">Error: '+esc(e)+'</span></td></tr>';}
 }
+function connSort(col){if(_sort.col===col)_sort.dir*=-1;else{_sort.col=col;_sort.dir=1;}connApply();}
+function connCmp(col){const rank={ok:0,warn:1,bad:2,off:3};
+  if(col==='tool_count')return (a,b)=>(a.tool_count||0)-(b.tool_count||0);
+  if(col==='status')return (a,b)=>rank[statusOf(a).cls]-rank[statusOf(b).cls];
+  if(col==='section')return (a,b)=>(a.tag||a.section||'').localeCompare(b.tag||b.section||'');
+  if(col==='url')return (a,b)=>(a.url||'').localeCompare(b.url||'');
+  return (a,b)=>(a.label||'').localeCompare(b.label||'');}
 function connApply(){
-  _filter.q=($('#c-q')?.value||'').toLowerCase();_filter.status=$('#c-status')?.value||'';_filter.sort=$('#c-sort')?.value||'name';
+  _filter.q=($('#c-q')?.value||'').toLowerCase();_filter.status=$('#c-status')?.value||'';
+  _hideUncfg=!!$('#c-hideu')?.checked;_showIgnored=!!$('#c-showign')?.checked;
+  const active=_conns.filter(s=>!s.ignored);
   let rows=_conns.filter(s=>{
+    if(s.ignored&&!_showIgnored)return false;
+    if(_hideUncfg&&!s.configured)return false;
     const st=statusOf(s).cls;
     if(_filter.status&&st!==_filter.status)return false;
-    if(_filter.q&&!((s.label||'')+' '+(s.id||'')+' '+(s.section||'')).toLowerCase().includes(_filter.q))return false;
+    if(_filter.q&&!((s.label||'')+' '+(s.id||'')+' '+(s.section||'')+' '+(s.tag||'')+' '+(s.url||'')).toLowerCase().includes(_filter.q))return false;
     return true;
   });
-  const rank={ok:0,warn:1,bad:2};
-  rows.sort((a,b)=>_filter.sort==='status'?rank[statusOf(a).cls]-rank[statusOf(b).cls]:(_filter.sort==='section'?(a.section||'').localeCompare(b.section||''):(a.label||'').localeCompare(b.label||'')));
+  const cmp=connCmp(_sort.col);rows.sort((a,b)=>_sort.dir*cmp(a,b));
+  _COLS.forEach(([k])=>{const el=$('#si-'+k);if(el)el.textContent=_sort.col===k?(_sort.dir>0?'▲':'▼'):'';});
   const body=$('#c-body');
-  if(!rows.length){body.innerHTML='<tr><td colspan="5" style="padding:20px"><span class="hint">No connections match.</span></td></tr>';}
-  else body.innerHTML=rows.map(s=>{const st=statusOf(s);return '<tr onclick="connDetails(\''+s.id+'\')">'+
-    '<td><div class="name">'+esc(s.label)+'</div><div class="muted">'+esc(s.id)+'</div></td>'+
-    '<td><span class="tag">'+esc(s.section||'—')+'</span></td>'+
-    '<td class="muted">'+(s.tool_count||0)+'</td>'+
+  if(!rows.length){body.innerHTML='<tr><td colspan="6" style="padding:20px"><span class="hint">No connections match.</span></td></tr>';}
+  else body.innerHTML=rows.map(s=>{const st=statusOf(s);const host=(s.url||'').replace(/^https?:\/\//,'');return '<tr class="'+(s.ignored?'row-ignored':'')+'" onclick="connDetails(\''+s.id+'\')">'+
+    '<td><div class="name"><span class="svc-ico">'+esc(s.icon||'🔌')+'</span> '+esc(s.label)+'</div><div class="muted">'+esc(s.id)+'</div></td>'+
+    '<td><span class="tag">'+esc(s.tag||s.section||'—')+'</span></td>'+
+    '<td class="num muted">'+(s.tool_count||0)+'</td>'+
+    '<td class="muted">'+(s.url?'<a href="'+esc(s.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="'+esc(s.url)+'">'+esc(host.length>28?host.slice(0,27)+'…':host)+'</a>':'—')+'</td>'+
     '<td><span class="dot '+st.cls+'">'+st.label+'</span></td>'+
     '<td><div class="row-actions" onclick="event.stopPropagation()">'+
-      '<button class="btn btn-sm" onclick="connTest(\''+s.id+'\',this)">Test</button>'+
-      '<button class="btn btn-sm" onclick="connDetails(\''+s.id+'\')">Details</button>'+
+      '<button class="btn btn-sm" onclick="connProbe(\''+s.id+'\',this)" title="HTTP reachability probe">Test</button>'+
+      '<button class="btn btn-sm" onclick="connTryTools(\''+s.id+'\',this)" title="Actually call the tools and verify they return data">Try</button>'+
+      '<button class="btn btn-sm" onclick="connConfigure(\''+s.id+'\')">Configure</button>'+
+      '<button class="btn btn-sm btn-ico" onclick="connIgnore(\''+s.id+'\','+(!s.ignored)+')" title="'+(s.ignored?'Restore':'Ignore (hide from stats)')+'">'+(s.ignored?'↺':'🚫')+'</button>'+
     '</div></td></tr>';}).join('');
-  $('#c-count').textContent=rows.length+' of '+_conns.length;
+  $('#c-count').textContent=rows.length+' shown · '+active.length+' active'+(_conns.length-active.length?(' · '+(_conns.length-active.length)+' ignored'):'');
 }
 async function connRefresh(){try{await api('/health/refresh');pageConnections();}catch(e){alert(e);}}
 async function connTestAll(btn){btn.disabled=true;btn.textContent='Testing…';try{const d=await api('/health/full-report',{method:'POST'});await pageConnections();modal('Health report','<pre class="out">'+esc(d.markdown||'(no report)')+'</pre>','<button class="btn" onclick="closeModal()">Close</button>');}catch(e){alert(e);}btn.disabled=false;}
-async function connTest(id,btn){if(btn){btn.disabled=true;btn.textContent='…';}try{const d=await api('/service/test/'+id);const row=_conns.find(x=>x.id===id);if(row)row.health=d.ok?true:(d.tri==='uncfg'?null:false);connApply();}catch(e){alert(e);}if(btn)btn.disabled=false;}
+async function connProbe(id,btn){if(btn){btn.disabled=true;btn.textContent='…';}try{const d=await api('/service/test/'+id);const row=_conns.find(x=>x.id===id);if(row)row.health=d.ok?true:(d.tri==='uncfg'?null:false);connApply();}catch(e){alert(e);}if(btn)btn.disabled=false;}
+async function connTryTools(id,btn){if(btn){btn.disabled=true;btn.textContent='…';}try{const d=await api('/service/smoke-tools/'+id,{method:'POST'});_toolHealth[id]=!!d.ok;connApply();if(!d.ok)$('#c-count').textContent=(d.failed||0)+' tool(s) failed on '+id+' — click Details';}catch(e){alert(e);}if(btn)btn.disabled=false;}
+async function connIgnore(id,ignored){try{await api('/api/v1/service/'+id+'/ignore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ignored})});const row=_conns.find(x=>x.id===id);if(row)row.ignored=ignored;connApply();}catch(e){alert(e);}}
+async function connConfigure(id){
+  try{const d=await api('/api/v1/service/'+id+'/config');const fields=d.fields||[];
+    const form=fields.length?fields.map(f=>'<div class="set-row"><label>'+esc(f.label)+'</label><input class="field" id="cf-'+esc(f.key)+'" type="'+(f.secret?'password':'text')+'" '+(f.secret?'':'value="'+esc(f.value)+'" ')+'placeholder="'+esc(f.secret&&f.set?'•••••• set — blank keeps it':f.placeholder)+'" style="flex:1"></div>').join(''):'<p class="hint">This service has no editable settings.</p>';
+    window._cfKeys=fields.map(f=>f.key);
+    modal((d.icon||'🔌')+' Configure '+esc(d.label),form,
+      '<button class="btn btn-primary" onclick="connConfigSave(\''+id+'\',this)">Save</button>'+(d.documentation_url?' <a class="btn" href="'+esc(d.documentation_url)+'" target="_blank" rel="noopener">Docs ↗</a>':'')+'<span class="hint" id="cf-msg"></span>');
+  }catch(e){alert(e);}
+}
+async function connConfigSave(id,btn){
+  const body={};(window._cfKeys||[]).forEach(k=>{const el=$('#cf-'+k);if(el&&el.value!=='')body[k]=el.value;});
+  if(!Object.keys(body).length){$('#cf-msg').textContent='Nothing to save.';return;}
+  btn.disabled=true;$('#cf-msg').textContent='Saving…';
+  try{await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});closeModal();await connRefresh();connProbe(id);}
+  catch(e){$('#cf-msg').textContent='Error: '+e;btn.disabled=false;}
+}
+function connCatalog(){modal('Integration catalog',
+  '<p class="hint" style="margin-bottom:10px">Popular services. Pick one to pre-fill a custom connection — you supply its URL and key.</p>'+
+  CATALOG.map(cat=>'<div class="cat-grp"><div class="cat-h">'+esc(cat.c)+'</div><div class="chips">'+cat.items.map(n=>'<button class="chip" style="cursor:pointer" onclick="connFromCatalog(\''+jsesc(n)+'\')">'+esc(n)+'</button>').join('')+'</div></div>').join(''));}
+function connFromCatalog(name){closeModal();connAdd();setTimeout(()=>{const l=$('#ac-label');if(l){l.value=name;const id=$('#ac-id');if(id)id.value=name.toLowerCase().replace(/[^a-z0-9_]/g,'_');}},60);}
 // ── Modal helper ──────────────────────────────────────────────────────
 function modal(title,bodyHtml,footHtml){
   closeModal();
@@ -203,18 +247,27 @@ let _curDrawer=null;
 function drawerRender(s,tab){_curDrawer=s.id;const b=$('#drawer-body');const st=statusOf(s);
   if(tab==='overview'){
     b.innerHTML='<div class="kv"><span class="k">ID</span><span>'+esc(s.id)+'</span>'+
-      '<span class="k">Category</span><span>'+esc(s.section||'—')+'</span>'+
+      '<span class="k">Category</span><span>'+esc(s.tag||s.section||'—')+'</span>'+
+      (s.url?'<span class="k">Address</span><span><a href="'+esc(s.url)+'" target="_blank" rel="noopener">'+esc(s.url)+'</a></span>':'')+
       '<span class="k">Status</span><span class="dot '+st.cls+'">'+st.label+'</span>'+
       '<span class="k">Configured</span><span>'+(s.configured?'Yes':'No')+'</span>'+
       '<span class="k">Tools</span><span>'+(s.tool_count||0)+'</span></div>'+
-      '<div style="display:flex;gap:8px"><button class="btn btn-primary btn-sm" onclick="connTest(\''+s.id+'\',this)">Run test</button></div>';
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="connConfigure(\''+s.id+'\')">Configure</button>'+
+      '<button class="btn btn-sm" onclick="connProbe(\''+s.id+'\',this)">Test</button>'+
+      '<button class="btn btn-sm" onclick="connTryTools(\''+s.id+'\',this)">Try tools</button>'+
+      '<button class="btn btn-sm '+(s.ignored?'':'btn-danger')+'" onclick="connIgnore(\''+s.id+'\','+(!s.ignored)+');closeDrawer()">'+(s.ignored?'Restore':'Ignore')+'</button></div>';
   }else if(tab==='tools'){
     b.innerHTML='<div class="chips">'+((s.tool_names||[]).map(t=>'<span class="chip">'+esc(t)+'</span>').join('')||'<span class="hint">No tools.</span>')+'</div>';
   }else if(tab==='test'){
-    b.innerHTML='<button class="btn btn-primary btn-sm" onclick="drawerTest(\''+s.id+'\')">Run test now</button><pre class="out" id="drawer-out" style="margin-top:12px">Not run yet.</pre>';
+    b.innerHTML='<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="drawerTest(\''+s.id+'\',\'probe\')">HTTP probe</button>'+
+      '<button class="btn btn-sm" onclick="drawerTest(\''+s.id+'\',\'tools\')">Try each tool</button></div>'+
+      '<pre class="out" id="drawer-out" style="margin-top:12px">Not run yet.</pre>';
   }
 }
-async function drawerTest(id){const out=$('#drawer-out');out.textContent='Testing…';try{const d=await api('/service/test/'+id);out.textContent=d.output||d.detail||d.summary||'(no output)';const row=_conns.find(x=>x.id===id);if(row){row.health=d.ok?true:(d.tri==='uncfg'?null:false);connApply&&connApply();}}catch(e){out.textContent='Error: '+e;}}
+async function drawerTest(id,mode){const out=$('#drawer-out');out.textContent='Running…';
+  try{if(mode==='tools'){const d=await api('/service/smoke-tools/'+id,{method:'POST'});_toolHealth[id]=!!d.ok;out.textContent=d.output||d.summary||'(no output)';}
+    else{const d=await api('/service/test/'+id);out.textContent=d.output||d.detail||d.summary||'(no output)';const row=_conns.find(x=>x.id===id);if(row)row.health=d.ok?true:(d.tri==='uncfg'?null:false);}
+    connApply&&connApply();}catch(e){out.textContent='Error: '+e;}}
 function closeDrawer(){$('#drawer-bg')?.classList.remove('open');$('#drawer')?.classList.remove('open');}
 
 // ── Discover ──────────────────────────────────────────────────────────
@@ -256,7 +309,7 @@ async function pageAgents(){
   await Promise.all([agLoadStatus(),agLoadSched(),agLoadHealthy()]);
   agRenderWizard();
 }
-async function agLoadHealthy(){try{const d=await api('/api/v1/dashboard?sections=services');_healthyConns=(d.services||[]).filter(s=>s.configured&&(s.section||'').toLowerCase().indexOf('public')<0);}catch{_healthyConns=[];}}
+async function agLoadHealthy(){try{const d=await api('/api/v1/dashboard?sections=services');_healthyConns=(d.services||[]).filter(s=>s.configured&&!s.ignored&&(s.section||'').toLowerCase().indexOf('public')<0);}catch{_healthyConns=[];}}
 async function agLoadStatus(){
   try{const d=await api('/api/v1/agent/status');_agentCfg=d.config||{};
     const am=(d.auth&&d.auth.mode)||'none';const onPlan=(am==='session_token'||am==='subscription');
@@ -463,19 +516,9 @@ const CATALOG=[
  {c:'Storage',items:['Dropbox','S3-compatible']},
  {c:'Creator & payments',items:['Buy Me a Coffee','Patreon','Stripe','PayPal']},
 ];
-function pageIntegrations(){
-  const c=page('Integrations','Curated MCP catalog — add a connection to configure it');
-  c.innerHTML='<div class="toolbar"><input class="field search" id="i-q" placeholder="Search integrations…" oninput="intFilter()"><div class="spacer"></div><span class="hint">Each needs its own MCP server; Add creates the connection card.</span></div><div id="i-grid"></div>';
-  intFilter();
-}
-function intFilter(){const q=($('#i-q')?.value||'').toLowerCase();
-  $('#i-grid').innerHTML=CATALOG.map(cat=>{const items=cat.items.filter(n=>!q||n.toLowerCase().includes(q));if(!items.length)return '';
-    return '<div class="set-sec"><h3>'+esc(cat.c)+'</h3><div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(210px,1fr))">'+items.map(n=>'<div class="card" style="display:flex;align-items:center;gap:10px;padding:12px"><span style="font-size:19px">🧩</span><div class="ag-item-main"><strong>'+esc(n)+'</strong><div class="hint">'+esc(cat.c)+'</div></div><button class="btn btn-sm" onclick="intAdd(\''+jsesc(n)+'\')">Add</button></div>').join('')+'</div></div>';}).join('')||'<p class="hint">No matches.</p>';
-}
-function intAdd(name){connAdd();setTimeout(()=>{const l=$('#ac-label');if(l)l.value=name;const id=$('#ac-id');if(id)id.value=name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');},70);}
-
 // ── Router ────────────────────────────────────────────────────────────
-const ROUTES={dashboard:pageDashboard,connections:pageConnections,discover:pageDiscover,slicer:pageSlicer,agents:pageAgents,builder:pageBuilder,chat:pageChat,files:pageFiles,integrations:pageIntegrations,settings:pageSettings};
+// `integrations` folded into Connections; keep the route so old links resolve.
+const ROUTES={dashboard:pageDashboard,connections:pageConnections,discover:pageDiscover,slicer:pageSlicer,agents:pageAgents,builder:pageBuilder,chat:pageChat,files:pageFiles,integrations:pageConnections,settings:pageSettings};
 function router(){const r=(location.hash.replace(/^#\//,'')||'dashboard');const fn=ROUTES[r]||pageDashboard;setActive(r in ROUTES?r:'dashboard');closeDrawer();fn();}
 applyTheme(localStorage.getItem('plutus_theme')||'dark');
 buildShell();
