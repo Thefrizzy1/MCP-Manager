@@ -279,11 +279,21 @@ async function pageDiscover(){
     '<button class="btn btn-primary" onclick="doScan(this)">Scan</button></div>'+
     '<p class="hint" id="d-msg"></p><div id="d-rows"></div></div>';
 }
+let _scanSug=[];
 async function doScan(btn){const host=($('#d-host').value||'').trim();if(!host){alert('Enter a host.');return;}btn.disabled=true;$('#d-msg').textContent='Scanning…';$('#d-rows').innerHTML='';
   try{const d=await api('/api/v1/wizard/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,include_port_scan:$('#d-ports').checked})});
-    const sug=d.suggestions||[];$('#d-msg').textContent=(d.docker&&d.docker.ok?(d.docker.containers_seen+' containers'):'Docker unavailable')+' · '+sug.length+' suggestion(s)';
-    $('#d-rows').innerHTML=sug.map(it=>'<div class="set-row" style="border-bottom:1px solid var(--b)"><strong>'+esc(it.label||it.service_id)+'</strong> <span class="tag">'+esc(it.source||'')+'</span><div class="spacer"></div><code class="muted">'+esc((it.editable_keys&&it.editable_keys[0]&&it.editable_keys[0].value)||'')+'</code></div>').join('')||'<p class="hint">No services detected.</p>';
+    _scanSug=d.suggestions||[];$('#d-msg').textContent=(d.docker&&d.docker.ok?(d.docker.containers_seen+' containers'):'Docker unavailable')+' · '+_scanSug.length+' suggestion(s)';
+    $('#d-rows').innerHTML=_scanSug.map((it,i)=>{const url=(it.editable_keys&&it.editable_keys[0]&&it.editable_keys[0].value)||'';return '<div class="set-row" style="border-bottom:1px solid var(--b)"><span class="svc-ico">'+esc(it.icon||'🔍')+'</span> <strong>'+esc(it.label||it.service_id)+'</strong> <span class="tag">'+esc(it.source||'')+'</span><div class="spacer"></div><code class="muted" style="margin-right:8px">'+esc(url)+'</code><button class="btn btn-sm btn-primary" onclick="discConfigure('+i+',this)">Configure →</button></div>';}).join('')||'<p class="hint">No services detected.</p>';
   }catch(e){$('#d-msg').textContent='Error: '+e;}btn.disabled=false;}
+async function discConfigure(i,btn){const it=_scanSug[i];if(!it)return;if(btn){btn.disabled=true;btn.textContent='…';}
+  const body={};(it.editable_keys||[]).forEach(k=>{if(k.key&&k.value)body[k.key]=k.value;});
+  try{if(Object.keys(body).length)await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+  catch(e){alert('Save failed: '+e);if(btn){btn.disabled=false;btn.textContent='Configure →';}return;}
+  // Jump into the full Configure form (pre-filled with the discovered URL) so the
+  // user can add any API key, then land on Connections.
+  if(it.service_id){location.hash='#/connections';setTimeout(()=>connConfigure(it.service_id),350);}
+  else{location.hash='#/connections';}
+}
 
 // ── Slicer ────────────────────────────────────────────────────────────
 async function pageSlicer(){
