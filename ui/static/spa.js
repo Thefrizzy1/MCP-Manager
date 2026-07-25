@@ -277,8 +277,29 @@ async function pageDiscover(){
     '<div class="toolbar"><input class="field" id="d-host" placeholder="LAN host / IP (e.g. 192.168.1.111)" style="min-width:260px">'+
     '<label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="d-ports" checked> also probe common ports</label>'+
     '<button class="btn btn-primary" onclick="doScan(this)">Scan</button></div>'+
-    '<p class="hint" id="d-msg"></p><div id="d-rows"></div></div>';
+    '<p class="hint" id="d-msg"></p><div id="d-rows"></div></div>'+
+    '<div class="card" style="margin-top:16px"><div class="card-h"><h3>Discover an API (OpenAPI / FastAPI)</h3></div>'+
+    '<p class="hint" style="margin-bottom:8px">Point at any service that serves an OpenAPI spec (FastAPI exposes <code>/openapi.json</code>). It reads the endpoints so you can add it as a connection.</p>'+
+    '<div class="toolbar"><input class="field" id="oa-url" placeholder="http://192.168.1.111:9000" style="min-width:280px"><button class="btn btn-primary" onclick="apiIntrospect(this)">Discover</button></div>'+
+    '<p class="hint" id="oa-msg"></p><div id="oa-out"></div></div>';
 }
+let _oaSpec=null;
+async function apiIntrospect(btn){const url=($('#oa-url').value||'').trim();if(!url){alert('Enter a URL.');return;}btn.disabled=true;$('#oa-msg').textContent='Discovering…';$('#oa-out').innerHTML='';
+  try{const d=await api('/api/v1/openapi/introspect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    if(!d.ok){$('#oa-msg').textContent=d.error||'No spec found.';btn.disabled=false;return;}
+    _oaSpec=d;$('#oa-msg').innerHTML='<strong>'+esc(d.title)+'</strong> v'+esc(d.version)+' · '+d.operation_count+' endpoints · found at <code>'+esc(d.spec_url)+'</code>';
+    const rows=(d.operations||[]).slice(0,300).map(o=>'<tr><td><span class="tag">'+esc(o.method)+'</span></td><td class="name">'+esc(o.path)+'</td><td class="muted">'+esc(o.summary||'')+'</td></tr>').join('');
+    $('#oa-out').innerHTML='<div style="margin:10px 0"><button class="btn btn-primary" onclick="apiSaveConn(this)">＋ Add as connection</button></div><div class="card" style="padding:0;overflow:auto;max-height:340px"><table class="tbl"><thead><tr><th>Method</th><th>Path</th><th>Summary</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  }catch(e){$('#oa-msg').textContent='Error: '+e;}btn.disabled=false;}
+async function apiSaveConn(btn){if(!_oaSpec)return;const base=_oaSpec.base||'';const name=(_oaSpec.title||'api').trim();
+  const id=(name.toLowerCase().replace(/[^a-z0-9_]/g,'_').replace(/^_+|_+$/g,'').slice(0,40))||'api';const urlEnv=id.toUpperCase()+'_URL';
+  btn.disabled=true;
+  try{const full=await api('/settings/custom-integrations');const list=Array.isArray(full.integrations)?full.integrations:[];
+    list.push({id,label:name,description:(_oaSpec.description||('OpenAPI service — '+_oaSpec.operation_count+' endpoints')).slice(0,200),url_env:urlEnv,url_placeholder:base,health_path:'/'});
+    await api('/settings/custom-integrations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:full.version||1,integrations:list})});
+    if(base)await api('/env/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[urlEnv]:base})});
+    $('#oa-msg').innerHTML='✓ Saved as a connection — open <a href="#/connections">Connections</a>.';
+  }catch(e){alert('Save failed: '+e);btn.disabled=false;}}
 let _scanSug=[];
 async function doScan(btn){const host=($('#d-host').value||'').trim();if(!host){alert('Enter a host.');return;}btn.disabled=true;$('#d-msg').textContent='Scanning…';$('#d-rows').innerHTML='';
   try{const d=await api('/api/v1/wizard/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({host,include_port_scan:$('#d-ports').checked})});

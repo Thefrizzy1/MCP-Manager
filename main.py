@@ -900,6 +900,17 @@ async def api_v1_service_config(sid: str, creds=Depends(verify_auth)):
     }
 
 
+class OpenApiIntrospectBody(BaseModel):
+    url: str = Field(..., min_length=3, max_length=2000)
+
+
+@ui_app.post("/api/v1/openapi/introspect")
+async def api_v1_openapi_introspect(body: OpenApiIntrospectBody, creds=Depends(verify_auth)):
+    """Discover a service's OpenAPI/Swagger spec and list its endpoints."""
+    from core.openapi_discover import introspect
+    return await introspect(body.url)
+
+
 class ServiceIgnoreBody(BaseModel):
     ignored: bool = True
 
