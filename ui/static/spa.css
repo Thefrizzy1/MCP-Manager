@@ -102,6 +102,8 @@ tr.row-ignored{opacity:.42}
 tr.row-ignored:hover{opacity:.7}
 .cat-grp{margin-bottom:12px}
 .cat-h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:700;margin-bottom:6px}
+tr.grp-row td{background:var(--card);padding:8px 14px !important;border-bottom:1px solid var(--b)}
+tr.grp-row .cat-h{margin:0}
 .tag{display:inline-block;font-size:10px;padding:2px 8px;border-radius:20px;background:rgba(37,161,142,.15);color:var(--ac2);border:1px solid rgba(37,161,142,.3);font-weight:600}
 
 /* ── Details drawer ──────────────────────────────────────────────────── */

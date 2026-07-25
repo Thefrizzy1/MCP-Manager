@@ -495,10 +495,14 @@ function cmDownload(){const cc=(_cmData.clients||[]).find(x=>x.id===_cmSel);if(!
 // ── File manager ──────────────────────────────────────────────────────
 let _fpath='';
 async function pageFiles(){
-  const c=page('Files','Browse and manage generated files (within your allowed paths)');
+  const c=page('Files','Internal research storage the agents write to, plus any mounted shares');
   c.innerHTML='<div id="f-crumb" class="toolbar"></div><div class="card" style="padding:0;overflow:hidden"><table class="tbl"><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th style="text-align:right">Actions</th></tr></thead><tbody id="f-body"></tbody></table></div><pre class="out hidden" id="f-preview" style="margin-top:14px"></pre>';
   filesLoad(_fpath);
 }
+function _fileRow(it){const isdir=it.type==='dir';const icon=it.kind==='internal'?'🗄':(isdir?'📁':'📄');
+  const acts=isdir?'':'<button class="btn btn-sm" onclick="event.stopPropagation();filesPreview(\''+jsesc(it.path)+'\')">Preview</button><a class="btn btn-sm" href="/api/v1/files/download?path='+encodeURIComponent(it.path)+'">Download</a><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();filesDelete(\''+jsesc(it.path)+'\')">Delete</button>';
+  const click=isdir?"filesLoad('"+jsesc(it.path)+"')":"filesPreview('"+jsesc(it.path)+"')";
+  return '<tr onclick="'+click+'"><td class="name">'+icon+' '+esc(it.name)+(it.exists===false?' <span class="muted">(not mounted)</span>':'')+'</td><td class="muted">'+(isdir?'—':fmtSize(it.size))+'</td><td class="muted">'+(it.mtime?new Date(it.mtime*1000).toLocaleString():'')+'</td><td><div class="row-actions" onclick="event.stopPropagation()">'+acts+'</div></td></tr>';}
 async function filesLoad(path){_fpath=path;const body=$('#f-body');if(body)body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Loading…</span></td></tr>';$('#f-preview')?.classList.add('hidden');
   try{const d=await api('/api/v1/files/list?path='+encodeURIComponent(path||''));
     const crumb=$('#f-crumb');const parts=['<button class="btn btn-sm" onclick="filesLoad(\'\')">Roots</button>'];
@@ -506,10 +510,8 @@ async function filesLoad(path){_fpath=path;const body=$('#f-body');if(body)body.
     crumb.innerHTML=parts.join(' ');
     const items=d.items||[];
     if(!items.length){body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Empty.</span></td></tr>';return;}
-    body.innerHTML=items.map(it=>{const isdir=it.type==='dir';const icon=isdir?'📁':'📄';
-      const acts=isdir?'':'<button class="btn btn-sm" onclick="event.stopPropagation();filesPreview(\''+jsesc(it.path)+'\')">Preview</button><a class="btn btn-sm" href="/api/v1/files/download?path='+encodeURIComponent(it.path)+'">Download</a><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();filesDelete(\''+jsesc(it.path)+'\')">Delete</button>';
-      const click=isdir?"filesLoad('"+jsesc(it.path)+"')":"filesPreview('"+jsesc(it.path)+"')";
-      return '<tr onclick="'+click+'"><td class="name">'+icon+' '+esc(it.name)+(it.exists===false?' <span class="muted">(not mounted)</span>':'')+'</td><td class="muted">'+(isdir?'—':fmtSize(it.size))+'</td><td class="muted">'+(it.mtime?new Date(it.mtime*1000).toLocaleString():'')+'</td><td><div class="row-actions" onclick="event.stopPropagation()">'+acts+'</div></td></tr>';}).join('');
+    if(d.is_root){let html='';[['internal','Internal storage — where agents save research'],['mount','Mounted shares & allowed paths']].forEach(([k,t])=>{const g=items.filter(it=>(it.kind||'mount')===k);if(!g.length)return;html+='<tr class="grp-row"><td colspan="4"><span class="cat-h">'+t+'</span></td></tr>'+g.map(_fileRow).join('');});body.innerHTML=html||items.map(_fileRow).join('');}
+    else body.innerHTML=items.map(_fileRow).join('');
   }catch(e){body.innerHTML='<tr><td colspan="4" style="padding:16px"><span class="hint">Error: '+esc(e)+'</span></td></tr>';}}
 async function filesPreview(path){const p=$('#f-preview');p.classList.remove('hidden');p.textContent='Loading…';p.scrollIntoView({behavior:'smooth'});try{const d=await api('/api/v1/files/read?path='+encodeURIComponent(path));p.textContent=d.text||'(empty)';}catch(e){p.textContent='Error: '+e;}}
 async function filesDelete(path){if(!confirm('Delete this file?'))return;try{await api('/api/v1/files/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});filesLoad(_fpath);}catch(e){alert(e);}}

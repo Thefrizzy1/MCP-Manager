@@ -426,19 +426,39 @@ def _fs_roots() -> list[str]:
     return list(cfg.filesystem_allowed_paths or [])
 
 
+def _internal_roots() -> list[str]:
+    """Internal app storage the agents write to (the research library).
+    Kept browsable from the Files page so generated notes are one click away."""
+    try:
+        acfg = agent_runner.load_agent_config(ROOT)
+        lib = str(acfg.get("fs_library_path") or "/data/library").rstrip("/")
+    except Exception:
+        lib = "/data/library"
+    return [lib] if lib else []
+
+
+def _all_roots() -> list[str]:
+    """Every path the file browser may touch: internal storage + mounted shares."""
+    return _internal_roots() + _fs_roots()
+
+
 @ui_app.get("/api/v1/files/list")
 async def api_v1_files_list(request: Request, creds=Depends(verify_auth)):
-    """List a directory inside the allowed filesystem roots. Empty path = the roots."""
+    """List a directory inside the allowed roots. Empty path = the root groups
+    (internal storage first, then mounted shares / allowed paths)."""
     from core.path_guard import is_within_any
     path = (request.query_params.get("path") or "").strip()
-    roots = _fs_roots()
     if not path:
         items = []
-        for r in roots:
-            exists = os.path.isdir(r)
-            items.append({"name": r, "path": r, "type": "dir", "exists": exists})
+        for r in _internal_roots():
+            items.append({"name": "Research library", "path": r, "type": "dir",
+                          "kind": "internal", "exists": os.path.isdir(r)})
+        for r in _fs_roots():
+            items.append({"name": os.path.basename(r.rstrip("/")) or r,
+                          "path": r, "type": "dir", "kind": "mount",
+                          "exists": os.path.isdir(r)})
         return {"path": "", "parent": None, "items": items, "is_root": True}
-    if not is_within_any(path, roots):
+    if not is_within_any(path, _all_roots()):
         raise HTTPException(403, "Path is outside the allowed directories")
     ap = os.path.realpath(path)
     if not os.path.isdir(ap):
@@ -457,7 +477,7 @@ async def api_v1_files_list(request: Request, creds=Depends(verify_auth)):
     except PermissionError:
         raise HTTPException(403, "Permission denied")
     parent = os.path.dirname(ap)
-    return {"path": ap, "parent": parent if is_within_any(parent, roots) else "", "items": items}
+    return {"path": ap, "parent": parent if is_within_any(parent, _all_roots()) else "", "items": items}
 
 
 @ui_app.get("/api/v1/files/read")
@@ -466,7 +486,7 @@ async def api_v1_files_read(request: Request, creds=Depends(verify_auth)):
     from core.path_guard import is_within_any
     from core.redact import redact_secrets
     path = (request.query_params.get("path") or "").strip()
-    if not is_within_any(path, _fs_roots()):
+    if not is_within_any(path, _all_roots()):
         raise HTTPException(403, "Path is outside the allowed directories")
     ap = os.path.realpath(path)
     if not os.path.isfile(ap):
@@ -485,7 +505,7 @@ async def api_v1_files_read(request: Request, creds=Depends(verify_auth)):
 async def api_v1_files_download(request: Request, creds=Depends(verify_auth)):
     from core.path_guard import is_within_any
     path = (request.query_params.get("path") or "").strip()
-    if not is_within_any(path, _fs_roots()):
+    if not is_within_any(path, _all_roots()):
         raise HTTPException(403, "Path is outside the allowed directories")
     ap = os.path.realpath(path)
     if not os.path.isfile(ap):
@@ -500,7 +520,7 @@ class FilePathBody(BaseModel):
 @ui_app.post("/api/v1/files/delete")
 async def api_v1_files_delete(body: FilePathBody, creds=Depends(verify_auth)):
     from core.path_guard import is_within_any
-    if not is_within_any(body.path, _fs_roots()):
+    if not is_within_any(body.path, _all_roots()):
         raise HTTPException(403, "Path is outside the allowed directories")
     ap = os.path.realpath(body.path)
     if not os.path.isfile(ap):
