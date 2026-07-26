@@ -48,7 +48,9 @@ from core.tool_registry import (
 )
 
 
-def register_infrastructure_tools(mcp: FastMCP):
+def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     # ─── SYNCTHING ────────────────────────────────────────────────────────────
 
@@ -555,26 +557,24 @@ Then configure n8n SMTP node with host=127.0.0.1, port=1025.
             ),
         )
 
-    @mcp.tool(name="plutus_tool_slicer", annotations={"readOnlyHint": False})
+    @mcp.tool(name="plutus_tool_slicer", annotations={"readOnlyHint": True})
     async def plutus_tool_slicer(params: PlutusToolSlicerInput) -> str:
-        """Inspect or apply the Plutus tool-slicer.
+        """Preview which tools match an intent, grouped by category.
 
-        - With just `intent`: returns the categorized slice without changing anything.
-        - With `apply=true`: also persists the intent so the live MCP manifest is
-          filtered to that subset (clients must reconnect to refresh tool list).
-        - `intent=""` + `apply=true`: clears the active intent (exposes all tools).
+        Read-only discovery aid. Global tool-gating was replaced by profiles: to
+        actually serve a subset, create a profile (POST /api/v1/profiles) and it
+        gets its own `/mcp/p/<name>` endpoint. The `apply` flag is accepted for
+        backward compatibility but no longer changes anything.
 
         Available categories: calendar, tasks, contacts, notes, files, home, automation,
         notifications, monitoring, system_ops, ai, weather, search, finance, media,
         photos, trivia, ip_network, crypto, meta.
         """
-        from pathlib import Path
-        from core.tool_gate import build_tool_slice, set_active_intent
+        from core.profiles import build_tool_slice
 
-        root = Path(__file__).resolve().parents[1]
-        if params.apply:
-            set_active_intent(root, params.intent)
-        return json.dumps(build_tool_slice(root, params.intent), separators=(",", ":"))
+        tm = getattr(mcp, "_tool_manager", None)
+        names = [t.name for t in tm.list_tools()] if tm is not None else []
+        return json.dumps(build_tool_slice(names, params.intent), separators=(",", ":"))
 
 
 # ─── INPUT MODELS ─────────────────────────────────────────────────────────────

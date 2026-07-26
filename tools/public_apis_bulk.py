@@ -101,7 +101,9 @@ class NationalizeName(BaseModel):
     name: str = Field(default="john", max_length=80)
 
 
-def register_public_apis_bulk(mcp: FastMCP) -> None:
+def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) -> None:
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
     # ─── Network / HTTP ───────────────────────────────────────────────
 
     @mcp.tool(name="pub_unix_timestamp", annotations={"readOnlyHint": True})

@@ -16,7 +16,9 @@ from config import cfg
 from client import TIMEOUT, _handle_error, fmt_size
 
 
-def register_nextcloud_tools(mcp: FastMCP):
+def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     def _auth():
         return (cfg.nextcloud_username, cfg.nextcloud_password)

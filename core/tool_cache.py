@@ -11,7 +11,6 @@ from typing import Any, Callable  # Any: tool_manager duck-typed
 
 from core.invoke_tool import invoke_mcp_tool_fn
 from core.result_status import text_looks_successful
-from core.tool_gate import load_gate
 from core.tool_registry import is_tool_environment_ready, merged_smoke_payload
 
 PREFS_NAME = "beta_tool_cache_prefs.json"
@@ -107,11 +106,8 @@ async def refresh_all_cached_tools(
     prefs_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     prefs = prefs_override if prefs_override is not None else load_prefs(root)
-    gate = load_gate(root)
     disabled_s = {str(x).strip().lower() for x in (prefs.get("disabled_service_ids") or []) if str(x).strip()}
     disabled_t = {str(x).strip() for x in (prefs.get("disabled_tool_names") or []) if str(x).strip()}
-    disabled_t |= set(gate.get("disabled_tools") or [])
-    gate_sec = {str(x).strip().lower() for x in (gate.get("disabled_sections") or []) if str(x).strip()}
     scope = str(prefs.get("refresh_scope") or "all").strip().lower()
     entries = load_entries(root)
     by_tool = entries.setdefault("by_tool", {})
@@ -125,8 +121,6 @@ async def refresh_all_cached_tools(
         sid = str(svc.get("id") or "").strip().lower()
         sec = str(svc.get("section") or "").strip().lower()
         if sid in disabled_s:
-            continue
-        if sec in gate_sec:
             continue
         if scope == "public_apis" and sec != "public":
             continue

@@ -65,7 +65,9 @@ def _load_smb_shares() -> list[dict]:
         return []
 
 
-def register_ssh_smb_tools(mcp: FastMCP):
+def register_ssh_smb_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     # ─── SSH TOOLS ─────────────────────────────────────────────────────────
 
