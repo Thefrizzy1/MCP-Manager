@@ -11,8 +11,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core import profiles as profiles_mod
+from core import tool_exposure
 from ui.api.deps import verify_auth
-from ui.runtime import ROOT, all_tool_names
+from ui.runtime import ROOT, all_tool_names, tools
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
@@ -109,3 +110,20 @@ async def delete_profile(name: str):
 async def tools_slicer(intent: str = ""):
     """Read-only category/intent preview (there is no global gate to apply)."""
     return profiles_mod.build_tool_slice(all_tool_names(), intent)
+
+
+# ── Global tool exposure (the token-optimisation "slicer") ────────────────────
+
+class ExposureBody(BaseModel):
+    disabled_categories: list[str] = Field(default_factory=list)
+
+
+@router.get("/api/v1/tools/exposure")
+async def get_exposure():
+    return tool_exposure.exposure_report(ROOT, tools.raw_manager)
+
+
+@router.post("/api/v1/tools/exposure")
+async def set_exposure(body: ExposureBody):
+    tool_exposure.save_exposure(ROOT, body.disabled_categories)
+    return {"ok": True, **tool_exposure.exposure_report(ROOT, tools.raw_manager)}

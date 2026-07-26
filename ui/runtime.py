@@ -137,9 +137,14 @@ def build_mcp_asgi_app():
     from starlette.routing import Mount
 
     from core.mcp_bearer_middleware import MCPBearerGateMiddleware
+    from core.tool_exposure import resolve_exposed
 
     names = all_tool_names()
-    mounted = [("/mcp", mcp.streamable_http_app())]
+    # The main /mcp honours the global tool-exposure "slicer": if categories are
+    # disabled, serve a filtered instance so the manifest (and its tokens) shrink.
+    exposed = resolve_exposed(ROOT, names)
+    main_app = (mcp if exposed is None else build_mcp("plutus", exposed)).streamable_http_app()
+    mounted = [("/mcp", main_app)]
     for prof in load_profiles(ROOT):
         allow = resolve_tool_names(prof, names)
         sub = build_mcp(f"plutus-{prof['name']}", allow)

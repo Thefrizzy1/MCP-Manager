@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, CircleCheck, Cpu, TriangleAlert } from 'lucide-react'
+import { CircleCheck, Cpu, TriangleAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { serviceHealth, type Service } from '@/lib/health'
@@ -7,6 +7,7 @@ import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Stat } from '@/components/ui/Stat'
 import { HealthBadge } from '@/components/ui/StatusDot'
+import { OptimizePanel } from '@/components/dashboard/OptimizePanel'
 
 interface DashboardPayload {
   main?: { registered_tools?: number; capabilities?: number }
@@ -128,25 +129,7 @@ export function Dashboard() {
               </Card>
             </div>
 
-            <Card>
-              <CardHeader
-                title="Tool optimization"
-                subtitle="Reduce prompt tokens by exposing only the tools an agent needs"
-                action={
-                  <button
-                    onClick={() => navigate('connections')}
-                    className="flex items-center gap-1 text-[12.5px] font-medium text-accent hover:underline"
-                  >
-                    Manage <ArrowRight size={14} />
-                  </button>
-                }
-              />
-              <div className="px-4 pb-4 text-[13px] text-ink-2">
-                The full manifest exposes <span className="font-medium text-ink">{tools}</span> tools. Create a
-                profile to serve a focused subset at its own endpoint and cut the tokens every request spends on
-                the tool list. Live token estimates land here next.
-              </div>
-            </Card>
+            <OptimizePanel />
           </div>
         )}
       </PageBody>
