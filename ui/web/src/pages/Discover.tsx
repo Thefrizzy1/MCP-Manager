@@ -68,6 +68,20 @@ export function Discover() {
     }
   }
 
+  async function configureAll() {
+    const body: Record<string, string> = {}
+    for (const it of suggestions) for (const k of it.editable_keys ?? []) if (k.key && k.value) body[k.key] = k.value
+    const n = Object.keys(body).length
+    if (!n) return
+    try {
+      await api.post('/env/save', body)
+      setScanMsg(`Saved ${n} address(es). Add any API keys on the Connections page.`)
+      navigate('connections')
+    } catch (e) {
+      alert(String(e))
+    }
+  }
+
   async function configure(it: Suggestion) {
     // Save the discovered URL(s) first, then open the Configure form right here —
     // pre-filled with the found address:port, so you only add an API key.
@@ -152,6 +166,14 @@ export function Discover() {
                 </Button>
               </div>
               {scanMsg && <p className="mt-2 text-[12px] text-ink-3">{scanMsg}</p>}
+              {suggestions.length > 1 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <Button variant="primary" size="sm" onClick={configureAll}>
+                    Configure all {suggestions.length}
+                  </Button>
+                  <span className="text-[11.5px] text-ink-3">saves every found address at once</span>
+                </div>
+              )}
               <div className="mt-2 space-y-1.5">
                 {suggestions.map((it, i) => {
                   const url = it.editable_keys?.[0]?.value || ''
