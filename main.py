@@ -73,10 +73,9 @@ from urllib.request import urlopen
 import uvicorn
 
 from config import DEFAULT_UI_PASSWORD, allow_empty_ui_password, cfg
-from core.mcp_bearer_middleware import MCPBearerGateMiddleware
 from core.recent_runs import ensure_data_dir
 from ui.api import build_ui_app
-from ui.runtime import ROOT, mcp
+from ui.runtime import ROOT, build_mcp_asgi_app
 
 _shutting_down = False
 
@@ -108,8 +107,7 @@ def run_ui():
 
 
 async def _run_mcp_streamable_http() -> None:
-    starlette_app = mcp.streamable_http_app()
-    starlette_app.add_middleware(MCPBearerGateMiddleware)
+    starlette_app = build_mcp_asgi_app()
     server = uvicorn.Server(
         uvicorn.Config(starlette_app, host=cfg.mcp_host, port=cfg.mcp_port, log_level="warning")
     )

@@ -164,9 +164,15 @@ async def api_v1_mcp_connections(request: Request):
     from core.mcp_export import build_connection_exports
 
     include_token = (request.query_params.get("include_token") or "").strip().lower() in {"1", "true", "yes"}
-    mcp_http_url = f"http://{cfg.mcp_lan_host}:{cfg.mcp_port}/mcp"
+    # ?profile=<name> exports the config for that profile's /mcp/p/<name> endpoint.
+    from core.profiles import PROFILE_NAME_RE
+    profile = (request.query_params.get("profile") or "").strip().lower()
+    if profile and not PROFILE_NAME_RE.match(profile):
+        raise HTTPException(400, "invalid profile name")
+    suffix = "/mcp" + (f"/p/{profile}" if profile else "")
+    mcp_http_url = f"http://{cfg.mcp_lan_host}:{cfg.mcp_port}{suffix}"
     pub_b = (cfg.public_mcp_base or "").strip().rstrip("/")
-    mcp_https_url = pub_b + "/mcp" if pub_b.startswith(("http://", "https://")) else ""
+    mcp_https_url = pub_b + suffix if pub_b.startswith(("http://", "https://")) else ""
     primary = mcp_https_url or mcp_http_url
     sse_primary = primary[: -len("/mcp")] + "/sse" if primary.endswith("/mcp") else primary
     is_http = primary.startswith("http://")

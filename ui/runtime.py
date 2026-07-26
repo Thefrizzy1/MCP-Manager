@@ -30,8 +30,8 @@ from core.recent_runs import ensure_data_dir
 from core.router import RouterRuntime
 from core.scheduler import PlutusScheduler, invoke_tool_sync
 from core.service_registry import all_services
+from core.profiles import load_profiles, resolve_tool_names, tool_filter
 from core.tool_cache import beta_cache_background_loop
-from core.tool_gate import apply_tool_gate_patch
 from core.tool_manager_adapter import ToolRegistryAdapter
 from mcp.server.fastmcp import FastMCP
 from tools.comfyui import register_comfyui_tools
@@ -52,22 +52,14 @@ ROOT = Path(__file__).resolve().parent.parent
 logging.basicConfig(level=os.getenv("PLUTUS_LOG_LEVEL", "INFO").upper())
 log = logging.getLogger("plutus")
 
-mcp = FastMCP(
-    "plutus_mcp",
-    host=cfg.mcp_host,
-    port=cfg.mcp_port,
-    instructions="Plutus homelab MCP. Self-hosted: Jellyfin, *arrs, Immich, HA, Nextcloud, Habitica, Docker, OMV, ComfyUI, n8n, Syncthing, Obsidian. Public: fal.ai, weather, maps, web search.",
+_MCP_INSTRUCTIONS = (
+    "Plutus homelab MCP. Self-hosted: Jellyfin, *arrs, Immich, HA, Nextcloud, "
+    "Habitica, Docker, OMV, ComfyUI, n8n, Syncthing, Obsidian. Public: fal.ai, "
+    "weather, maps, web search."
 )
 
-register_media_tools(mcp); register_personal_tools(mcp); register_photo_tools(mcp)
-register_system_tools(mcp); register_comfyui_tools(mcp); register_utility_tools(mcp)
-register_obsidian_tools(mcp); register_monitoring_tools(mcp); register_nextcloud_tools(mcp)
-register_infrastructure_tools(mcp); register_fal_tools(mcp)
-register_public_apis_bulk(mcp)
-register_ssh_smb_tools(mcp)
 
-
-def _load_user_extensions() -> None:
+def _load_user_extensions(m, allow: "set[str] | None" = None) -> None:
     ext = ROOT / "extensions" / "__init__.py"
     if not ext.is_file():
         return
@@ -86,16 +78,79 @@ def _load_user_extensions() -> None:
     if not callable(reg):
         return
     try:
-        reg(mcp)
+        reg(tool_filter(m, allow))
         print("🔌 extensions: register(mcp) completed")
     except Exception as ex:
         print(f"⚠️ extensions.register(mcp): {ex}")
 
 
-_load_user_extensions()
+def register_all_tools(m, allow: "set[str] | None" = None) -> None:
+    """Register every tool domain (and user extensions) onto ``m``.
+
+    ``allow`` (a set of tool names) is threaded to every domain registrar so a
+    profile instance only ever has its allowed tools registered. ``None`` means
+    the full surface.
+    """
+    register_media_tools(m, allow=allow); register_personal_tools(m, allow=allow); register_photo_tools(m, allow=allow)
+    register_system_tools(m, allow=allow); register_comfyui_tools(m, allow=allow); register_utility_tools(m, allow=allow)
+    register_obsidian_tools(m, allow=allow); register_monitoring_tools(m, allow=allow); register_nextcloud_tools(m, allow=allow)
+    register_infrastructure_tools(m, allow=allow); register_fal_tools(m, allow=allow)
+    register_public_apis_bulk(m, allow=allow)
+    register_ssh_smb_tools(m, allow=allow)
+    _load_user_extensions(m, allow=allow)
+
+
+mcp = FastMCP("plutus_mcp", host=cfg.mcp_host, port=cfg.mcp_port, instructions=_MCP_INSTRUCTIONS)
+register_all_tools(mcp)
 
 tools = ToolRegistryAdapter(mcp)
-apply_tool_gate_patch(tools.raw_manager, ROOT)
+# The old global tool gate (core/tool_gate.py) is gone; scoping is now per
+# profile (core/profiles.py), each served at its own /mcp/p/<name> endpoint.
+
+
+def all_tool_names() -> list[str]:
+    return tools.tool_names()
+
+
+def build_mcp(name: str, allow: "set[str] | None"):
+    """A FastMCP with only ``allow`` registered (None = the full surface)."""
+    m = FastMCP(name, instructions=_MCP_INSTRUCTIONS)
+    register_all_tools(m, allow=allow)
+    return m
+
+
+def build_mcp_asgi_app():
+    """The ASGI app the MCP process serves: the full surface at /mcp plus one
+    mount per profile at /mcp/p/<name>, all behind the bearer gate.
+
+    Profiles are read once at startup — adding/removing one is restart-to-apply
+    (the MCP server is a separate process from the UI, so cross-process
+    hot-remount would be fragile). See docs/ARCHITECTURE.md.
+    """
+    from contextlib import AsyncExitStack, asynccontextmanager
+
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    from core.mcp_bearer_middleware import MCPBearerGateMiddleware
+
+    names = all_tool_names()
+    mounted = [("/mcp", mcp.streamable_http_app())]
+    for prof in load_profiles(ROOT):
+        allow = resolve_tool_names(prof, names)
+        sub = build_mcp(f"plutus-{prof['name']}", allow)
+        mounted.append((f"/mcp/p/{prof['name']}", sub.streamable_http_app()))
+
+    @asynccontextmanager
+    async def _lifespan(_app):
+        async with AsyncExitStack() as stack:
+            for _, sub_app in mounted:
+                await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+            yield
+
+    app = Starlette(routes=[Mount(path, app=a) for path, a in mounted], lifespan=_lifespan)
+    app.add_middleware(MCPBearerGateMiddleware)
+    return app
 
 ICONS_DIR = ROOT / "icons"
 STATIC_DIR = ROOT / "ui" / "static"

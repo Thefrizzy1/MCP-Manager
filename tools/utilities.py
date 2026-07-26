@@ -28,7 +28,9 @@ def _effective_weather_city() -> str:
     return cfg.weather_default_location or "Hamburg"
 
 
-def register_utility_tools(mcp: FastMCP):
+def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     # ─── CONTEXT / DATETIME ───────────────────────────────────────────────────
 

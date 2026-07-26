@@ -15,7 +15,9 @@ from core.path_guard import is_within_any
 from core.redact import redact_secrets
 
 
-def register_system_tools(mcp: FastMCP):
+def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     # ─── DOCKER ───────────────────────────────────────────────────────────────
 

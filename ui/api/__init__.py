@@ -16,10 +16,10 @@ from ui.api import (
     discover,
     files,
     health,
+    profiles,
     public,
     settings,
     system,
-    tools,
 )
 from ui.api.deps import csrf_origin_guard
 from ui.runtime import ICONS_DIR, STATIC_DIR, ui_lifespan
@@ -32,7 +32,7 @@ _AUTHED_ROUTERS = (
     connections.router,
     discover.router,
     catalog.router,
-    tools.router,
+    profiles.router,
     agents.router,
     settings.router,
     system.router,

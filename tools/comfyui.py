@@ -11,7 +11,9 @@ from config import cfg
 from client import fmt_size, TIMEOUT, _handle_error
 
 
-def register_comfyui_tools(mcp: FastMCP):
+def register_comfyui_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     @mcp.tool(name="comfyui_status", annotations={"readOnlyHint": True})
     async def comfyui_status() -> str:

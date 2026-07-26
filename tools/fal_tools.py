@@ -7,7 +7,9 @@ from mcp.server.fastmcp import FastMCP
 from config import cfg
 from client import _handle_error
 
-def register_fal_tools(mcp: FastMCP):
+def register_fal_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
     def _h(): return {"Authorization":f"Key {cfg.fal_key}","Content-Type":"application/json"}
 
     @mcp.tool(name="fal_list_models_snippet",annotations={"readOnlyHint":True})

@@ -12,7 +12,9 @@ from config import cfg
 from client import TIMEOUT, _handle_error
 
 
-def register_personal_tools(mcp: FastMCP):
+def register_personal_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
+    from core.profiles import tool_filter
+    mcp = tool_filter(mcp, allow)
 
     # ─── HABITICA ─────────────────────────────────────────────────────────────
 

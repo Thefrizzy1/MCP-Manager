@@ -16,6 +16,7 @@ from core.invoke_tool import invoke_mcp_tool_fn
 from core.recent_runs import append_recent, ensure_data_dir, load_recent
 from core.result_status import text_looks_successful
 from core.tool_cache import record_tool_output
+from core.version_info import MCP_PROTOCOL_VERSION
 from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
@@ -101,7 +102,7 @@ async def api_v1_mcp_selftest():
     body = {
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {
-            "protocolVersion": "2024-11-05", "capabilities": {},
+            "protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {},
             "clientInfo": {"name": "plutus-selftest", "version": "1"},
         },
     }
