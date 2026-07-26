@@ -1,3 +1,16 @@
+# ── Stage 1: build the React web UI (Vite → ui/static/dist) ───────────────────
+# Kept in its own stage so the frontend's node_modules never reach the final
+# image — only the built, hashed assets are copied across.
+FROM node:22-alpine AS webbuild
+WORKDIR /build
+# Install deps first so this layer caches unless the lockfile changes.
+COPY ui/web/package.json ui/web/package-lock.json ./ui/web/
+RUN cd ui/web && npm ci
+# Vite's outDir is ../static/dist, so the build lands at /build/ui/static/dist.
+COPY ui/web ./ui/web
+RUN cd ui/web && npm run build
+
+# ── Stage 2: Python runtime ───────────────────────────────────────────────────
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -17,8 +30,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source
+# Copy source (ui/static/dist is .dockerignored, so it isn't clobbered below).
 COPY . .
+
+# Copy the built web UI from the node stage.
+COPY --from=webbuild /build/ui/static/dist /app/ui/static/dist
 
 # Create config dir
 RUN mkdir -p /app/config

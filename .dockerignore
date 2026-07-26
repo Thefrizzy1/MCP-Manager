@@ -23,6 +23,12 @@ tests/
 htmlcov/
 .coverage
 
+# Frontend: build it fresh in the node stage; never ship node_modules or a
+# stale local build into the image context.
+ui/web/node_modules/
+ui/web/dist/
+ui/static/dist/
+
 # Docs/dev-only — not needed at runtime
 README.md
 requirements-dev.txt

@@ -40,10 +40,18 @@ services:
       # Set DOCKER_WRITE_ENABLED=true in .env to allow start/stop/restart.
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-      # Persistent state: health baseline, recent runs, beta cache, uploaded CA,
-      # agent runs, schedules. Without these, that state is lost on rebuild.
+      # Persistent state: profiles, custom integrations, agent config, schedules,
+      # health baseline, recent runs, beta cache, uploaded CA, agent runs.
+      # Without these, that state is lost on rebuild.
       - ./config:/app/config
       - ./data:/app/data
+
+      # NON-DESTRUCTIVE UPDATES: settings saved from the UI are written to
+      # /app/.env, so mount the host .env here to keep them across an update
+      # (`docker compose pull && up -d` recreates the container). Without this
+      # bind mount, UI-configured keys/URLs/tokens reset on every update.
+      # The host file must exist first (the quickstart's `cp .env.example .env`).
+      - ./.env:/app/.env
 
       # Claude Code login for the headless agent runner — survives restarts.
       # Log in once:  docker exec -it plutus-mcp claude   (follow the OAuth link)
