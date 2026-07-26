@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { CircleCheck, Cpu, TriangleAlert } from 'lucide-react'
+import { Check, CircleCheck, Copy, Cpu, TriangleAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import { serviceHealth, type Service } from '@/lib/health'
@@ -11,8 +12,31 @@ import { OptimizePanel } from '@/components/dashboard/OptimizePanel'
 
 interface DashboardPayload {
   main?: { registered_tools?: number; capabilities?: number }
+  networking?: { http_local?: string }
   services?: Service[]
   recent_tool_runs?: Array<{ tool?: string; ts?: string } | string>
+}
+
+function EndpointBar({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <div className="flex items-center gap-2.5 rounded-[var(--radius)] border border-border bg-surface px-3 py-2">
+      <span className="text-[11px] font-medium uppercase tracking-wide text-ink-3">MCP endpoint</span>
+      <code className="min-w-0 truncate font-mono text-[12.5px] text-ink">{url}</code>
+      <button
+        aria-label="Copy MCP endpoint"
+        onClick={() => {
+          navigator.clipboard?.writeText(url)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1500)
+        }}
+        className="ml-auto flex shrink-0 items-center gap-1 text-[12px] font-medium text-accent hover:underline"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  )
 }
 interface AgentStatus {
   auth?: { mode?: string }
@@ -25,7 +49,7 @@ const ATTENTION = new Set(['offline', 'auth_error', 'api_error', 'rate_limited',
 export function Dashboard() {
   const dash = useQuery({
     queryKey: ['dashboard'],
-    queryFn: () => api.get<DashboardPayload>('/api/v1/dashboard?sections=main,services,recent'),
+    queryFn: () => api.get<DashboardPayload>('/api/v1/dashboard?sections=main,services,recent,networking'),
   })
   const agent = useQuery({
     queryKey: ['agent-status'],
@@ -57,6 +81,7 @@ export function Dashboard() {
           <Card className="p-4 text-[13px] text-danger">Couldn’t load the dashboard.</Card>
         ) : (
           <div className="space-y-5">
+            {dash.data?.networking?.http_local && <EndpointBar url={dash.data.networking.http_local} />}
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Stat
                 label="Connected"
