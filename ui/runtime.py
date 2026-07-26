@@ -34,6 +34,7 @@ from core.profiles import load_profiles, resolve_tool_names, tool_filter
 from core.tool_cache import beta_cache_background_loop
 from core.tool_manager_adapter import ToolRegistryAdapter
 from mcp.server.fastmcp import FastMCP
+from tools.apps import register_app_tools
 from tools.comfyui import register_comfyui_tools
 from tools.fal_tools import register_fal_tools
 from tools.infrastructure import register_infrastructure_tools
@@ -101,6 +102,7 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_ssh_smb_tools(m, allow=allow)
     register_prompt_tools(m, allow=allow)
     register_resource_tools(m, allow=allow)
+    register_app_tools(m, allow=allow)
     _load_user_extensions(m, allow=allow)
 
 
