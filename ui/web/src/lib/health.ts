@@ -35,6 +35,7 @@ export interface Service {
   health?: boolean | null
   tool_count?: number
   tool_names?: string[]
+  logo_domain?: string
   /** Optional richer state once the backend supplies it. */
   health_state?: HealthState
 }

@@ -10,9 +10,17 @@ interface Integrations {
   integrations?: Array<Record<string, unknown>>
 }
 
-export function AddConnectionModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => void }) {
-  const [label, setLabel] = useState('')
-  const [id, setId] = useState('')
+export function AddConnectionModal({
+  onClose,
+  onAdded,
+  initialLabel = '',
+}: {
+  onClose: () => void
+  onAdded: () => void
+  initialLabel?: string
+}) {
+  const [label, setLabel] = useState(initialLabel)
+  const [id, setId] = useState(initialLabel.toLowerCase().replace(/[^a-z0-9_]/g, '_'))
   const [urlEnv, setUrlEnv] = useState('')
   const [url, setUrl] = useState('')
   const [healthPath, setHealthPath] = useState('/')
