@@ -20,9 +20,10 @@ productivity, infrastructure, and public APIs — all behind one endpoint.
 
 One MCP server exposes every homelab service through a single, authenticated
 endpoint, so any MCP client (Claude Desktop/Code, Cursor, VS Code, n8n, …) can
-drive your whole stack. The web app is a framework-free single-page console
-served at `/app` — no build step, deploys as plain static files inside the
-container.
+drive your whole stack. The web app is a React desktop-style console (Vite +
+React 19 + Tailwind 4 + lucide) served at `/app`, built into the image by a
+multi-stage Docker build. It's the control centre: connections, health, agents,
+files, settings, and a token-optimising tool slicer.
 
 ## The web app at a glance
 
@@ -203,11 +204,19 @@ broken commit never publishes; pull requests are tested but not published.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest        # offline suite (no network)
-node --check ui/static/spa.js
+python -m pytest              # offline backend suite (no network)
+
+# Frontend (React app in ui/web/):
+npm --prefix ui/web install
+npm --prefix ui/web run build   # -> ui/static/dist (served at /app)
+npm --prefix ui/web run dev     # dev server on :5173, proxies /api to :8766
 ```
 
-The UI is a framework-free SPA — `ui/spa_page.py` (shell) + `ui/static/spa.{css,js}`.
-Static assets are cache-busted by `?v=VERSION` from `core/version_info.py`, so
-**bump `VERSION` whenever you change CSS/JS** or browsers serve stale files. See
+The UI lives in `ui/web/` (Vite). The build outputs hashed assets to
+`ui/static/dist`; FastAPI serves them at `/app` (falling back to the legacy SPA
+only if `dist` is absent). No manual cache-busting — Vite hashes filenames. See
 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+
+**Updating is non-destructive:** `docker compose pull && docker compose up -d`
+preserves your settings, connections, profiles, and keys (data/, config/ and the
+mounted `.env` persist).

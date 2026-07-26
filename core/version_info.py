@@ -1,6 +1,6 @@
 """Single place for the dashboard / update-check version string."""
 
-VERSION = "5.7.1"
+VERSION = "6.0.0"
 
 # The MCP protocol revision the selftest client advertises. Bump this together
 # with the mcp[cli] pin. Note: the 2026-07-28 spec removes the initialize

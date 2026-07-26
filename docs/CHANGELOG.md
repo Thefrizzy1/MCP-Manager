@@ -2,6 +2,46 @@
 
 Notable changes to Plutus. Dates are approximate; this project is single-maintainer.
 
+## 6.0.0 — full rebuild: new React UI, MCP primitives, token slicer
+
+A ground-up rebuild. The framework-free teal SPA (the "Unreleased" notes below)
+was replaced by a new React desktop-aesthetic UI, and the backend gained real MCP
+primitives (profiles, prompts, resources, annotations, an App widget).
+
+### BREAKING
+
+- **One-time reset of tool-exposure settings.** The global tool gate
+  (`data/plutus_tool_gate.json`, monkeypatched onto the SDK) is gone; it is
+  replaced by per-profile MCP endpoints and a category-based token slicer.
+  Everything else in `data/` and your `.env` is preserved.
+- **Non-destructive updates from here on.** Mount `./.env:/app/.env` (see the
+  updated `docker-compose.yml`) so settings saved from the UI survive
+  `docker compose pull && up -d`. Without it, UI-saved keys reset on every update.
+
+### Added
+
+- **New desktop UI** (Vite + React 19 + Tailwind 4 + lucide), served at `/app`;
+  real brand logos (offline `simple-icons`), light + dark, dense professional look.
+- **Token-reducing tool slicer** on the Dashboard — disable tool categories to
+  shrink the `/mcp` manifest and cut prompt tokens, with a live estimate.
+- **MCP primitives:** per-profile endpoints (`/mcp/p/<name>`), playbooks exposed
+  as prompts, `plutus://` resources (health, connections, agent-runs, library —
+  library reads go through path-guard + redaction), all four annotation hints on
+  every tool, and an MCP App widget (`plutus_status`, `ui://plutus/connections`).
+- **Connection health states:** Online / Offline / Auth error / Rate limited /
+  API error / Not configured — see *why* a service is unavailable, not just that.
+- **Discover:** the found IP:port auto-fills the Configure form, and a
+  "Configure all" batch-saves every service found on a host in one click.
+- **Multi-stage Docker image** builds and ships the React UI; CI builds it too.
+
+### Changed
+
+- **Backend restructured:** `main.py` 1,575 → 235 lines; every endpoint moved to
+  `ui/api/*` routers with auth attached per-router (a new route can't be unguarded).
+- The **agent ACL now derives from tool annotations** (`openWorld`/`destructive`)
+  with the curated block-lists kept as a safety-net override.
+- MCP protocol version pinned in one place (`MCP_PROTOCOL_VERSION`).
+
 ## Unreleased — Agents page redesign, app-wide teal palette, audit
 
 - **Agents page redesigned** (`ui/agents_page.py`): a persistent launcher (prompt +
