@@ -32,11 +32,12 @@ PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 # ── Registration-time tool filter ─────────────────────────────────────────────
 
 class _ToolFilter:
-    """Wrap a FastMCP so ``.tool(...)`` only registers allowed tools.
+    """Wrap a FastMCP so ``.tool(...)`` (a) completes the four annotation hints
+    and (b) only registers allowed tools.
 
-    ``allow=None`` means the full surface (no filtering). Any attribute other
-    than ``tool`` is forwarded to the real server unchanged, so ``.prompt``,
-    ``.resource``, ``.add_tool`` etc. keep working.
+    ``allow=None`` means the full surface (no filtering) but annotations are
+    still completed. Any attribute other than ``tool`` is forwarded to the real
+    server unchanged, so ``.prompt``, ``.resource``, ``.add_tool`` etc. work.
 
     Fail-closed: if a tool's name cannot be determined and it is not explicitly
     allowed, it is *not* registered.
@@ -47,15 +48,17 @@ class _ToolFilter:
         self._allow = allow
 
     def tool(self, *args: Any, **kwargs: Any):
+        from core.tool_annotations import fill_annotations
+        name = kwargs.get("name")
+        kwargs["annotations"] = fill_annotations(name, kwargs.get("annotations"))
         if self._allow is None:
             return self._mcp.tool(*args, **kwargs)
         inner = self._mcp.tool(*args, **kwargs)
         allow = self._allow
-        declared = kwargs.get("name")
 
         def deco(fn):
-            name = declared or getattr(fn, "__name__", None)
-            if name in allow:
+            n = name or getattr(fn, "__name__", None)
+            if n in allow:
                 return inner(fn)
             return fn  # not allowed on this profile -> never registered
 
@@ -66,9 +69,8 @@ class _ToolFilter:
 
 
 def tool_filter(mcp: Any, allow: set[str] | None):
-    """Return ``mcp`` unchanged when unfiltered, else a filtering proxy."""
-    if allow is None:
-        return mcp
+    """Wrap ``mcp`` so every ``@mcp.tool`` gets its annotation hints completed
+    (and, when ``allow`` is a set, is filtered to that set)."""
     return _ToolFilter(mcp, allow)
 
 

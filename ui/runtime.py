@@ -258,7 +258,10 @@ def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
     """Queue an agent run. Disallowed-tool set = permission level + per-connection ACL."""
     acfg = agent_runner.load_agent_config(ROOT)
     level = agent_permissions.normalize_level(permission or acfg.get("tool_permission"))
-    disallowed = sorted(set(agent_permissions.build_disallowed(tools.tool_names(), level)) | set(extra_disallowed or []))
+    disallowed = sorted(
+        set(agent_permissions.build_disallowed_from_annotations(tools.raw_manager, level))
+        | set(extra_disallowed or [])
+    )
     try:
         _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
                                  "model": model, "force": force})

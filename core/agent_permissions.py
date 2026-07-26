@@ -64,3 +64,32 @@ def build_disallowed(tool_names, level: str) -> list[str]:
     blocked = blocked_tool_names(level)
     live = set(tool_names or [])
     return sorted(f"mcp__plutus__{n}" for n in blocked if n in live)
+
+
+def _tool_annotations_map(tool_manager) -> dict:
+    return {t.name: t.annotations for t in tool_manager.list_tools()}
+
+
+def build_disallowed_from_annotations(tool_manager, level: str) -> list[str]:
+    """Derive the disallow list from tool annotations rather than a hand list.
+
+    - ``strict_read`` blocks every tool that is not read-only.
+    - ``safe`` blocks every destructive tool.
+
+    Each still unions the curated ``DANGEROUS``/``WRITE`` sets as a safety-net
+    override, so a tool the hints under-classify (ssh_run, ha_call_service, …)
+    stays blocked, and the derived list is always a superset of the old one.
+    Fail-safe: a missing/None annotation counts as *not* read-only.
+    """
+    level = normalize_level(level)
+    if level == "all":
+        return []
+    amap = _tool_annotations_map(tool_manager)
+    live = set(amap)
+    if level == "strict_read":
+        blocked = {n for n, a in amap.items() if not (a and a.readOnlyHint)}
+        blocked |= (DANGEROUS | WRITE) & live
+    else:  # safe
+        blocked = {n for n, a in amap.items() if a and a.destructiveHint}
+        blocked |= DANGEROUS & live
+    return sorted(f"mcp__plutus__{n}" for n in blocked if n in live)
