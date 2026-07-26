@@ -166,6 +166,7 @@ STATIC_DIR = ROOT / "ui" / "static"
 DIST_DIR = ROOT / "ui" / "static" / "dist"  # built React app (Vite base=/spa/)
 ENV_FILE = str(ROOT / ".env")
 _health_cache: dict = {}
+_health_states: dict = {}
 _health_ts: float = 0.0
 _health_lock = asyncio.Lock()
 _env_lock = threading.Lock()
@@ -306,11 +307,13 @@ def _run_task_bg(task_id: str, *, force: bool = False) -> None:
 
 
 async def get_health(force=False):
-    global _health_cache, _health_ts
+    global _health_cache, _health_states, _health_ts
     async with _health_lock:
         if force or not _health_cache or (time.time() - _health_ts) > 60.0:
-            cache, _ = await asyncio.wait_for(gather_service_health(_services_live(), cfg), timeout=120.0)
-            _health_cache, _health_ts = cache, time.time()
+            cache, rows = await asyncio.wait_for(gather_service_health(_services_live(), cfg), timeout=120.0)
+            _health_cache = cache
+            _health_states = {r["id"]: r.get("state") for r in rows}
+            _health_ts = time.time()
         return _health_cache
 
 

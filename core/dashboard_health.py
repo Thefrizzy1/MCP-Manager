@@ -179,8 +179,30 @@ def health_bool_from_row(row: dict[str, Any]) -> bool | None:
     return row.get("ok")
 
 
+def service_state_from_row(row: dict[str, Any]) -> str:
+    """Map a probe row to a UI health state: online / auth_error / rate_limited /
+    api_error / offline / unconfigured / unknown."""
+    if row.get("kind") == "unconfigured":
+        return "unconfigured"
+    sc = row.get("status_code")
+    ok = row.get("ok")
+    if sc in (401, 403):
+        return "auth_error"
+    if sc == 429:
+        return "rate_limited"
+    if isinstance(sc, int) and sc >= 500:
+        return "api_error"
+    if ok is True:
+        return "online"
+    if ok is False:
+        return "offline"
+    return "unknown"
+
+
 async def gather_service_health(services: list[dict], cfg: Config) -> tuple[dict[str, bool | None], list[dict[str, Any]]]:
     rows = await asyncio.gather(*[probe_service_row(s, cfg) for s in services])
+    for r in rows:
+        r["state"] = service_state_from_row(r)
     cache = {r["id"]: r["ok"] for r in rows}
     return cache, list(rows)
 

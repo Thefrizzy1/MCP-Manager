@@ -62,6 +62,7 @@ def build_dashboard_payload(
     recent: list[dict],
     sections: set[str],
     local_ip_hint: str,
+    health_states: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = project_root()
     slist = all_services(root)
@@ -128,6 +129,8 @@ def build_dashboard_payload(
                     "configured": is_service_configured(s, cfg),
                     "ignored": sid in ignored,
                     "health": health_cache.get(sid),
+                    "health_state": (health_states or {}).get(sid),
+                    "logo_domain": s.get("logo_domain"),
                     "tool_count": len(s.get("tools", [])),
                     "tool_names": [t["name"] for t in s.get("tools", [])],
                 }

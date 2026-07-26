@@ -18,6 +18,7 @@ from core.result_status import text_looks_successful
 from core.tool_cache import record_tool_output
 from core.version_info import MCP_PROTOCOL_VERSION
 from ui.api.deps import verify_auth
+from ui import runtime
 from ui.runtime import (
     ROOT,
     capabilities,
@@ -64,6 +65,7 @@ async def api_v1_dashboard(request: Request):
         recent=list(recent or []),
         sections=sections,
         local_ip_hint=cfg.mcp_lan_host,
+        health_states=runtime._health_states,
     )
     return payload
 

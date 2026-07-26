@@ -42,8 +42,8 @@ export interface Service {
 
 /** Map the current dashboard payload onto a health state. */
 export function serviceHealth(s: Service): HealthState {
-  if (s.health_state) return s.health_state
   if (s.ignored) return 'disabled'
+  if (s.health_state) return s.health_state
   if (!s.configured) return 'unconfigured'
   if (s.health === false) return 'offline'
   if (s.health === true) return 'online'
