@@ -1,0 +1,146 @@
+@import 'tailwindcss';
+
+/* ============================================================================
+   Plutus design system. Professional desktop-app aesthetic (calm, minimal,
+   dense). One cohesive token set; light + dark. Base type is 13px. No emoji,
+   no gradients, hairline borders only. Tokens are runtime CSS variables so the
+   theme switches live; @theme inline exposes them to Tailwind utilities.
+   ========================================================================== */
+
+:root,
+:root[data-theme='light'] {
+  /* surfaces */
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-hover: #f2f4f7;
+  --border: #e6e8ec;
+  --border-strong: #d4d7de;
+  /* brand */
+  --accent: #3a5ce5;
+  --accent-hover: #2b45c4;
+  --accent-weak: #eef2fe;
+  --accent-fg: #ffffff;
+  /* text */
+  --ink: #1f2430;
+  --ink-2: #5b6472;
+  --ink-3: #8a93a3;
+  /* status */
+  --ok: #2e9e5b;
+  --warn: #e08a2e;
+  --danger: #d6453c;
+  --ok-weak: #e8f5ee;
+  --warn-weak: #fbf1e3;
+  --danger-weak: #fbeae9;
+  /* shadow (only floating things get one) */
+  --shadow-pop: 0 8px 28px -8px rgba(16, 22, 40, 0.18), 0 2px 6px -2px rgba(16, 22, 40, 0.1);
+}
+
+:root[data-theme='dark'] {
+  --bg: #0c0d10;
+  --surface: #16181d;
+  --surface-2: #1b1e24;
+  --surface-hover: #212530;
+  --border: #262a31;
+  --border-strong: #343943;
+  --accent: #6e8bff;
+  --accent-hover: #829bff;
+  --accent-weak: #1a2036;
+  --accent-fg: #0c0d10;
+  --ink: #e6e8ec;
+  --ink-2: #a0a6b0;
+  --ink-3: #6b7280;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+  --ok-weak: #12261a;
+  --warn-weak: #2a2113;
+  --danger-weak: #2d1615;
+  --shadow-pop: 0 10px 34px -10px rgba(0, 0, 0, 0.6), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-weak: var(--accent-weak);
+  --color-accent-fg: var(--accent-fg);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-ok-weak: var(--ok-weak);
+  --color-warn-weak: var(--warn-weak);
+  --color-danger-weak: var(--danger-weak);
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 13px;
+  --text-md: 15px;
+  --text-lg: 19px;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-3);
+}
+
+/* Respect reduced-motion globally. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Focus ring — visible, consistent, keyboard-only. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
