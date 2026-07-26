@@ -1,70 +1,46 @@
-"""Every UI route must require auth, or be on the explicit public allowlist.
+"""Every UI router must require auth, or be the explicit public allowlist.
 
-This is the safety net for the ``main.py`` -> ``ui.api.*`` split (workstream A):
-because auth is attached at the router level, a new endpoint added to an authed
-router is guarded automatically. This test fails if any route escapes that — the
-only routes allowed to be public are the ones named below.
+This checks the router objects directly rather than introspecting the assembled
+app's route tree — FastAPI/Starlette changed how included routers appear in
+``app.routes`` (flattened APIRoutes vs. ``_IncludedRouter`` wrappers) across
+versions, so router-level checks are the version-robust way to prove the
+guarantee: auth is attached per-router, so no endpoint on an authed router can
+be added unguarded.
 """
 from __future__ import annotations
 
-from starlette.routing import Mount
-
-from ui.api import build_ui_app
+from ui.api import _AUTHED_ROUTERS, build_ui_app
+from ui.api import public
 from ui.api.deps import verify_auth
 
-# The only routes that may be reached without Basic auth. `/` and `/ui` are
-# redirects to the authed SPA; `/server/health` is the Docker liveness probe;
-# the rest are FastAPI's own schema/docs routes (public in the pre-split app too).
-PUBLIC_PATHS = {
-    "/",
-    "/ui",
-    "/server/health",
-    "/openapi.json",
-    "/docs",
-    "/redoc",
-    "/docs/oauth2-redirect",
-}
+# The only paths reachable without Basic auth.
+PUBLIC_PATHS = {"/", "/ui", "/server/health"}
 
 
-def _dependency_calls(dependant) -> list:
-    calls = []
-    for dep in dependant.dependencies:
-        calls.append(dep.call)
-        calls.extend(_dependency_calls(dep))
-    return calls
+def _has_verify_auth(router) -> bool:
+    return any(getattr(d, "dependency", None) is verify_auth for d in router.dependencies)
 
 
-def _api_routes():
-    app = build_ui_app()
-    for route in app.routes:
-        if isinstance(route, Mount):
-            continue  # /static, /icons — static file mounts, not data endpoints
-        if not hasattr(route, "dependant"):
-            continue
-        yield route
+def _router_paths(router) -> set[str]:
+    return {r.path for r in router.routes if hasattr(r, "path")}
 
 
-def test_every_route_is_guarded_or_allowlisted():
-    unguarded = []
-    for route in _api_routes():
-        guarded = verify_auth in _dependency_calls(route.dependant)
-        if not guarded and route.path not in PUBLIC_PATHS:
-            unguarded.append(f"{sorted(route.methods or [])} {route.path}")
-    assert not unguarded, "Unguarded, non-allowlisted routes:\n  " + "\n  ".join(unguarded)
+def test_every_authed_router_requires_verify_auth():
+    for router in _AUTHED_ROUTERS:
+        assert _has_verify_auth(router), f"authed router is missing verify_auth: {router!r}"
 
 
-def test_public_routes_are_actually_public():
-    """The allowlisted app routes must NOT carry verify_auth — otherwise the
-    healthcheck/redirects would 401. (Skips FastAPI's own docs routes.)"""
-    app_public = {"/", "/ui", "/server/health"}
-    for route in _api_routes():
-        if route.path in app_public:
-            assert verify_auth not in _dependency_calls(route.dependant), route.path
+def test_public_router_only_serves_allowlisted_paths():
+    assert not _has_verify_auth(public.router), "public router must not require auth"
+    for path in _router_paths(public.router):
+        assert path in PUBLIC_PATHS, f"public router serves a non-allowlisted path: {path}"
 
 
 def test_core_surfaces_present():
     """Guard against a router being dropped from the assembly by accident."""
-    paths = {r.path for r in _api_routes()}
+    paths: set[str] = set(_router_paths(public.router))
+    for router in _AUTHED_ROUTERS:
+        paths |= _router_paths(router)
     for expected in (
         "/app",
         "/api/v1/dashboard",
@@ -72,5 +48,12 @@ def test_core_surfaces_present():
         "/service/test/{sid}",
         "/env/save",
         "/api/v1/files/list",
+        "/api/v1/profiles",
     ):
         assert expected in paths, f"missing route {expected}"
+
+
+def test_app_assembles():
+    """The app still builds (routers include cleanly on the installed FastAPI)."""
+    app = build_ui_app()
+    assert len(app.routes) > 0

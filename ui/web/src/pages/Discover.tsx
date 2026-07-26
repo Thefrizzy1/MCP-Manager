@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Tag } from '@/components/ui/Tag'
 import { ServiceLogo } from '@/components/ui/ServiceLogo'
+import { ConfigureModal } from '@/components/connections/ConfigureModal'
 
 interface Suggestion {
   service_id?: string
@@ -47,6 +48,7 @@ export function Discover() {
   const [spec, setSpec] = useState<Introspect | null>(null)
   const [apiMsg, setApiMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [configureId, setConfigureId] = useState<string | null>(null)
 
   async function scan() {
     if (!host.trim()) return
@@ -67,11 +69,14 @@ export function Discover() {
   }
 
   async function configure(it: Suggestion) {
+    // Save the discovered URL(s) first, then open the Configure form right here —
+    // pre-filled with the found address:port, so you only add an API key.
     const body: Record<string, string> = {}
     for (const k of it.editable_keys ?? []) if (k.key && k.value) body[k.key] = k.value
     try {
       if (Object.keys(body).length) await api.post('/env/save', body)
-      navigate('connections')
+      if (it.service_id) setConfigureId(it.service_id)
+      else navigate('connections')
     } catch (e) {
       alert(String(e))
     }
@@ -214,6 +219,16 @@ export function Discover() {
           </Card>
         </div>
       </PageBody>
+      {configureId && (
+        <ConfigureModal
+          id={configureId}
+          onClose={() => setConfigureId(null)}
+          onSaved={() => {
+            setConfigureId(null)
+            navigate('connections')
+          }}
+        />
+      )}
     </>
   )
 }
