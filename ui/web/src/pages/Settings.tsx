@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
+import { ProfilesSection } from '@/components/settings/ProfilesSection'
 
 interface DashAuthNet {
   networking?: { http_local?: string; public_base?: string; mcp_lan_host?: string }
@@ -177,6 +178,8 @@ export function Settings() {
               {ciMsg && <span className="text-[12px] text-ink-3">{ciMsg}</span>}
             </div>
           </Section>
+
+          <ProfilesSection />
 
           <Section title="Defaults">
             <Row label="Weather city">
