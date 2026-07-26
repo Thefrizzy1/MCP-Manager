@@ -158,6 +158,7 @@ def build_mcp_asgi_app():
 
 ICONS_DIR = ROOT / "icons"
 STATIC_DIR = ROOT / "ui" / "static"
+DIST_DIR = ROOT / "ui" / "static" / "dist"  # built React app (Vite base=/spa/)
 ENV_FILE = str(ROOT / ".env")
 _health_cache: dict = {}
 _health_ts: float = 0.0

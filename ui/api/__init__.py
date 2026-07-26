@@ -22,7 +22,7 @@ from ui.api import (
     system,
 )
 from ui.api.deps import csrf_origin_guard
-from ui.runtime import ICONS_DIR, STATIC_DIR, ui_lifespan
+from ui.runtime import DIST_DIR, ICONS_DIR, STATIC_DIR, ui_lifespan
 
 # Routers whose every route is guarded by verify_auth, plus the deliberately
 # public one. Order only affects OpenAPI grouping, not resolution.
@@ -46,6 +46,9 @@ def build_ui_app() -> FastAPI:
         app.mount("/icons", StaticFiles(directory=str(ICONS_DIR)), name="icons")
     if STATIC_DIR.is_dir():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    if DIST_DIR.is_dir():
+        # Hashed assets for the built React app (index.html references /spa/…).
+        app.mount("/spa", StaticFiles(directory=str(DIST_DIR)), name="spa")
 
     app.middleware("http")(csrf_origin_guard)
 

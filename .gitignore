@@ -6,6 +6,9 @@ data/
 config/
 *.pem
 
+# Built frontend (Vite output — built in CI/Docker, not committed)
+ui/static/dist/
+
 # Python
 __pycache__/
 *.py[cod]
