@@ -206,6 +206,7 @@ export function Agents() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          aria-label={sc.enabled ? 'Pause schedule' : 'Resume schedule'}
                           onClick={async () => {
                             await api.post(`/api/v1/schedules/${sc.id}`, { ...sc, enabled: !sc.enabled })
                             schedules.refetch()
@@ -223,6 +224,7 @@ export function Agents() {
                         <Button
                           variant="danger"
                           size="icon-sm"
+                          aria-label="Delete schedule"
                           onClick={async () => {
                             if (!confirm('Delete schedule?')) return
                             await api.del(`/api/v1/schedules/${sc.id}`)

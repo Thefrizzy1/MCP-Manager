@@ -3,11 +3,14 @@ import { navigate } from '@/lib/router'
 import { cn } from '@/lib/cn'
 import { ThemeToggle } from './ThemeToggle'
 
-function NavRow({ item, active }: { item: NavItem; active: boolean }) {
+function NavRow({ item, active, onNavigate }: { item: NavItem; active: boolean; onNavigate?: () => void }) {
   const Icon = item.icon
   return (
     <button
-      onClick={() => navigate(item.id)}
+      onClick={() => {
+        navigate(item.id)
+        onNavigate?.()
+      }}
       aria-current={active ? 'page' : undefined}
       className={cn(
         'group flex w-full items-center gap-2.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-[13px] transition-colors',
@@ -26,7 +29,7 @@ function NavRow({ item, active }: { item: NavItem; active: boolean }) {
   )
 }
 
-export function Sidebar({ route }: { route: string }) {
+export function Sidebar({ route, onNavigate }: { route: string; onNavigate?: () => void }) {
   return (
     <aside className="flex h-full w-[224px] shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex h-14 items-center gap-2.5 border-b border-border px-4">
@@ -47,7 +50,7 @@ export function Sidebar({ route }: { route: string }) {
             </div>
             <div className="space-y-0.5">
               {g.items.map((it) => (
-                <NavRow key={it.id} item={it} active={route === it.id} />
+                <NavRow key={it.id} item={it} active={route === it.id} onNavigate={onNavigate} />
               ))}
             </div>
           </div>
@@ -55,7 +58,7 @@ export function Sidebar({ route }: { route: string }) {
       </nav>
 
       <div className="space-y-0.5 border-t border-border p-2.5">
-        <NavRow item={SETTINGS_ITEM} active={route === 'settings'} />
+        <NavRow item={SETTINGS_ITEM} active={route === 'settings'} onNavigate={onNavigate} />
         <div className="flex items-center justify-between px-2 pt-1">
           <span className="text-[11px] text-ink-3">Theme</span>
           <ThemeToggle />
