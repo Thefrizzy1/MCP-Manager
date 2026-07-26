@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input'
 import { Tag } from '@/components/ui/Tag'
 import { ServiceLogo } from '@/components/ui/ServiceLogo'
 import { ConfigureModal } from '@/components/connections/ConfigureModal'
+import { useToast } from '@/components/ui/Toast'
 
 interface Suggestion {
   service_id?: string
@@ -38,6 +39,7 @@ interface Introspect {
 }
 
 export function Discover() {
+  const toast = useToast()
   const [host, setHost] = useState('')
   const [ports, setPorts] = useState(true)
   const [scanMsg, setScanMsg] = useState('')
@@ -78,7 +80,7 @@ export function Discover() {
       setScanMsg(`Saved ${n} address(es). Add any API keys on the Connections page.`)
       navigate('connections')
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 
@@ -92,7 +94,7 @@ export function Discover() {
       if (it.service_id) setConfigureId(it.service_id)
       else navigate('connections')
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 

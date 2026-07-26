@@ -6,6 +6,7 @@ import { fmtSize, fmtTime } from '@/lib/format'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
+import { useToast } from '@/components/ui/Toast'
 
 interface Item {
   name: string
@@ -24,6 +25,7 @@ interface Listing {
 }
 
 export function Files() {
+  const toast = useToast()
   const [path, setPath] = useState('')
   const [preview, setPreview] = useState<{ name: string; text: string } | null>(null)
   const { data, isLoading, refetch } = useQuery({
@@ -40,7 +42,7 @@ export function Files() {
         const d = await api.get<{ text?: string }>(`/api/v1/files/read?path=${encodeURIComponent(it.path)}`)
         setPreview({ name: it.name, text: d.text || '(empty)' })
       } catch (e) {
-        alert(String(e))
+        toast.error(String(e))
       }
     }
   }
@@ -51,7 +53,7 @@ export function Files() {
       await api.post('/api/v1/files/delete', { path: it.path })
       refetch()
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 

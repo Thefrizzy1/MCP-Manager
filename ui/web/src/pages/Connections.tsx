@@ -14,6 +14,7 @@ import { ConfigureModal } from '@/components/connections/ConfigureModal'
 import { AddConnectionModal } from '@/components/connections/AddConnectionModal'
 import { CatalogModal } from '@/components/connections/CatalogModal'
 import { ConnectionDrawer } from '@/components/connections/ConnectionDrawer'
+import { useToast } from '@/components/ui/Toast'
 
 const STATUS_FILTERS = [
   { value: '', label: 'All statuses' },
@@ -43,6 +44,7 @@ function cmp(a: Service, b: Service, col: string): number {
 
 export function Connections() {
   const qc = useQueryClient()
+  const toast = useToast()
   const { data, isLoading, isError } = useQuery({
     queryKey: ['services'],
     queryFn: () => api.get<{ services?: Service[] }>('/api/v1/dashboard?sections=services'),
@@ -87,7 +89,7 @@ export function Connections() {
       await fn()
       refresh()
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     } finally {
       setBusy((b) => {
         const n = { ...b }
@@ -104,7 +106,7 @@ export function Connections() {
       setReport(d.markdown || '(no report)')
       refresh()
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     } finally {
       btn.disabled = false
     }

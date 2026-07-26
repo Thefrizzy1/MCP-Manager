@@ -8,6 +8,7 @@ import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
 import { ProfilesSection } from '@/components/settings/ProfilesSection'
+import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
   networking?: { http_local?: string; public_base?: string; mcp_lan_host?: string }
@@ -24,6 +25,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 }
 
 export function Settings() {
+  const toast = useToast()
   const dash = useQuery({
     queryKey: ['dashboard-settings'],
     queryFn: () => api.get<DashAuthNet>('/api/v1/dashboard?sections=auth,networking'),
@@ -44,7 +46,6 @@ export function Settings() {
   const [ciText, setCiText] = useState('')
   const [ciMsg, setCiMsg] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
-  const [flash, setFlash] = useState('')
 
   useEffect(() => {
     if (dash.data) {
@@ -57,25 +58,21 @@ export function Settings() {
     if (ci.data) setCiText(JSON.stringify(ci.data, null, 2))
   }, [ci.data])
 
-  function toast(m: string) {
-    setFlash(m)
-    setTimeout(() => setFlash(''), 2500)
-  }
   async function save(body: Record<string, unknown>, ok = 'Saved.') {
     try {
       await api.post('/env/save', body)
-      toast(ok)
+      toast.success(ok)
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
   async function generateToken() {
     try {
       const d = await api.post<{ token?: string }>('/settings/generate-token')
       setToken(d.token || '')
-      toast('Token generated — copy it now.')
+      toast.success('Token generated — copy it now.')
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
   async function saveCi() {
@@ -97,10 +94,10 @@ export function Settings() {
     if (!confirm(`Reset ${scope}?`)) return
     try {
       await api.post('/api/v1/settings/reset', { scopes: [scope] })
-      toast('Reset done.')
+      toast.success('Reset done.')
       dash.refetch()
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 
@@ -112,7 +109,6 @@ export function Settings() {
       <PageHead
         title="Settings"
         subtitle="Configure Plutus"
-        actions={flash && <span className="text-[12.5px] text-ok">{flash}</span>}
       />
       <PageBody>
         <div className="space-y-5">

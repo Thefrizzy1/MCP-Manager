@@ -6,6 +6,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
+import { useToast } from '@/components/ui/Toast'
 
 interface Profile {
   name: string
@@ -20,6 +21,7 @@ interface ProfilesResp {
 }
 
 export function ProfilesSection() {
+  const toast = useToast()
   const { data, refetch } = useQuery({ queryKey: ['profiles'], queryFn: () => api.get<ProfilesResp>('/api/v1/profiles') })
   const [name, setName] = useState('')
   const [intent, setIntent] = useState('')
@@ -69,7 +71,7 @@ export function ProfilesSection() {
       await api.del(`/api/v1/profiles/${n}`)
       refetch()
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 

@@ -7,8 +7,10 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
+import { useToast } from '@/components/ui/Toast'
 
 export function Builder() {
+  const toast = useToast()
   const [desc, setDesc] = useState('')
   const [msg, setMsg] = useState('')
   const [drafting, setDrafting] = useState(false)
@@ -44,7 +46,7 @@ export function Builder() {
       await api.post('/api/v1/agent/run', { prompt: draft.prompt.trim(), label: draft.name || 'agent' })
       navigate('agents')
     } catch (e) {
-      alert(String(e))
+      toast.error(String(e))
     }
   }
 
