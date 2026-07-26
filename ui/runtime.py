@@ -43,7 +43,9 @@ from tools.nextcloud import register_nextcloud_tools
 from tools.obsidian import register_obsidian_tools
 from tools.personal import register_personal_tools
 from tools.photos import register_photo_tools
+from tools.prompts import register_prompt_tools
 from tools.public_apis_bulk import register_public_apis_bulk
+from tools.resources import register_resource_tools
 from tools.ssh_smb import register_ssh_smb_tools
 from tools.system import register_system_tools
 from tools.utilities import register_utility_tools
@@ -97,6 +99,8 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_infrastructure_tools(m, allow=allow); register_fal_tools(m, allow=allow)
     register_public_apis_bulk(m, allow=allow)
     register_ssh_smb_tools(m, allow=allow)
+    register_prompt_tools(m, allow=allow)
+    register_resource_tools(m, allow=allow)
     _load_user_extensions(m, allow=allow)
 
 
