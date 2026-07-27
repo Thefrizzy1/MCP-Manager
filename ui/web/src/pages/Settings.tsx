@@ -8,6 +8,7 @@ import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
 import { ProfilesSection } from '@/components/settings/ProfilesSection'
+import { ClaudeCodeSection } from '@/components/settings/ClaudeCodeSection'
 import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
@@ -158,6 +159,8 @@ export function Settings() {
               </Button>
             </Row>
           </Section>
+
+          <ClaudeCodeSection />
 
           <Section title="Custom integrations" subtitle="Extra service cards (JSON). Or use Add on the Connections page.">
             <Textarea

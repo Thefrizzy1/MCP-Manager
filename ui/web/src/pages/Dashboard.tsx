@@ -98,7 +98,7 @@ export function Dashboard() {
                 onClick={() => navigate('connections')}
               />
               <Stat label="Tools exposed" value={tools} hint={`${caps} capabilities`} />
-              <Stat label="AI provider" value={aiValue} hint={aiHint} tone={aiTone} onClick={() => navigate('agents')} />
+              <Stat label="AI provider" value={aiValue} hint={aiHint} tone={aiTone} onClick={() => navigate('settings')} />
             </div>
 
             <div className="grid gap-5 lg:grid-cols-2">

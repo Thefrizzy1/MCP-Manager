@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock } from 'lucide-react'
 import { api } from '@/lib/api'
+import { navigate } from '@/lib/router'
 import type { Service } from '@/lib/health'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -128,9 +129,26 @@ export function Agents() {
             <Stat
               label="Provider"
               value={onPlan ? 'Plan' : mode === 'api_key' ? 'API' : 'Off'}
+              hint={onPlan ? 'connected' : mode === 'api_key' ? 'API billing' : 'connect in Settings'}
               tone={onPlan ? 'ok' : mode === 'api_key' ? 'warn' : 'danger'}
+              onClick={() => navigate('settings')}
             />
           </div>
+
+          {status.isSuccess && mode === 'none' && (
+            <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-danger/30 bg-danger/5 px-4 py-3">
+              <Bot size={16} className="text-danger" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-ink">No Claude provider connected</p>
+                <p className="text-[12px] text-ink-3">
+                  Agents can’t run until you connect Claude Code. Paste a <code className="font-mono">claude setup-token</code> in Settings.
+                </p>
+              </div>
+              <Button variant="primary" size="sm" onClick={() => navigate('settings')}>
+                Connect
+              </Button>
+            </div>
+          )}
 
           {wizard && (
             <LaunchWizard
