@@ -9,6 +9,45 @@ APIs (weather, maps, search, finance, trivia).
 
 ---
 
+## 0. v6 module map (the rebuild)
+
+v6 restructured the codebase. The high-level shape:
+
+```
+main.py                 thin orchestrator: dependency check, two-process launch
+ui/runtime.py           app-wide singletons (FastMCP `mcp`, tools adapter, scheduler,
+                        agent orchestration, health cache) + build_mcp / build_mcp_asgi_app
+ui/api/__init__.py      build_ui_app() — assembles routers, mounts, CSRF guard
+ui/api/deps.py          verify_auth + CSRF origin guard (auth attached per-router)
+ui/api/*.py             HTTP endpoints by surface (connections, discover, catalog,
+                        profiles, agents, health, settings, system, files, public)
+ui/web/                 React UI (Vite + React 19 + Tailwind 4 + lucide) → ui/static/dist,
+                        served at /app (falls back to the legacy SPA if dist is absent)
+
+core/profiles.py        MCP profiles: named tool subsets + registration-time tool_filter
+core/tool_exposure.py   the "slicer": category exposure on the served /mcp (token saver)
+core/tool_annotations.py completes all four annotation hints at registration
+tools/prompts.py        playbooks → MCP prompts
+tools/resources.py      plutus:// resources (through path_guard + redact)
+tools/apps.py           MCP App widget (plutus_status + ui://plutus/connections)
+```
+
+**MCP serving.** The MCP process serves `ui.runtime.build_mcp_asgi_app()`: the full
+surface at `/mcp` (honouring the tool-exposure slicer), one mount per profile at
+`/mcp/p/<name>`, all behind `MCPBearerGateMiddleware`. Tool filtering is done at
+*registration* (fail-safe) — a disallowed tool is never registered on that instance;
+there is no list-time monkeypatch. Profiles/exposure are **restart-to-apply** (the MCP
+server is a separate process from the UI). The old global tool gate is gone.
+
+**Non-destructive updates.** `data/`, `config/`, and the mounted `.env` persist across
+`docker compose pull && up -d`. The multi-stage Dockerfile builds `ui/web` and ships
+only the built assets. See the v6.0.0 changelog.
+
+The sections below describe the process model and subsystems in more depth; where they
+mention `main.py` endpoints or the framework-free SPA, read the v6 map above as current.
+
+---
+
 ## 1. Process model
 
 Plutus runs **two servers in two processes** from a single `python main.py`:
