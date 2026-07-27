@@ -171,7 +171,7 @@ SERVICES: list[dict] = [
 
   {"id":"docker","label":"Docker","icon":"🐳","tag":"system","section":"selfhosted",
    "desc":"Container management via socket",
-   "config_keys":[("DOCKER_WRITE_ENABLED","Allow write (start/stop/restart)","false",False)],
+   "config_keys":[("DOCKER_SOCKET","Docker socket path","/var/run/docker.sock",False),("DOCKER_WRITE_ENABLED","Allow write (start/stop/restart)","false",False)],
    "health_url":None,"health_headers":lambda: {},"configured_keys":(),
    "tools":[{"name":"docker_list_containers","label":"List Containers","params":[]},
             {"name":"docker_system_info","label":"System Stats","params":[]},
