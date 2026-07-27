@@ -66,12 +66,16 @@ async def api_v1_service_config(sid: str):
     if not svc:
         raise HTTPException(404, "Unknown service")
     env = read_env()
+    # Services whose real config is structured (not flat env keys) get a
+    # dedicated manager UI: SSH hosts, SMB shares + allowed filesystem paths.
+    manager = {"ssh": "ssh", "filesystem": "filesystem"}.get(sid, "")
     return {
         "id": sid,
         "label": svc["label"],
         "icon": svc.get("icon", "🔌"),
         "url": service_url(svc, env),
         "fields": service_config_fields(svc, env),
+        "manager": manager,
         "documentation_url": svc.get("documentation_url", ""),
     }
 

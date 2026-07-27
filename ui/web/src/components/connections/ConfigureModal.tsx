@@ -5,6 +5,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
+import { SshManager } from './SshManager'
+import { FilesystemManager } from './FilesystemManager'
 
 interface ConfigField {
   key: string
@@ -19,6 +21,7 @@ interface ConfigResp {
   icon?: string
   url?: string
   fields: ConfigField[]
+  manager?: string
   documentation_url?: string
 }
 
@@ -73,6 +76,9 @@ export function ConfigureModal({
     }
   }
 
+  const manager = data?.manager
+  const isManaged = manager === 'ssh' || manager === 'filesystem'
+
   return (
     <Modal
       open
@@ -88,16 +94,29 @@ export function ConfigureModal({
               </Button>
             </a>
           )}
-          <Button variant="primary" size="sm" disabled={saving} onClick={save}>
-            Save
-          </Button>
+          {isManaged ? (
+            <Button variant="primary" size="sm" onClick={onClose}>
+              Done
+            </Button>
+          ) : (
+            <Button variant="primary" size="sm" disabled={saving} onClick={save}>
+              Save
+            </Button>
+          )}
         </>
       }
     >
       {isLoading ? (
         <p className="text-[13px] text-ink-3">Loading…</p>
+      ) : manager === 'ssh' ? (
+        <SshManager />
+      ) : manager === 'filesystem' ? (
+        <FilesystemManager />
       ) : !data?.fields?.length ? (
-        <p className="text-[13px] text-ink-3">This service has no editable settings.</p>
+        <p className="text-[13px] text-ink-3">
+          This service works out of the box — there's nothing to configure. Use <strong>Test</strong> to check it's
+          reachable.
+        </p>
       ) : (
         <div className="space-y-3">
           {data.fields.map((f) => (

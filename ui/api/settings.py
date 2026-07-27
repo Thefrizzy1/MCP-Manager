@@ -144,6 +144,74 @@ async def api_v1_smb_shares_remove(body: HostNameBody):
     return {"ok": True, "shares": _remove_named_env_item("SMB_SHARES", "Share", body.name)}
 
 
+# ─── Allowed filesystem paths (the working folders agents/tools may touch) ─────
+
+def _read_paths() -> list[str]:
+    # parse_csv_paths tolerates both "/a,/b" and a stray "['/a','/b']" literal.
+    from config import parse_csv_paths
+    return parse_csv_paths(load_env().get("FILESYSTEM_ALLOWED_PATHS", "") or "")
+
+
+def _save_paths(paths: list[str]) -> list[str]:
+    # de-dupe, keep order, drop trailing slashes; always write clean CSV.
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in paths:
+        q = p.strip().rstrip("/") or "/"
+        if q and q not in seen:
+            seen.add(q)
+            out.append(q)
+    save_env({"FILESYSTEM_ALLOWED_PATHS": ",".join(out)})
+    cfg.filesystem_allowed_paths = out  # so the file browser sees it without a restart
+    return out
+
+
+class PathBody(BaseModel):
+    path: str = Field(..., min_length=1, max_length=512)
+
+
+@router.get("/api/v1/paths")
+async def api_v1_paths():
+    return {"paths": _read_paths()}
+
+
+@router.post("/api/v1/paths")
+async def api_v1_paths_add(body: PathBody):
+    return {"ok": True, "paths": _save_paths(_read_paths() + [body.path])}
+
+
+@router.post("/api/v1/paths/remove")
+async def api_v1_paths_remove(body: PathBody):
+    target = body.path.strip().rstrip("/")
+    return {"ok": True, "paths": _save_paths([p for p in _read_paths() if p.rstrip("/") != target])}
+
+
+@router.get("/api/v1/system/dirs")
+async def api_v1_system_dirs(request: Request):
+    """List the sub-directories of a path so the user can browse the container's
+    filesystem and pick a folder to allow (rather than typing a raw path).
+    Admin-only; returns directory names only, never file contents."""
+    path = (request.query_params.get("path") or "/").strip() or "/"
+    ap = os.path.realpath(path)
+    if not os.path.isdir(ap):
+        raise HTTPException(400, "Not a directory")
+    dirs = []
+    try:
+        for name in sorted(os.listdir(ap), key=str.lower):
+            if name.startswith("."):
+                continue
+            fp = os.path.join(ap, name)
+            try:
+                if os.path.isdir(fp):
+                    dirs.append({"name": name, "path": fp})
+            except OSError:
+                continue
+    except PermissionError:
+        raise HTTPException(403, "Permission denied")
+    parent = os.path.dirname(ap.rstrip("/")) or "/"
+    return {"path": ap, "parent": None if ap == "/" else parent, "dirs": dirs}
+
+
 # ─── Updates ──────────────────────────────────────────────────────────────────
 
 @router.post("/api/v1/settings/check-updates")
