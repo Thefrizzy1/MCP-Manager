@@ -344,7 +344,12 @@ function LaunchWizard({
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning research" />
           </Field>
           <Field label="Model">
-            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="default (opus / sonnet / haiku)" />
+            <Select value={model} onChange={(e) => setModel(e.target.value)}>
+              <option value="">Default (recommended)</option>
+              <option value="opus">Opus — most capable</option>
+              <option value="sonnet">Sonnet — balanced</option>
+              <option value="haiku">Haiku — fastest</option>
+            </Select>
           </Field>
         </div>
         <Field label="Goal / prompt">
