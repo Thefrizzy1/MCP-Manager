@@ -205,6 +205,8 @@ async def env_save(request: Request):
         save_env(data)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except OSError as e:
+        raise HTTPException(500, f"Could not write .env: {e}")
     return {"ok": True}
 
 

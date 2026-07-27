@@ -66,6 +66,30 @@ def _coerce(key: str, value) -> str:
     return str(value).strip()
 
 
+def _write_env_file(p: Path, content: str) -> None:
+    """Persist .env. Prefer an atomic tmp-file + rename, but fall back to an
+    in-place overwrite when that fails — a Docker single-file bind mount
+    (``./.env:/app/.env``) is a mount point that cannot be replaced via rename
+    (EXDEV/EBUSY), which would otherwise 500 every settings save."""
+    tmp = p.with_name(p.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+
+
 def update_env(updates: dict, *, validate: bool = True, path: Path | None = None) -> dict[str, str]:
     """Merge ``updates`` into .env and atomically rewrite. Returns the new env.
 
@@ -90,14 +114,8 @@ def update_env(updates: dict, *, validate: bool = True, path: Path | None = None
             if val:
                 env[key] = val
 
-        tmp = p.with_name(p.name + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write("# Plutus MCP Configuration\n\n")
-            for k, v in env.items():
-                f.write(f"{k}={v}\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, p)
+        content = "# Plutus MCP Configuration\n\n" + "".join(f"{k}={v}\n" for k, v in env.items())
+        _write_env_file(p, content)
 
     # Keep the writing process's cfg snapshot consistent with disk.
     for key, attr in _CFG_SYNC.items():
