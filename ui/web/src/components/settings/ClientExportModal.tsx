@@ -25,6 +25,21 @@ export function ClientExportModal({ onClose }: { onClose: () => void }) {
   const clients = data?.clients ?? []
   const current = clients.find((c) => c.id === selected)
 
+  const [test, setTest] = useState<{ ok?: boolean; detail?: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+
+  async function testConnection() {
+    setTesting(true)
+    setTest(null)
+    try {
+      setTest(await api.get<{ ok?: boolean; detail?: string }>('/api/v1/mcp/selftest'))
+    } catch (e) {
+      setTest({ ok: false, detail: String(e) })
+    } finally {
+      setTesting(false)
+    }
+  }
+
   function download() {
     if (!current) return
     const blob = new Blob([current.content], { type: (current.mime || 'text/plain') + ';charset=utf-8' })
@@ -45,11 +60,21 @@ export function ClientExportModal({ onClose }: { onClose: () => void }) {
       title="Connect a client"
       width={640}
       footer={
-        current && (
-          <Button variant="primary" size="sm" onClick={download}>
-            Download
+        <>
+          {test && (
+            <span className={`mr-auto text-[12px] ${test.ok ? 'text-ok' : 'text-danger'}`}>
+              {test.ok ? 'Endpoint reachable' : test.detail || 'Unreachable'}
+            </span>
+          )}
+          <Button variant="default" size="sm" disabled={testing} onClick={testConnection}>
+            {testing ? 'Testing…' : 'Test connection'}
           </Button>
-        )
+          {current && (
+            <Button variant="primary" size="sm" onClick={download}>
+              Download
+            </Button>
+          )}
+        </>
       }
     >
       <label className="mb-3 flex items-center gap-1.5 text-[12.5px] text-ink-2">
