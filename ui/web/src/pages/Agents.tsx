@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Square, Play, Pause, Trash2 } from 'lucide-react'
+import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { Service } from '@/lib/health'
 import { PageHead, PageBody } from '@/components/PageHead'
@@ -10,6 +10,7 @@ import { Input, Select, Textarea } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
 import { Stat } from '@/components/ui/Stat'
 import { StatusDot } from '@/components/ui/StatusDot'
+import { EmptyState } from '@/components/ui/EmptyState'
 
 interface AgentStatus {
   auth?: { mode?: string }
@@ -181,7 +182,7 @@ export function Agents() {
                 </div>
               ))}
               {!s?.running && (runs.data?.runs ?? []).length === 0 && (
-                <p className="px-2 py-3 text-[13px] text-ink-3">No runs yet.</p>
+                <EmptyState icon={Bot} title="No agent runs yet" hint="Launch an agent with “New agent” to see runs and their output here." />
               )}
             </div>
           </Card>
@@ -190,7 +191,7 @@ export function Agents() {
             <CardHeader title="Scheduled jobs" />
             <div className="px-2 pb-2">
               {(schedules.data?.schedules ?? []).filter((x) => x.kind === 'agent' || x.kind === 'task').length === 0 ? (
-                <p className="px-2 py-3 text-[13px] text-ink-3">No scheduled agents.</p>
+                <EmptyState icon={CalendarClock} title="No scheduled agents" hint="Pick a schedule in the launch wizard to run an agent on a cron." />
               ) : (
                 (schedules.data?.schedules ?? [])
                   .filter((x) => x.kind === 'agent' || x.kind === 'task')
