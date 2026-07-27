@@ -19,8 +19,10 @@ router = APIRouter(dependencies=[Depends(verify_auth)])
 @router.get("/health/refresh")
 async def health_refresh():
     async with runtime._health_lock:
-        cache, _ = await gather_service_health(_services_live(), cfg)
-        runtime._health_cache, runtime._health_ts = cache, time.time()
+        cache, rows = await gather_service_health(_services_live(), cfg)
+        runtime._health_cache = cache
+        runtime._health_states = {r["id"]: r.get("state") for r in rows}
+        runtime._health_ts = time.time()
     return cache
 
 
@@ -29,7 +31,9 @@ async def health_full_report():
     """Refresh service probes, run zero-arg tool batch, return markdown + structured rows."""
     async with runtime._health_lock:
         cache, svc_rows = await gather_service_health(_services_live(), cfg)
-        runtime._health_cache, runtime._health_ts = cache, time.time()
+        runtime._health_cache = cache
+        runtime._health_states = {r["id"]: r.get("state") for r in svc_rows}
+        runtime._health_ts = time.time()
     tool_rows = await run_health_batch_for_ui(tools.raw_manager)
     md = build_health_report_markdown(svc_rows, tool_rows)
     return {"health": cache, "services": svc_rows, "tools": tool_rows, "markdown": md}
