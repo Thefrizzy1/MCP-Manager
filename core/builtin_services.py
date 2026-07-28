@@ -278,6 +278,17 @@ SERVICES: list[dict] = [
    "tools":[{"name":"currency_convert","label":"Convert amount","params":[("amount","Amount","number"),("from_currency","From (ISO)","text"),("to_currency","To (ISO)","text")]},
             {"name":"currency_rates","label":"Latest rates","params":[("base","Base currency","text")]}]},
 
+  {"id":"youtube","label":"YouTube","icon":"▶️","tag":"media","section":"public",
+   "desc":"YouTube Data API v3 — search, channel stats, video details, trending",
+   "config_keys":[("YOUTUBE_API_KEY","API Key (Google Cloud — enable YouTube Data API v3)","",True)],
+   "health_url":lambda: f"https://www.googleapis.com/youtube/v3/i18nLanguages?part=snippet&hl=en&key={cfg.youtube_api_key}","health_headers":lambda: {},
+   "configured_keys":("youtube_api_key",),
+   "documentation_url":"https://developers.google.com/youtube/v3/getting-started",
+   "tools":[{"name":"youtube_search","label":"Search Videos","params":[("query","Search terms","text"),("max_results","Max results","number")]},
+            {"name":"youtube_channel","label":"Channel Stats","params":[("channel","@handle or channel ID","text")]},
+            {"name":"youtube_video","label":"Video Details","params":[("video_id","Video ID","text")]},
+            {"name":"youtube_trending","label":"Trending","params":[("region","Region code","text"),("max_results","Max results","number")]}]},
+
   {"id":"google","label":"Google Custom Search","icon":"🔎","tag":"search","section":"public",
    "desc":"Programmable Search JSON API — set GOOGLE_API_KEY + GOOGLE_CSE_ID",
    "config_keys":[("GOOGLE_API_KEY","Google Cloud API key","",True),("GOOGLE_CSE_ID","Search engine ID (cx)","",False)],

@@ -57,6 +57,7 @@ _TOOL_PREFIX_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("syncthing_", ("syncthing_url", "syncthing_api_key")),
     ("ntfy_", ("ntfy_url",)),
     ("fal_", ("fal_key",)),
+    ("youtube_", ("youtube_api_key",)),
     ("pub_", ()),
 )
 
@@ -127,6 +128,10 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "currency_convert": {"amount": 50, "from_currency": "EUR", "to_currency": "GBP"},
     "currency_rates": {"base": "USD"},
     "google_search": {"query": "Frankfurter API", "num": 3},
+    "youtube_search": {"query": "lofi", "max_results": 3},
+    "youtube_channel": {"channel": "@YouTube"},
+    "youtube_video": {"video_id": "dQw4w9WgXcQ"},
+    "youtube_trending": {"region": "US", "max_results": 3},
 }
 TOOL_SMOKE_DEFAULTS.update(_PUB_DEFS)
 

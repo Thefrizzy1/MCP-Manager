@@ -161,6 +161,9 @@ class Config(BaseModel):
     google_api_key: str = _get("GOOGLE_API_KEY")
     google_cse_id: str = _get("GOOGLE_CSE_ID")
 
+    # YouTube Data API v3 (same Google Cloud key type; separate key recommended)
+    youtube_api_key: str = _get("YOUTUBE_API_KEY")
+
     # Dashboard extras (bookmark integrations)
     audiobookshelf_url: str = _get("AUDIOBOOKSHELF_URL")
     audiobookshelf_api_key: str = _get("AUDIOBOOKSHELF_API_KEY")
