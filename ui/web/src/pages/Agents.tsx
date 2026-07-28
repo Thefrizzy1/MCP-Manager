@@ -110,6 +110,17 @@ export function Agents() {
   const mode = s?.auth?.mode ?? 'none'
   const onPlan = mode === 'session_token' || mode === 'subscription'
 
+  async function clearRuns() {
+    if (!confirm('Clear all agent run history? This removes old run records and resets the all-time cost.')) return
+    try {
+      await api.del('/api/v1/agent/runs')
+      runs.refetch()
+      status.refetch()
+    } catch {
+      /* ignore — nothing to clear */
+    }
+  }
+
   return (
     <>
       <PageHead
@@ -172,11 +183,18 @@ export function Agents() {
             <CardHeader
               title="Running & recent"
               action={
-                s?.running && (
-                  <Button variant="danger" size="sm" onClick={() => api.post('/api/v1/agent/cancel').then(() => status.refetch())}>
-                    <Square size={13} /> Stop
-                  </Button>
-                )
+                <div className="flex items-center gap-1.5">
+                  {s?.running && (
+                    <Button variant="danger" size="sm" onClick={() => api.post('/api/v1/agent/cancel').then(() => status.refetch())}>
+                      <Square size={13} /> Stop
+                    </Button>
+                  )}
+                  {(runs.data?.runs ?? []).length > 0 && (
+                    <Button variant="ghost" size="sm" onClick={clearRuns} title="Delete old run records and reset the all-time cost">
+                      <Trash2 size={13} /> Clear
+                    </Button>
+                  )}
+                </div>
               }
             />
             <div className="px-2 pb-2">

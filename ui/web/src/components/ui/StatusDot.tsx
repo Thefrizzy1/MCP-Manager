@@ -22,7 +22,10 @@ export function StatusDot({ state, className }: { state: HealthState; className?
 export function HealthBadge({ state }: { state: HealthState }) {
   const meta = HEALTH_META[state]
   return (
-    <span className={cn('inline-flex items-center gap-1.5 text-[12.5px] font-medium', TONE_TEXT[meta.tone])}>
+    <span
+      title={meta.desc}
+      className={cn('inline-flex cursor-help items-center gap-1.5 text-[12.5px] font-medium', TONE_TEXT[meta.tone])}
+    >
       <span className={cn('inline-block h-2 w-2 rounded-full', TONE_DOT[meta.tone])} />
       {meta.label}
     </span>

@@ -12,15 +12,15 @@ export type HealthState =
 
 export type Tone = 'ok' | 'warn' | 'danger' | 'muted'
 
-export const HEALTH_META: Record<HealthState, { label: string; tone: Tone }> = {
-  online: { label: 'Online', tone: 'ok' },
-  offline: { label: 'Offline', tone: 'danger' },
-  auth_error: { label: 'Auth error', tone: 'warn' },
-  api_error: { label: 'API error', tone: 'warn' },
-  rate_limited: { label: 'Rate limited', tone: 'warn' },
-  disabled: { label: 'Disabled', tone: 'muted' },
-  unconfigured: { label: 'Not configured', tone: 'muted' },
-  unknown: { label: 'Unknown', tone: 'muted' },
+export const HEALTH_META: Record<HealthState, { label: string; tone: Tone; desc: string }> = {
+  online: { label: 'Online', tone: 'ok', desc: 'Reachable and healthy (HTTP 2xx/3xx, or a local/public tool with its config set).' },
+  offline: { label: 'Offline', tone: 'danger', desc: 'Not reachable — connection refused, timeout, DNS failure, or a wrong probe path (404).' },
+  auth_error: { label: 'Auth error', tone: 'warn', desc: 'Reachable but rejected the credentials (HTTP 401/403) — check the API key/token.' },
+  api_error: { label: 'API error', tone: 'warn', desc: 'Reachable but the service returned a server error (HTTP 5xx).' },
+  rate_limited: { label: 'Rate limited', tone: 'warn', desc: 'Reachable but throttling requests right now (HTTP 429).' },
+  disabled: { label: 'Disabled', tone: 'muted', desc: 'Ignored — hidden from stats and excluded from the MCP surface until restored.' },
+  unconfigured: { label: 'Not configured', tone: 'muted', desc: 'Required URL/credentials are missing — add them under Configure.' },
+  unknown: { label: 'Unknown', tone: 'muted', desc: 'Not probed yet, or the result could not be classified. Run Test.' },
 }
 
 export interface Service {

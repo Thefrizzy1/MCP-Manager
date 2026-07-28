@@ -273,6 +273,22 @@ def total_cost(root: Path) -> float:
     return round(sum((r.get("cost_usd") or 0) for r in list_runs(root, 9999)), 4)
 
 
+def clear_runs(root: Path) -> int:
+    """Delete every persisted agent run record. Returns how many were removed.
+
+    Used by the "Clear history" action — old runs (e.g. failures from before a
+    rebuild) persist as JSON files and would otherwise linger in the dashboard
+    and keep counting toward the all-time cost."""
+    n = 0
+    for fp in glob.glob(str(_runs_dir(root) / "*.json")):
+        try:
+            Path(fp).unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def auth_info() -> dict:
     """Which billing mode the agent will use.
 

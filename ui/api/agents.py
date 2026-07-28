@@ -51,6 +51,12 @@ async def api_v1_agent_runs():
     return {"runs": agent_runner.list_runs(ROOT, 30)}
 
 
+@router.delete("/api/v1/agent/runs")
+async def api_v1_agent_runs_clear():
+    """Clear persisted run history (e.g. stale failures from before a rebuild)."""
+    return {"ok": True, "cleared": agent_runner.clear_runs(ROOT)}
+
+
 class AgentConfigBody(BaseModel):
     model: str | None = None
     allowed_tools: list[str] | None = None
