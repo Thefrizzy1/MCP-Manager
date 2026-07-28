@@ -275,6 +275,11 @@ async def env_save(request: Request):
         raise HTTPException(400, str(e))
     except OSError as e:
         raise HTTPException(500, f"Could not write .env: {e}")
+    # Config just changed live (apply_live_env). Drop the cached health so the
+    # next dashboard fetch re-probes with the new cfg — a service that was
+    # 'unconfigured' flips to its real state instead of lingering for 60s.
+    async with runtime._health_lock:
+        runtime._health_cache, runtime._health_states, runtime._health_ts = {}, {}, 0.0
     return {"ok": True}
 
 

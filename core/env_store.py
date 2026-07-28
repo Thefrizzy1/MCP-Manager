@@ -19,27 +19,11 @@ import os
 import threading
 from pathlib import Path
 
-from config import cfg, is_ui_writable_env_key
+from config import apply_live_env, is_ui_writable_env_key
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 _LOCK = threading.Lock()
-
-# .env key -> cfg attribute to keep in sync within the writing process. Bools are
-# coerced for the flag fields. (Cross-process sync is handled by readers that
-# call read_env() directly, e.g. the bearer middleware.)
-_CFG_SYNC: dict[str, str] = {
-    "SSH_HOSTS": "ssh_hosts_json",
-    "SMB_SHARES": "smb_shares_json",
-    "MCP_BEARER_TOKEN": "mcp_bearer_token",
-    "MCP_REQUIRE_BEARER": "mcp_require_bearer",
-    "PUBLIC_MCP_BASE": "public_mcp_base",
-    "MCP_LAN_HOST": "mcp_lan_host",
-    "WEATHER_DEFAULT_LOCATION": "weather_default_location",
-    "UI_USERNAME": "ui_username",
-    "UI_PASSWORD": "ui_password",
-}
-_BOOL_KEYS = {"MCP_REQUIRE_BEARER"}
 
 
 def read_env(path: Path | None = None) -> dict[str, str]:
@@ -117,16 +101,8 @@ def update_env(updates: dict, *, validate: bool = True, path: Path | None = None
         content = "# Plutus MCP Configuration\n\n" + "".join(f"{k}={v}\n" for k, v in env.items())
         _write_env_file(p, content)
 
-    # Keep the writing process's cfg snapshot consistent with disk.
-    for key, attr in _CFG_SYNC.items():
-        if key in updates and updates[key] is not None:
-            value = updates[key]
-            if key in _BOOL_KEYS:
-                value = value if isinstance(value, bool) else str(value).strip().lower() in ("true", "1", "yes")
-            else:
-                value = _coerce(key, value)
-            try:
-                setattr(cfg, attr, value)
-            except Exception:
-                pass
+    # Reflect the change onto os.environ + the cfg singleton so the running
+    # process (probes, is_configured checks, tool calls) sees it immediately —
+    # no restart. This now covers *every* service, not a hardcoded subset.
+    apply_live_env(updates)
     return env

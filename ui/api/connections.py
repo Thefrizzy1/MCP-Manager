@@ -6,9 +6,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from config import cfg
-from core.dashboard_health import probe_service_row
+from core.dashboard_health import probe_service_row, service_state_from_row
 from core.smoke_service_tools import run_service_smoke_tools
 from ui.api.deps import verify_auth
+from ui import runtime
 from ui.runtime import ROOT, _services_live, tools
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
@@ -20,6 +21,12 @@ async def test_service(sid: str):
     if not svc:
         return JSONResponse({"ok": False, "error": "Unknown service"})
     row = await probe_service_row(svc, cfg)
+    # Persist this fresh probe into the shared health caches so the Connections
+    # table reflects the new state immediately (not just on a full Test-all).
+    state = service_state_from_row(row)
+    async with runtime._health_lock:
+        runtime._health_cache[sid] = row.get("ok")
+        runtime._health_states[sid] = state
     o = row.get("ok")
     detail = (row.get("detail") or "").strip()
     summary = (row.get("summary") or "").strip()
@@ -41,6 +48,8 @@ async def test_service(sid: str):
         "summary": summary,
         "detail": detail,
         "kind": row.get("kind"),
+        "state": state,
+        "status_code": row.get("status_code"),
         "tri": tri,
         "error": None,
     }

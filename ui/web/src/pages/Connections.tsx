@@ -99,6 +99,43 @@ export function Connections() {
     }
   }
 
+  async function testOne(s: Service) {
+    setBusy((b) => ({ ...b, [s.id]: 'test' }))
+    try {
+      const d = await api.get<{ output?: string; summary?: string; state?: string; status_code?: number }>(
+        `/service/test/${s.id}`,
+      )
+      const st = d.state ? `State: ${d.state}${d.status_code ? ` (HTTP ${d.status_code})` : ''}\n\n` : ''
+      setReport(`${s.label} — HTTP reachability probe\n\n${st}${d.output || d.summary || '(no output)'}`)
+      refresh()
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setBusy((b) => {
+        const n = { ...b }
+        delete n[s.id]
+        return n
+      })
+    }
+  }
+
+  async function tryOne(s: Service) {
+    setBusy((b) => ({ ...b, [s.id]: 'try' }))
+    try {
+      const d = await api.post<{ output?: string }>(`/service/smoke-tools/${s.id}`)
+      setReport(`${s.label} — tool smoke test\n\n${d.output || '(no output)'}`)
+      refresh()
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setBusy((b) => {
+        const n = { ...b }
+        delete n[s.id]
+        return n
+      })
+    }
+  }
+
   async function testAll(btn: HTMLButtonElement) {
     btn.disabled = true
     try {
@@ -211,10 +248,10 @@ export function Connections() {
                         <td className="px-3 py-2.5"><HealthBadge state={st} /></td>
                         <td className="px-3 py-2.5">
                           <div className="flex items-center justify-end gap-1">
-                            <Button variant="ghost" size="sm" disabled={!!busy[s.id]} onClick={() => act(s.id, 'test', () => api.get(`/service/test/${s.id}`))} title="HTTP reachability probe">
+                            <Button variant="ghost" size="sm" disabled={!!busy[s.id]} onClick={() => testOne(s)} title="Probe the real HTTP address and show the result">
                               {busy[s.id] === 'test' ? '…' : 'Test'}
                             </Button>
-                            <Button variant="ghost" size="sm" disabled={!!busy[s.id]} onClick={() => act(s.id, 'try', () => api.post(`/service/smoke-tools/${s.id}`))} title="Call the tools and check they return data">
+                            <Button variant="ghost" size="sm" disabled={!!busy[s.id]} onClick={() => tryOne(s)} title="Actually call this service's tools and show pass/fail">
                               {busy[s.id] === 'try' ? '…' : 'Try'}
                             </Button>
                             <Button variant="ghost" size="icon-sm" title="Configure" onClick={() => setConfigureId(s.id)}>

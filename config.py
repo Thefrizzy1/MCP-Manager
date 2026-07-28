@@ -261,3 +261,54 @@ def is_ui_writable_env_key(name: str) -> bool:
 
 # Singleton
 cfg = Config()
+
+
+# ── Live reconfiguration ──────────────────────────────────────────────────────
+# ENV keys whose cfg attribute name is not simply KEY.lower().
+_ATTR_OVERRIDES: dict[str, str] = {
+    "SSH_HOSTS": "ssh_hosts_json",
+    "SMB_SHARES": "smb_shares_json",
+}
+
+
+def _cfg_attr_for(env_key: str) -> str | None:
+    attr = _ATTR_OVERRIDES.get(env_key, env_key.lower())
+    return attr if attr in Config.model_fields else None
+
+
+def apply_live_env(updates: dict) -> None:
+    """Reflect saved .env values onto ``os.environ`` and the ``cfg`` singleton
+    **in place**, so a UI config change takes effect without restarting the
+    process.
+
+    Every ``from config import cfg`` holder shares this one object, so updating
+    its attributes here makes probes, ``is_configured`` checks, and the tools'
+    own ``cfg.<service>_url`` reads all see the new values immediately. Empty
+    values are skipped (blank = keep current), matching ``update_env``.
+    """
+    for raw_key, raw_val in updates.items():
+        if raw_val is None:
+            continue
+        key = str(raw_key).strip()
+        if not key:
+            continue
+        sval = ("true" if raw_val else "false") if isinstance(raw_val, bool) else str(raw_val).strip()
+        if not sval:
+            continue
+        os.environ[key] = sval
+        attr = _cfg_attr_for(key)
+        if not attr:
+            continue
+        cur = getattr(cfg, attr, "")
+        try:
+            if isinstance(cur, bool):
+                newv: object = sval.lower() in ("true", "1", "yes")
+            elif isinstance(cur, int):
+                newv = int(sval)
+            elif isinstance(cur, list):
+                newv = parse_csv_paths(sval)
+            else:
+                newv = sval.rstrip("/") if key.endswith("_URL") and sval.startswith(("http://", "https://")) else sval
+            setattr(cfg, attr, newv)
+        except Exception:
+            pass
