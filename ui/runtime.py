@@ -263,6 +263,26 @@ def _agent_service_disallow(selected: list[str] | None) -> list[str]:
     return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
 
 
+def _agent_profile_disallow(profile_name: str | None) -> list[str]:
+    """Restrict an agent to a named MCP profile's tool subset: deny every Plutus
+    tool the profile does not include. '' / None / unknown profile = no restriction.
+
+    Computed at enqueue time against the full /mcp surface, so a profile applies
+    to the next run immediately — no MCP-server restart needed (unlike the
+    /mcp/p/<name> mounts, which are built once at startup)."""
+    name = (profile_name or "").strip()
+    if not name:
+        return []
+    prof = next((p for p in load_profiles(ROOT) if p.get("name") == name), None)
+    if not prof:
+        return []
+    names = all_tool_names()
+    allowed = set(resolve_tool_names(prof, names))
+    if not allowed:
+        return []
+    return sorted(f"mcp__plutus__{t}" for t in names if t not in allowed)
+
+
 def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
                    model: str | None = None, force: bool = False,
                    extra_disallowed: list[str] | None = None) -> bool:
@@ -284,11 +304,13 @@ def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
 
 def _run_agent_bg(prompt: str, label: str = "agent", *, permission: str | None = None,
                   model: str | None = None, force: bool = False,
-                  mcp_services: list[str] | None = None) -> None:
+                  mcp_services: list[str] | None = None, profile: str | None = None) -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
-    # callers and older schedules that never stored a selection).
+    # callers and older schedules that never stored a selection). A profile, if
+    # given, narrows further to that named tool subset — both layer via disallow.
+    extra = sorted(set(_agent_service_disallow(mcp_services)) | set(_agent_profile_disallow(profile)))
     _enqueue_agent(prompt, label, permission=permission, model=model, force=force,
-                   extra_disallowed=_agent_service_disallow(mcp_services))
+                   extra_disallowed=extra)
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):

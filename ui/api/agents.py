@@ -15,6 +15,7 @@ from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
     _agent_queue,
+    _agent_profile_disallow,
     _agent_service_disallow,
     _enqueue_agent,
     _run_task_bg,
@@ -154,11 +155,12 @@ class AgentRunBody(BaseModel):
     label: str = Field(default="agent", max_length=40)
     permission: str | None = None
     mcp_services: list[str] | None = None  # per-connection ACL; None = no restriction
+    profile: str | None = None  # narrow to a named MCP profile's tool subset
 
 
 @router.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody):
-    extra = _agent_service_disallow(body.mcp_services)
+    extra = sorted(set(_agent_service_disallow(body.mcp_services)) | set(_agent_profile_disallow(body.profile)))
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
                         permission=body.permission, extra_disallowed=extra)
     if not ok:

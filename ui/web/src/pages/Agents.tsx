@@ -310,6 +310,12 @@ function LaunchWizard({
   const [cron, setCron] = useState('0 7 * * *')
   const [perm, setPerm] = useState('safe')
   const [timeout, setTimeout] = useState(20)
+  const [profile, setProfile] = useState('')
+  const profilesQ = useQuery({
+    queryKey: ['profiles'],
+    queryFn: () => api.get<{ profiles?: { name: string; label?: string; tool_count?: number }[] }>('/api/v1/profiles'),
+  })
+  const profiles = profilesQ.data?.profiles ?? []
   const [selected, setSelected] = useState<Record<string, boolean>>(
     Object.fromEntries(connections.map((c) => [c.id, true])),
   )
@@ -351,7 +357,7 @@ function LaunchWizard({
           cron: cronExpr,
           timezone: 'Europe/Berlin',
           enabled: true,
-          payload: { prompt: prompt.trim(), permission: perm, mcp_services: mcpServices },
+          payload: { prompt: prompt.trim(), permission: perm, mcp_services: mcpServices, profile: profile || undefined },
         })
         onScheduled()
       } else {
@@ -360,6 +366,7 @@ function LaunchWizard({
           label: name || 'agent',
           permission: perm,
           mcp_services: mcpServices,
+          profile: profile || undefined,
         })
         onLaunched()
       }
@@ -432,6 +439,27 @@ function LaunchWizard({
             <Input type="number" value={timeout} min={1} max={120} onChange={(e) => setTimeout(parseInt(e.target.value, 10) || 20)} />
           </Field>
         </div>
+        <Field
+          label="MCP profile"
+          hint={
+            profile
+              ? 'Agent is limited to this profile’s curated tools (applied on top of the connections below).'
+              : 'Optional — a saved tool subset. Manage profiles in Settings → MCP profiles.'
+          }
+        >
+          {profiles.length > 0 ? (
+            <Select value={profile} onChange={(e) => setProfile(e.target.value)}>
+              <option value="">No profile — use selected connections</option>
+              {profiles.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {(p.label || p.name) + (typeof p.tool_count === 'number' ? ` · ${p.tool_count} tools` : '')}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <span className="text-[12px] text-ink-3">No profiles yet — create one in Settings → MCP profiles.</span>
+          )}
+        </Field>
         {connections.length > 0 && (
           <Field label="MCP connections the agent may use">
             <ConnectionPicker connections={connections} selected={selected} onChange={setSelected} />

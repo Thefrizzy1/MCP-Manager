@@ -86,7 +86,8 @@ class PlutusScheduler:
                 if kind == "agent" and self._run_agent:
                     self._run_agent(payload.get("prompt", ""), f"sched:{name}",
                                     permission=payload.get("permission") or None,
-                                    mcp_services=payload.get("mcp_services"))
+                                    mcp_services=payload.get("mcp_services"),
+                                    profile=payload.get("profile"))
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:
