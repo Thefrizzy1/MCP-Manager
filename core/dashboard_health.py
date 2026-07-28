@@ -80,6 +80,9 @@ async def probe_http_service(svc: dict, cfg: Config) -> dict[str, Any]:
         elif sc in (401, 403):
             ok = None
             summ = f"HTTP {sc} (authentication required — credentials missing or invalid)"
+        elif sc == 429:
+            ok = None
+            summ = "HTTP 429 (rate limited — reachable but throttling)"
         elif sc == 404:
             ok = False
             summ = "HTTP 404 (probe path not found)"
