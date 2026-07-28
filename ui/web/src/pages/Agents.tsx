@@ -12,6 +12,7 @@ import { Field } from '@/components/ui/Field'
 import { Stat } from '@/components/ui/Stat'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
 
 interface AgentStatus {
   auth?: { mode?: string }
@@ -294,6 +295,21 @@ function LaunchWizard({
   const [selected, setSelected] = useState<Record<string, boolean>>(
     Object.fromEntries(connections.map((c) => [c.id, true])),
   )
+  // Connections may resolve after this wizard mounts; default any newly
+  // arrived ones to selected without clobbering the user's toggles.
+  useEffect(() => {
+    setSelected((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const c of connections) {
+        if (!(c.id in next)) {
+          next[c.id] = true
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [connections])
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -400,21 +416,7 @@ function LaunchWizard({
         </div>
         {connections.length > 0 && (
           <Field label="MCP connections the agent may use">
-            <div className="flex flex-wrap gap-1.5">
-              {connections.map((c) => (
-                <label
-                  key={c.id}
-                  className="flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-surface-2 px-2 py-1 text-[12px] text-ink-2"
-                >
-                  <input
-                    type="checkbox"
-                    checked={!!selected[c.id]}
-                    onChange={(e) => setSelected((sv) => ({ ...sv, [c.id]: e.target.checked }))}
-                  />
-                  {c.label}
-                </label>
-              ))}
-            </div>
+            <ConnectionPicker connections={connections} selected={selected} onChange={setSelected} />
           </Field>
         )}
         <div className="flex items-center gap-3">
