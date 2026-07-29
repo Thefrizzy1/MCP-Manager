@@ -141,6 +141,7 @@ def build_mcp_asgi_app():
     from starlette.routing import Mount
 
     from core.mcp_bearer_middleware import MCPBearerGateMiddleware
+    from core.oauth_routes import oauth_routes
     from core.tool_exposure import resolve_exposed
 
     names = all_tool_names()
@@ -161,7 +162,15 @@ def build_mcp_asgi_app():
                 await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
             yield
 
-    app = Starlette(routes=[Mount(path, app=a) for path, a in mounted], lifespan=_lifespan)
+    # OAuth provider endpoints (discovery, register, authorize, token) live on the
+    # MCP origin so browser connectors can sign in. Read live from .env so the
+    # Settings toggle takes effect on the next server start.
+    routes: list = []
+    if str(read_env().get("MCP_OAUTH_ENABLED", "")).strip().lower() in ("true", "1", "yes"):
+        routes.extend(oauth_routes())
+    routes.extend(Mount(path, app=a) for path, a in mounted)
+
+    app = Starlette(routes=routes, lifespan=_lifespan)
     app.add_middleware(MCPBearerGateMiddleware)
     return app
 

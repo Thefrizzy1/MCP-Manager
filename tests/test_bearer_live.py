@@ -10,16 +10,24 @@ def _reset_cache():
 def test_disabled_when_flag_off(monkeypatch):
     _reset_cache()
     monkeypatch.setattr(mw, "read_env", lambda: {"MCP_REQUIRE_BEARER": "false"})
-    require, token = mw._auth_config()
+    require, token, oauth = mw._auth_config()
     assert require is False
 
 
 def test_enabled_with_token(monkeypatch):
     _reset_cache()
     monkeypatch.setattr(mw, "read_env", lambda: {"MCP_REQUIRE_BEARER": "true", "MCP_BEARER_TOKEN": "abc"})
-    require, token = mw._auth_config()
+    require, token, oauth = mw._auth_config()
     assert require is True
     assert token == "abc"
+    assert oauth is False
+
+
+def test_oauth_flag_parsed(monkeypatch):
+    _reset_cache()
+    monkeypatch.setattr(mw, "read_env", lambda: {"MCP_REQUIRE_BEARER": "true", "MCP_OAUTH_ENABLED": "true"})
+    require, token, oauth = mw._auth_config()
+    assert require is True and oauth is True
 
 
 def test_change_visible_after_cache_expiry(monkeypatch):
@@ -31,5 +39,5 @@ def test_change_visible_after_cache_expiry(monkeypatch):
     state["MCP_REQUIRE_BEARER"] = "true"
     state["MCP_BEARER_TOKEN"] = "xyz"
     mw._cache_ts = 0.0  # force refresh
-    require, token = mw._auth_config()
+    require, token, oauth = mw._auth_config()
     assert require is True and token == "xyz"

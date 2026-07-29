@@ -62,6 +62,9 @@ class Config(BaseModel):
     public_mcp_base: str = _get("PUBLIC_MCP_BASE", "")
     mcp_lan_host: str = _get("MCP_LAN_HOST", "192.168.1.111")
     mcp_require_bearer: bool = _get_bool("MCP_REQUIRE_BEARER", False)
+    # OAuth 2.1 provider for browser-based MCP connectors (e.g. claude.ai). Opt-in;
+    # off = static-bearer behaviour unchanged. See core/oauth_provider.py.
+    mcp_oauth_enabled: bool = _get_bool("MCP_OAUTH_ENABLED", False)
 
     weather_default_location: str = _get("WEATHER_DEFAULT_LOCATION", "Hamburg")
 

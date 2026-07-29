@@ -141,6 +141,7 @@ def build_dashboard_payload(
         out["auth"] = {
             "mcp_require_bearer": cfg.mcp_require_bearer,
             "mcp_bearer_configured": bool((cfg.mcp_bearer_token or "").strip()),
+            "mcp_oauth_enabled": cfg.mcp_oauth_enabled,
             "ui_username": cfg.ui_username,
         }
 

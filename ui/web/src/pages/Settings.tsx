@@ -13,7 +13,7 @@ import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
   networking?: { http_local?: string; public_base?: string; mcp_lan_host?: string }
-  auth?: { mcp_require_bearer?: boolean; mcp_bearer_configured?: boolean }
+  auth?: { mcp_require_bearer?: boolean; mcp_bearer_configured?: boolean; mcp_oauth_enabled?: boolean }
 }
 
 function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
@@ -40,6 +40,7 @@ export function Settings() {
   const [pub, setPub] = useState('')
   const [host, setHost] = useState('')
   const [requireBearer, setRequireBearer] = useState(false)
+  const [oauthEnabled, setOauthEnabled] = useState(false)
   const [token, setToken] = useState('')
   const [city, setCity] = useState('')
   const [user, setUser] = useState('')
@@ -53,6 +54,7 @@ export function Settings() {
       setPub(dash.data.networking?.public_base ?? '')
       setHost(dash.data.networking?.mcp_lan_host ?? '')
       setRequireBearer(!!dash.data.auth?.mcp_require_bearer)
+      setOauthEnabled(!!dash.data.auth?.mcp_oauth_enabled)
     }
   }, [dash.data])
   useEffect(() => {
@@ -157,6 +159,20 @@ export function Settings() {
               <Button variant="default" size="sm" onClick={() => setExportOpen(true)}>
                 Export config (Claude, Cursor, …)
               </Button>
+            </Row>
+            <Row
+              label="Browser OAuth"
+              hint="for claude.ai custom connectors"
+            >
+              <input type="checkbox" checked={oauthEnabled} onChange={(e) => setOauthEnabled(e.target.checked)} />
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => save({ MCP_OAUTH_ENABLED: oauthEnabled }, 'Saved — restart the MCP server to apply.')}
+              >
+                Save
+              </Button>
+              <span className="text-[11.5px] text-ink-3">needs public HTTPS + Require bearer on</span>
             </Row>
           </Section>
 
