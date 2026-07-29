@@ -89,7 +89,21 @@ def test_asgi_app_serves_mcp_behind_bearer():
     assert any(m.cls is MCPBearerGateMiddleware for m in app.user_middleware)
 
 
-def test_mcp_endpoint_answers_at_exactly_slash_mcp():
+def _no_bearer_gate(monkeypatch):
+    """Pin the bearer gate off for routing tests.
+
+    These assert *where* the transport is mounted, not whether auth works, and
+    must not depend on whether a .env happens to exist (it does locally, it does
+    not on CI) or on what an earlier test left in the gate's TTL cache.
+    """
+    import core.mcp_bearer_middleware as mw
+
+    monkeypatch.setattr(mw, "read_env", lambda: {})
+    mw._cache = None
+    mw._cache_ts = 0.0
+
+
+def test_mcp_endpoint_answers_at_exactly_slash_mcp(monkeypatch):
     """/mcp must serve the transport itself — not redirect.
 
     Mounting FastMCP's app (which routes its endpoint at /mcp) under /mcp nested
@@ -102,6 +116,7 @@ def test_mcp_endpoint_answers_at_exactly_slash_mcp():
 
     from ui.runtime import build_mcp_asgi_app
 
+    _no_bearer_gate(monkeypatch)
     init = {
         "jsonrpc": "2.0", "id": 0, "method": "initialize",
         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
@@ -139,6 +154,7 @@ def test_profile_endpoint_serves_at_its_advertised_path(tmp_path, monkeypatch):
     import core.tool_exposure
     import ui.runtime as R
 
+    _no_bearer_gate(monkeypatch)
     monkeypatch.setattr(R, "load_profiles", lambda _root: [{"name": "web", "intent": "web"}])
     # A FastMCP's session manager can only be run() once, and ui.runtime.mcp is a
     # module singleton another test in this file has already started. Returning a
