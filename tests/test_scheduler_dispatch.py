@@ -1,7 +1,10 @@
-"""Scheduler job dispatch — the payload's permission + per-connection ACL must
-travel into the agent runner, so a scheduled agent is not silently governed by
-a mutable global default (offline; no APScheduler needed — we build the job
-callable directly)."""
+"""Scheduler job dispatch — the payload's per-connection ACL must travel into the
+agent runner, so a scheduled agent is not silently governed by a mutable global
+default (offline; no APScheduler needed — we build the job callable directly).
+
+Permission levels are gone: the connection selection is the only tool gate, so a
+`permission` key left in an older stored payload must be ignored rather than
+forwarded (forwarding it would blow up on the runner's signature)."""
 from pathlib import Path
 
 from core.scheduler import PlutusScheduler
@@ -14,24 +17,38 @@ def _capture_scheduler():
     return sched, calls
 
 
-def test_agent_schedule_forwards_permission_and_acl():
+def test_agent_schedule_forwards_the_connection_acl():
     sched, calls = _capture_scheduler()
     job = sched._make_job({
         "id": "s1", "kind": "agent", "name": "nightly",
-        "payload": {"prompt": "research", "permission": "all",
-                    "mcp_services": ["jellyfin", "sonarr"]},
+        "payload": {"prompt": "research", "mcp_services": ["jellyfin", "sonarr"]},
     })
     job()
     assert len(calls) == 1
     prompt, label, kw = calls[0]
     assert prompt == "research"
     assert label == "sched:nightly"
-    assert kw["permission"] == "all"
     assert kw["mcp_services"] == ["jellyfin", "sonarr"]
 
 
-def test_legacy_agent_schedule_defaults_are_safe():
-    # A schedule created before per-run permission existed carries neither key.
+def test_stored_permission_key_is_ignored_not_forwarded():
+    """Schedules saved while permission levels existed still carry the key. The
+    runner no longer accepts it, so forwarding it would raise TypeError inside the
+    job and the schedule would silently stop firing."""
+    sched, calls = _capture_scheduler()
+    job = sched._make_job({
+        "id": "s1b", "kind": "agent", "name": "legacy",
+        "payload": {"prompt": "research", "permission": "all", "mcp_services": ["jellyfin"]},
+    })
+    job()
+    assert len(calls) == 1, "legacy payload must still dispatch"
+    _, _, kw = calls[0]
+    assert "permission" not in kw
+    assert kw["mcp_services"] == ["jellyfin"]
+
+
+def test_legacy_agent_schedule_without_an_acl_is_unrestricted():
+    # A schedule created before the per-connection ACL existed carries no key.
     sched, calls = _capture_scheduler()
     job = sched._make_job({
         "id": "s2", "kind": "agent", "name": "old",
@@ -39,8 +56,6 @@ def test_legacy_agent_schedule_defaults_are_safe():
     })
     job()
     _, _, kw = calls[0]
-    # None => the runner applies the configured default (safe), not "all".
-    assert kw["permission"] is None
     assert kw["mcp_services"] is None
 
 

@@ -89,8 +89,9 @@ class PlutusScheduler:
         def _job() -> None:
             try:
                 if kind == "agent" and self._run_agent:
+                    # `permission` in older stored payloads is ignored: the
+                    # connection selection is now the only tool gate.
                     self._run_agent(payload.get("prompt", ""), f"sched:{name}",
-                                    permission=payload.get("permission") or None,
                                     mcp_services=payload.get("mcp_services"),
                                     profile=payload.get("profile"))
                 elif kind == "task" and self._run_task:

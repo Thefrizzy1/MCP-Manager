@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 from config import cfg
-from core import agent_permissions
 from core import agent_runner
 from core import agent_tasks
 from core.capabilities import CapabilityCatalog
@@ -319,16 +318,18 @@ def _agent_profile_disallow(profile_name: str | None) -> list[str]:
     return sorted(f"mcp__plutus__{t}" for t in names if t not in allowed)
 
 
-def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
+def _enqueue_agent(prompt: str, label: str, *,
                    model: str | None = None, force: bool = False,
                    extra_disallowed: list[str] | None = None) -> bool:
-    """Queue an agent run. Disallowed-tool set = permission level + per-connection ACL."""
-    acfg = agent_runner.load_agent_config(ROOT)
-    level = agent_permissions.normalize_level(permission or acfg.get("tool_permission"))
-    disallowed = sorted(
-        set(agent_permissions.build_disallowed_from_annotations(tools.raw_manager, level))
-        | set(extra_disallowed or [])
-    )
+    """Queue an agent run.
+
+    The connection selection is the *only* tool gate: picking a connection grants
+    the agent read and write on that service's tools. The old read/write/strict
+    permission levels are gone — two overlapping gates (level + connections) made
+    it impossible to tell why a tool was unavailable. core.agent_permissions is
+    kept for the documented blast-radius sets, but no longer narrows a run.
+    """
+    disallowed = sorted(set(extra_disallowed or []))
     try:
         _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
                                  "model": model, "force": force})
@@ -338,15 +339,15 @@ def _enqueue_agent(prompt: str, label: str, *, permission: str | None = None,
         return False
 
 
-def _run_agent_bg(prompt: str, label: str = "agent", *, permission: str | None = None,
+def _run_agent_bg(prompt: str, label: str = "agent", *,
                   model: str | None = None, force: bool = False,
                   mcp_services: list[str] | None = None, profile: str | None = None) -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
-    # callers and older schedules that never stored a selection). A profile, if
-    # given, narrows further to that named tool subset — both layer via disallow.
+    # callers and older schedules that never stored a selection). `profile` is no
+    # longer offered in the UI; it stays here so schedules saved before it was
+    # removed keep working.
     extra = sorted(set(_agent_service_disallow(mcp_services)) | set(_agent_profile_disallow(profile)))
-    _enqueue_agent(prompt, label, permission=permission, model=model, force=force,
-                   extra_disallowed=extra)
+    _enqueue_agent(prompt, label, model=model, force=force, extra_disallowed=extra)
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):
@@ -365,7 +366,7 @@ def _run_task_bg(task_id: str, *, force: bool = False) -> None:
         task["prompt"], library=lib, date=time.strftime("%Y-%m-%d"), output_hint=hint,
     )
     _run_agent_bg(prompt, task.get("name", "playbook")[:40],
-                  permission=task.get("permission") or None, model=task.get("model") or None, force=force)
+                  model=task.get("model") or None, force=force)
 
 
 _HEALTH_TTL = 60.0

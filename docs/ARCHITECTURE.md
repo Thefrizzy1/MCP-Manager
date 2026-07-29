@@ -25,6 +25,7 @@ ui/web/                 React UI (Vite + React 19 + Tailwind 4 + lucide) → ui/
                         served at /app (falls back to the legacy SPA if dist is absent)
 
 core/profiles.py        MCP profiles: named tool subsets + registration-time tool_filter
+                        (API + /mcp/p/<name> endpoints only — no UI, see below)
 core/tool_exposure.py   the "slicer": category exposure on the served /mcp (token saver)
 core/tool_annotations.py completes all four annotation hints at registration
 tools/prompts.py        playbooks → MCP prompts
@@ -44,6 +45,17 @@ Tool filtering is done at
 *registration* (fail-safe) — a disallowed tool is never registered on that instance;
 there is no list-time monkeypatch. Profiles/exposure are **restart-to-apply** (the MCP
 server is a separate process from the UI). The old global tool gate is gone.
+
+**Agent scoping is one dial, not three.** A launched agent is governed solely by the
+MCP connections ticked in the launch wizard: selecting a connection grants read *and*
+write on that service's tools. The permission levels (`strict_read`/`safe`/`all`) no
+longer narrow a run — two overlapping gates made it impossible to tell why a tool was
+missing. `core/agent_permissions.py` is retained for its documented blast-radius sets
+(`DANGEROUS`, `WRITE`), which are still the reference for what a destructive tool is.
+Profiles are likewise backend-only now: the API and `/mcp/p/<name>` endpoints remain,
+but the launch wizard and Settings no longer expose them. Public services (web search,
+weather, Wikipedia, …) are ordinary connections — listed, and **off by default**, so an
+agent reaches the internet only when deliberately ticked.
 
 **Non-destructive updates.** `data/`, `config/`, and the mounted `.env` persist across
 `docker compose pull && up -d`. The multi-stage Dockerfile builds `ui/web` and ships

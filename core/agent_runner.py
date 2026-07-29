@@ -55,9 +55,8 @@ DEFAULT_AGENT_CONFIG = {
     "allowed_tools": ["mcp__plutus", "Read", "Write", "WebSearch", "WebFetch"],
     "skip_permissions": True,         # headless: --dangerously-skip-permissions
     "give_plutus_tools": True,        # expose Plutus's own MCP tools to the agent
-    "timeout_min": 20,
+    "timeout_min": 20,                # baked in — not a per-launch choice
     "max_cost_usd": 2.0,
-    "tool_permission": "safe",        # "strict_read" | "safe" | "all" (blast-radius control)
     "max_runs_per_day": 20,           # scheduled/queued runs refused past this
     # Where playbooks read/write their knowledge library:
     "output_mode": "obsidian",        # "obsidian" | "filesystem"
@@ -562,8 +561,19 @@ def run_agent(
                 rec["error"] = ("Claude Code refused to run as root. Plutus now sets IS_SANDBOX=1 "
                                 "for the container — rebuild the image so this fix is present, or run "
                                 "the container as a non-root user.")
-            elif "not logged in" in low or "authentication" in low or "unauthorized" in low:
-                rec["error"] = "Claude Code isn't authenticated. Connect your account: Settings → Connect Claude account."
+            elif "invalid bearer" in low or "401" in low:
+                # Plutus injects CLAUDE_CODE_OAUTH_TOKEN from .env into the agent's
+                # environment, where it overrides a mounted ~/.claude login. A stale
+                # token therefore breaks runs that would otherwise work.
+                rec["error"] = (
+                    "Claude Code rejected the credentials (401). The saved session token has "
+                    "expired: Settings → Connect Claude account → paste a fresh token, or clear "
+                    "CLAUDE_CODE_OAUTH_TOKEN so the mounted ~/.claude login is used instead."
+                )
+            elif ("not logged in" in low or "authenticat" in low or "unauthorized" in low
+                  or "credit balance" in low or ("out of" in low and "usage" in low)):
+                rec["error"] = ("Claude Code isn't authenticated (or the plan is out of usage). "
+                                "Settings → Connect Claude account.")
             else:
                 rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
             _emit(rec["error"])

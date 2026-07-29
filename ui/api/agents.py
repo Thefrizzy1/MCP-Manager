@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from core import agent_login, agent_permissions, agent_runner, agent_tasks, schedule_store
+from core import agent_login, agent_runner, agent_tasks, schedule_store
 from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
@@ -35,7 +35,6 @@ async def api_v1_agent_status():
     st["scheduler_available"] = agent_scheduler.available
     st["auth"] = agent_runner.auth_info()
     st["queue_depth"] = _agent_queue.qsize()
-    st["permission_levels"] = list(agent_permissions.LEVELS)
     st["runs_today"] = agent_runner.runs_today(ROOT)
     st["max_runs_per_day"] = acfg.get("max_runs_per_day", 20)
     return st
@@ -69,7 +68,6 @@ class AgentConfigBody(BaseModel):
     fs_library_path: str | None = None
     notify_enabled: bool | None = None
     notify_on: str | None = None
-    tool_permission: str | None = None
     max_runs_per_day: int | None = None
 
 
@@ -90,7 +88,6 @@ class AgentTaskBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
     description: str = ""
     prompt: str = Field(..., min_length=1, max_length=20000)
-    permission: str | None = None
     model: str | None = None
 
 
@@ -129,8 +126,7 @@ async def api_v1_agent_tasks_preview(tid: str):
     lib, hint = agent_runner.resolve_library(acfg)
     prompt = agent_tasks.render_prompt(task["prompt"], library=lib,
                                        date=time.strftime("%Y-%m-%d"), output_hint=hint)
-    level = agent_permissions.normalize_level(task.get("permission") or acfg.get("tool_permission"))
-    return {"ok": True, "prompt": prompt, "permission": level, "library": lib}
+    return {"ok": True, "prompt": prompt, "library": lib}
 
 
 class BuildTaskBody(BaseModel):
@@ -150,10 +146,12 @@ async def api_v1_agent_tasks_build(body: BuildTaskBody):
 
 
 class AgentRunBody(BaseModel):
-    """Launch payload. Access level and timeout are deliberately absent: they are
-    settings, not per-launch choices, and come from Settings → Agent
-    (tool_permission / timeout_min). The connection selection is the one control
-    over what a launched agent may touch."""
+    """Launch payload.
+
+    There is no access level and no timeout: timeout is baked into the agent
+    config, and permission levels are gone entirely. Selecting a connection grants
+    the agent read *and* write on that service's tools — the connection list is
+    the one and only control over what a launched agent may touch."""
 
     prompt: str = Field(..., min_length=1, max_length=20000)
     label: str = Field(default="agent", max_length=40)
