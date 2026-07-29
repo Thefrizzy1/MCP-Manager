@@ -33,9 +33,40 @@ def test_runs_today_counts_today(tmp_path):
 def test_auth_info_session_token_mode(monkeypatch):
     from core import env_store
     monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-x"})
+    monkeypatch.setattr(ar, "cli_logged_in", lambda: False)  # no CLI login -> token is used
     info = ar.auth_info()
     assert info["mode"] == "session_token"
     assert info["session_token"] is True
+
+
+def test_cli_login_wins_over_saved_token(monkeypatch):
+    """A real ~/.claude CLI session must be reported/used ahead of any saved
+    token or API key — the fix for the '401 Invalid bearer token' bug."""
+    from core import env_store
+    monkeypatch.setattr(ar, "cli_logged_in", lambda: True)
+    monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "stale"})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-bad")
+    assert ar.auth_info()["mode"] == "subscription"
+
+
+def test_subprocess_env_strips_stale_creds_when_logged_in(monkeypatch):
+    from core import env_store
+    monkeypatch.setattr(ar, "cli_logged_in", lambda: True)
+    monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "stale"})
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-bad")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stale")
+    env = ar._subprocess_env()
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
+
+
+def test_subprocess_env_uses_token_when_not_logged_in(monkeypatch):
+    from core import env_store
+    monkeypatch.setattr(ar, "cli_logged_in", lambda: False)
+    monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "good"})
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    env = ar._subprocess_env()
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == "good"
 
 
 def test_build_cmd_minimal():
@@ -107,6 +138,9 @@ def test_resolve_library_filesystem():
 
 def test_auth_info_api_key_mode(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-xyz")
+    monkeypatch.setattr(ar, "cli_logged_in", lambda: False)  # a CLI login would win otherwise
+    from core import env_store
+    monkeypatch.setattr(env_store, "read_env", lambda path=None: {})
     info = ar.auth_info()
     assert info["mode"] == "api_key"
     assert info["api_key"] is True

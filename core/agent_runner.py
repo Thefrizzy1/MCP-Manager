@@ -133,9 +133,22 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
     return str(path)
 
 
+def cli_logged_in() -> bool:
+    """True if the Claude Code CLI has a real login in ~/.claude (mounted). Only
+    credential files count — a bare settings.json is not proof of a session."""
+    home = Path(os.path.expanduser("~/.claude"))
+    return any((home / name).exists() for name in (".credentials.json", "credentials.json"))
+
+
 def _subprocess_env() -> dict:
-    """Process env plus the session OAuth token from .env, so a web login applies
-    without a restart. Session token only — never an API key here.
+    """Environment for the headless `claude` run.
+
+    A real CLI session (mounted ~/.claude login) is authoritative: when one
+    exists we use it and strip any CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY
+    from the child env, so a stale saved token or key can never override the
+    login (that produced "401 Invalid bearer token" on runs that would otherwise
+    work). Only when there is no CLI login do we fall back to a saved session
+    token.
 
     We also set IS_SANDBOX=1: Claude Code refuses ``--dangerously-skip-permissions``
     when it detects it is running as root, unless the environment is flagged as a
@@ -147,10 +160,14 @@ def _subprocess_env() -> dict:
     try:
         from core.env_store import read_env
         tok = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
-        if tok:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     except Exception:
-        pass
+        tok = ""
+    if cli_logged_in():
+        # The CLI's own session wins — don't let stale creds shadow it.
+        env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+        env.pop("ANTHROPIC_API_KEY", None)
+    elif tok:
+        env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     return env
 
 
@@ -402,20 +419,15 @@ def auth_info() -> dict:
         session_token = bool((read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip())
     except Exception:
         pass
-    claude_home = Path(os.path.expanduser("~/.claude"))
-    # Only credential files count. Treating any *.json in ~/.claude as proof of
-    # login reported "subscription" whenever a bare settings.json existed, so the
-    # UI claimed the agent was authenticated when it would fail on first run.
-    logged_in = any(
-        (claude_home / name).exists()
-        for name in (".credentials.json", "credentials.json")
-    )
-    if session_token:
+    logged_in = cli_logged_in()
+    # A real CLI login wins (see _subprocess_env), so report it first — otherwise
+    # the UI would claim "session token" while the run actually uses the login.
+    if logged_in:
+        mode = "subscription"     # interactive ~/.claude login -> your plan
+    elif session_token:
         mode = "session_token"    # OAuth token from the dashboard -> your plan
     elif api_key:
         mode = "api_key"          # bills the Anthropic API per token
-    elif logged_in:
-        mode = "subscription"     # interactive ~/.claude login -> your plan
     else:
         mode = "none"             # not authenticated yet
     return {"mode": mode, "api_key": api_key, "session_token": session_token, "logged_in": logged_in}
@@ -568,14 +580,21 @@ def run_agent(
                                 "for the container — rebuild the image so this fix is present, or run "
                                 "the container as a non-root user.")
             elif "invalid bearer" in low or "401" in low:
-                # Plutus injects CLAUDE_CODE_OAUTH_TOKEN from .env into the agent's
-                # environment, where it overrides a mounted ~/.claude login. A stale
-                # token therefore breaks runs that would otherwise work.
-                rec["error"] = (
-                    "Claude Code rejected the credentials (401). The saved session token has "
-                    "expired: Settings → Connect Claude account → paste a fresh token, or clear "
-                    "CLAUDE_CODE_OAUTH_TOKEN so the mounted ~/.claude login is used instead."
-                )
+                # A real ~/.claude CLI login is now used automatically when present
+                # (it overrides any saved token). A 401 means there is no valid
+                # session at all — either no login and a bad/expired saved token.
+                if cli_logged_in():
+                    rec["error"] = (
+                        "Claude Code rejected the credentials (401). Your mounted ~/.claude login "
+                        "looks expired — re-run `docker exec -it plutus-mcp claude` to log in again."
+                    )
+                else:
+                    rec["error"] = (
+                        "Claude Code isn't authenticated (401). For a CLI *session* (your plan, no "
+                        "API key), log in once with `docker exec -it plutus-mcp claude` — that's used "
+                        "automatically. Or Settings → Connect Claude account to paste a fresh "
+                        "`claude setup-token` token."
+                    )
             elif ("not logged in" in low or "authenticat" in low or "unauthorized" in low
                   or "credit balance" in low or ("out of" in low and "usage" in low)):
                 rec["error"] = ("Claude Code isn't authenticated (or the plan is out of usage). "
