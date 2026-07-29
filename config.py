@@ -173,6 +173,7 @@ class Config(BaseModel):
 
     # YouTube Data API v3 (same Google Cloud key type; separate key recommended)
     youtube_api_key: str = _get("YOUTUBE_API_KEY")
+    hf_token: str = _get("HF_TOKEN")
 
     # Dashboard extras (bookmark integrations)
     audiobookshelf_url: str = _get("AUDIOBOOKSHELF_URL")

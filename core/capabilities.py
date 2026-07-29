@@ -52,6 +52,8 @@ def _fine_capability(name: str) -> str | None:
         return "media"
     if n.startswith("youtube_"):
         return "social"
+    if n.startswith("huggingface_"):
+        return "models"
     if n in {"web_search", "web_fetch", "google_search", "wikipedia_summary"}:
         return "search"
     if n.startswith("weather_") or n == "get_context":

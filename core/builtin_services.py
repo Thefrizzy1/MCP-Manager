@@ -289,6 +289,16 @@ SERVICES: list[dict] = [
             {"name":"youtube_video","label":"Video Details","params":[("video_id","Video ID","text")]},
             {"name":"youtube_trending","label":"Trending","params":[("region","Region code","text"),("max_results","Max results","number")]}]},
 
+  {"id":"huggingface","label":"Hugging Face","icon":"🤗","tag":"ai","section":"public",
+   "desc":"Hugging Face Hub — model discovery, trending models, metadata (public API, no key needed)",
+   "config_keys":[("HF_TOKEN","Access token (optional — higher rate limits / private repos)","",True)],
+   "health_url":lambda: "https://huggingface.co/api/models?limit=1","health_headers":lambda: {},
+   "configured_keys":(),
+   "documentation_url":"https://huggingface.co/docs/hub/api",
+   "tools":[{"name":"huggingface_search_models","label":"Search Models","params":[("query","Search terms","text"),("sort","downloads|likes|trending","text"),("limit","Max results","number")]},
+            {"name":"huggingface_trending_models","label":"Trending Models","params":[("task","Task filter (optional)","text"),("limit","Max results","number")]},
+            {"name":"huggingface_model_info","label":"Model Info","params":[("model_id","org/model","text")]}]},
+
   {"id":"google","label":"Google Custom Search","icon":"🔎","tag":"search","section":"public",
    "desc":"Programmable Search JSON API — set GOOGLE_API_KEY + GOOGLE_CSE_ID",
    "config_keys":[("GOOGLE_API_KEY","Google Cloud API key","",True),("GOOGLE_CSE_ID","Search engine ID (cx)","",False)],
