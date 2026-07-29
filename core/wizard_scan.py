@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from core.discover_services import probe_host
+from core.discover_services import probe_host, tcp_open
 from core.docker_wizard import discover_docker_suggestions
 from core.service_logos import CLEARBIT_DOMAIN_BY_ID
 
@@ -75,11 +76,20 @@ async def build_wizard_scan(host: str, *, include_port_scan: bool, services: lis
     unified: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    for row in dock.get("suggestions") or []:
+    # Docker suggestions come from Plutus's OWN docker socket, so they must be
+    # verified reachable on the *scanned* host — otherwise every container on
+    # the docker host is falsely reported for any IP the user types.
+    docker_rows = [r for r in (dock.get("suggestions") or []) if isinstance(r.get("service_id"), str)]
+    if h and docker_rows:
+        async def _reachable(port: Any) -> bool:
+            return bool(port) and await tcp_open(h, int(port))
+        oks = await asyncio.gather(*[_reachable(r.get("public_port")) for r in docker_rows])
+        docker_rows = [r for r, ok in zip(docker_rows, oks) if ok]
+
+    for row in docker_rows:
         sid = row.get("service_id")
-        if isinstance(sid, str) and sid:
-            unified.append(_enrich_row(dict(row), services))
-            seen.add(sid)
+        unified.append(_enrich_row(dict(row), services))
+        seen.add(sid)
 
     for hit in port_hits:
         sid = hit.get("service_id")
