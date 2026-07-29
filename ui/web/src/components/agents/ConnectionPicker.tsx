@@ -4,9 +4,12 @@ import type { Service } from '@/lib/health'
 import { cn } from '@/lib/cn'
 import { ServiceLogo } from '@/components/ui/ServiceLogo'
 
+const isPublic = (s: Service) => (s.section || '').toLowerCase().includes('public')
+
 /** Scrollable multi-select for the MCP connections an agent may use.
  *  Trigger shows the count; the panel has Select all / none, a filter,
- *  and a scrolling checkbox list — works for 4 connections or 40. */
+ *  and a scrolling checkbox list — works for 4 connections or 40.
+ *  Expects the list pre-sorted self-hosted-first (see orderConnections). */
 export function ConnectionPicker({
   connections,
   selected,
@@ -95,26 +98,36 @@ export function ConnectionPicker({
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-[12px] text-ink-3">No matches.</p>
             ) : (
-              filtered.map((c) => {
+              filtered.map((c, i) => {
                 const on = !!selected[c.id]
+                // The list arrives self-hosted-first; mark where the public
+                // (internet-facing) ones begin so ticking one is a deliberate act.
+                const pub = isPublic(c)
+                const firstPublic = pub && (i === 0 || !isPublic(filtered[i - 1]))
                 return (
-                  <button
-                    type="button"
-                    key={c.id}
-                    onClick={() => toggle(c.id)}
-                    className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface-hover"
-                  >
-                    <span
-                      className={cn(
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
-                        on ? 'border-accent bg-accent text-white' : 'border-border-strong',
-                      )}
+                  <div key={c.id}>
+                    {firstPublic && (
+                      <p className="px-2.5 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-ink-3">
+                        Public · internet
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggle(c.id)}
+                      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-surface-hover"
                     >
-                      {on && <Check size={11} strokeWidth={3} />}
-                    </span>
-                    <ServiceLogo id={c.id} label={c.label} size={20} domain={c.logo_domain} />
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2">{c.label}</span>
-                  </button>
+                      <span
+                        className={cn(
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                          on ? 'border-accent bg-accent text-white' : 'border-border-strong',
+                        )}
+                      >
+                        {on && <Check size={11} strokeWidth={3} />}
+                      </span>
+                      <ServiceLogo id={c.id} label={c.label} size={20} domain={c.logo_domain} />
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-2">{c.label}</span>
+                    </button>
+                  </div>
                 )
               })
             )}

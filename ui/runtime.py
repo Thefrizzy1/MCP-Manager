@@ -280,15 +280,21 @@ def _agent_queue_worker() -> None:
 
 def _agent_service_disallow(selected: list[str] | None) -> list[str]:
     """Per-connection ACL: deny tools that belong to a service the user did NOT
-    select. `None` = no restriction. Tools not tied to any service (web, fs,
-    utilities, public APIs) stay available so research still works."""
+    select. `None` = no restriction (back-compat for callers and older schedules
+    that never stored a selection).
+
+    Public services (web search/fetch, weather, maps, Wikipedia, …) are included
+    here. They used to be exempt and permanently available, which meant the
+    launch picker couldn't show them at all — there was no way to express "run
+    this agent without web access", and the tools it *could* reach didn't match
+    what the UI listed. They are now ordinary connections: listed, and off unless
+    ticked. Tools not tied to any service (filesystem, utilities) stay available.
+    """
     if selected is None:
         return []
     from core.dashboard_api import tool_to_service_map
     sel = set(selected)
-    # Only self-hosted/system services are "connections"; public-API and utility
-    # tools (web search/fetch, weather, maps, …) always stay available.
-    conn_ids = {s["id"] for s in _services_live() if "public" not in (s.get("section") or "").lower()}
+    conn_ids = {s["id"] for s in _services_live()}
     tmap = tool_to_service_map()
     return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
 

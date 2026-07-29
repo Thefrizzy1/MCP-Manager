@@ -15,7 +15,6 @@ from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
     _agent_queue,
-    _agent_profile_disallow,
     _agent_service_disallow,
     _enqueue_agent,
     _run_task_bg,
@@ -151,18 +150,21 @@ async def api_v1_agent_tasks_build(body: BuildTaskBody):
 
 
 class AgentRunBody(BaseModel):
+    """Launch payload. Access level and timeout are deliberately absent: they are
+    settings, not per-launch choices, and come from Settings → Agent
+    (tool_permission / timeout_min). The connection selection is the one control
+    over what a launched agent may touch."""
+
     prompt: str = Field(..., min_length=1, max_length=20000)
     label: str = Field(default="agent", max_length=40)
-    permission: str | None = None
     mcp_services: list[str] | None = None  # per-connection ACL; None = no restriction
-    profile: str | None = None  # narrow to a named MCP profile's tool subset
 
 
 @router.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody):
-    extra = sorted(set(_agent_service_disallow(body.mcp_services)) | set(_agent_profile_disallow(body.profile)))
+    extra = _agent_service_disallow(body.mcp_services)
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
-                        permission=body.permission, extra_disallowed=extra)
+                        extra_disallowed=extra)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}

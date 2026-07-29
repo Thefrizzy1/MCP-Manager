@@ -210,6 +210,46 @@ def test_run_under_the_cap_is_untouched(tmp_path, monkeypatch):
     assert rec["cost_usd"] == 0.25
 
 
+# ── the prompt must survive Claude Code's variadic options ───────────────────
+
+def test_prompt_is_not_swallowed_by_variadic_options():
+    """`--mcp-config <configs...>`, `--allowedTools <tools...>` and
+    `--disallowedTools <tools...>` are variadic, so a bare positional prompt right
+    after one of them is consumed as another value:
+
+        Error: Invalid MCP configuration:
+        MCP config file not found: /app/<the prompt text>
+
+    The run then had no prompt and exited 1. `--` must end option parsing.
+    """
+    from core.agent_runner import build_agent_cmd
+
+    cmd = build_agent_cmd(
+        "research the thing",
+        {"skip_permissions": True, "allowed_tools": ["mcp__plutus", "Read"]},
+        mcp_config_path="/app/data/agent_mcp.json",
+        disallowed_tools=["mcp__plutus__docker_restart"],
+    )
+
+    assert cmd[-1] == "research the thing"
+    assert cmd[-2] == "--", f"prompt must be guarded by an end-of-options marker: {cmd[-3:]}"
+    # And the marker must come after every variadic option, not before them.
+    assert cmd.index("--") > cmd.index("--mcp-config")
+
+
+def test_prompt_guard_holds_without_optional_flags():
+    """The bug only bit when no model was selected — with --model present the
+    prompt happened to land after a non-variadic option. Both shapes must work."""
+    from core.agent_runner import build_agent_cmd
+
+    bare = build_agent_cmd("do it", {"skip_permissions": False, "allowed_tools": []})
+    assert bare[-2:] == ["--", "do it"]
+
+    with_model = build_agent_cmd("do it", {"allowed_tools": []}, model="haiku")
+    assert with_model[-2:] == ["--", "do it"]
+    assert "--model" in with_model
+
+
 # ── H5: stderr must not be left undrained ────────────────────────────────────
 
 def test_agent_stderr_is_merged_into_stdout(tmp_path, monkeypatch):

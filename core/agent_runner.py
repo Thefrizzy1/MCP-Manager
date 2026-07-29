@@ -178,6 +178,20 @@ def cancel() -> dict:
 # ── command + event parsing (pure, testable) ─────────────────────────────────
 def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = None,
                     disallowed_tools: list[str] | None = None, model: str | None = None) -> list[str]:
+    """Argv for one headless `claude -p` run.
+
+    The trailing ``--`` is load-bearing. Several Claude Code options are variadic
+    (`--mcp-config <configs...>`, `--allowedTools <tools...>`,
+    `--disallowedTools <tools...>`), so a bare positional prompt straight after
+    one of them gets swallowed as another value:
+
+        claude -p --mcp-config /app/data/agent_mcp.json "research X"
+        -> Error: Invalid MCP configuration:
+           MCP config file not found: /app/research X
+
+    The run then had no prompt at all and exited 1, with the prompt text showing
+    up inside the error. `--` ends option parsing so the prompt stays positional.
+    """
     cmd = ["claude", "-p", "--output-format", "stream-json", "--verbose"]
     if cfg.get("skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
@@ -191,7 +205,7 @@ def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = Non
     chosen_model = model or cfg.get("model")
     if chosen_model:
         cmd += ["--model", chosen_model]
-    cmd.append(prompt)
+    cmd += ["--", prompt]
     return cmd
 
 
@@ -243,7 +257,7 @@ def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
         cmd.append("--dangerously-skip-permissions")
     if cfg.get("model"):
         cmd += ["--model", cfg["model"]]
-    cmd.append(prompt)
+    cmd += ["--", prompt]     # see build_agent_cmd: variadic options eat a bare prompt
     try:
         proc = subprocess.run(
             cmd, cwd=str(root), env=_subprocess_env(), text=True,
@@ -526,7 +540,12 @@ def run_agent(
             proc.wait()
         finally:
             timer.cancel()
-        err = "\n".join(noise)[-400:]
+        # Keep the HEAD of the output, not the tail. CLI errors lead with the
+        # useful line ("Error: Invalid MCP configuration:") and trail off into
+        # echoed arguments, so tailing showed a slice of the prompt and hid the
+        # cause entirely.
+        _noise = "\n".join(noise).strip()
+        err = _noise[:400] + (" …" if len(_noise) > 400 else "")
         if _current.get("cancelled"):
             rec["cancelled"] = True
             rec["error"] = "Cancelled by user."

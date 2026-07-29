@@ -164,8 +164,8 @@ export function Agents() {
 
           {wizard && (
             <LaunchWizard
-              connections={(conns.data?.services ?? []).filter(
-                (x) => x.configured && !x.ignored && !(x.section || '').toLowerCase().includes('public'),
+              connections={orderConnections(
+                (conns.data?.services ?? []).filter((x) => x.configured && !x.ignored),
               )}
               onLaunched={() => {
                 setWizard(false)
@@ -292,6 +292,16 @@ export function Agents() {
   )
 }
 
+const isPublic = (s: Service) => (s.section || '').toLowerCase().includes('public')
+
+/** Self-hosted connections start on; public/internet ones start off, so an agent
+ *  only reaches the internet when you deliberately tick it. */
+const defaultOn = (s: Service) => !isPublic(s)
+
+/** Self-hosted first, then public — the picker reads as two groups. */
+const orderConnections = (list: Service[]) =>
+  [...list].sort((a, b) => Number(isPublic(a)) - Number(isPublic(b)) || a.label.localeCompare(b.label))
+
 function LaunchWizard({
   connections,
   onLaunched,
@@ -308,26 +318,21 @@ function LaunchWizard({
   const [time, setTime] = useState('07:00')
   const [dow, setDow] = useState('1')
   const [cron, setCron] = useState('0 7 * * *')
-  const [perm, setPerm] = useState('safe')
-  const [timeout, setTimeout] = useState(20)
-  const [profile, setProfile] = useState('')
-  const profilesQ = useQuery({
-    queryKey: ['profiles'],
-    queryFn: () => api.get<{ profiles?: { name: string; label?: string; tool_count?: number }[] }>('/api/v1/profiles'),
-  })
-  const profiles = profilesQ.data?.profiles ?? []
+  // Access level and timeout are no longer per-launch choices — they come from
+  // Settings → Agent (tool_permission / timeout_min). The connection picker is
+  // the single control over what an agent may touch.
   const [selected, setSelected] = useState<Record<string, boolean>>(
-    Object.fromEntries(connections.map((c) => [c.id, true])),
+    Object.fromEntries(connections.map((c) => [c.id, defaultOn(c)])),
   )
   // Connections may resolve after this wizard mounts; default any newly
-  // arrived ones to selected without clobbering the user's toggles.
+  // arrived ones without clobbering the user's toggles.
   useEffect(() => {
     setSelected((prev) => {
       let changed = false
       const next = { ...prev }
       for (const c of connections) {
         if (!(c.id in next)) {
-          next[c.id] = true
+          next[c.id] = defaultOn(c)
           changed = true
         }
       }
@@ -348,7 +353,7 @@ function LaunchWizard({
       const mcpServices = Object.entries(selected)
         .filter(([, v]) => v)
         .map(([k]) => k)
-      await api.post('/api/v1/agent/config', { timeout_min: timeout || 20, model: model.trim() })
+      await api.post('/api/v1/agent/config', { model: model.trim() })
       const cronExpr = cronFrom(sched, time, dow, cron)
       if (cronExpr) {
         await api.post('/api/v1/schedules', {
@@ -357,16 +362,14 @@ function LaunchWizard({
           cron: cronExpr,
           timezone: 'Europe/Berlin',
           enabled: true,
-          payload: { prompt: prompt.trim(), permission: perm, mcp_services: mcpServices, profile: profile || undefined },
+          payload: { prompt: prompt.trim(), mcp_services: mcpServices },
         })
         onScheduled()
       } else {
         await api.post('/api/v1/agent/run', {
           prompt: prompt.trim(),
           label: name || 'agent',
-          permission: perm,
           mcp_services: mcpServices,
-          profile: profile || undefined,
         })
         onLaunched()
       }
@@ -427,41 +430,11 @@ function LaunchWizard({
             </Field>
           )}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="MCP access level">
-            <Select value={perm} onChange={(e) => setPerm(e.target.value)}>
-              <option value="strict_read">Strict read</option>
-              <option value="safe">Safe (reads + notes)</option>
-              <option value="all">All tools</option>
-            </Select>
-          </Field>
-          <Field label="Timeout (min)">
-            <Input type="number" value={timeout} min={1} max={120} onChange={(e) => setTimeout(parseInt(e.target.value, 10) || 20)} />
-          </Field>
-        </div>
-        <Field
-          label="MCP profile"
-          hint={
-            profile
-              ? 'Agent is limited to this profile’s curated tools (applied on top of the connections below).'
-              : 'Optional — a saved tool subset. Manage profiles in Settings → MCP profiles.'
-          }
-        >
-          {profiles.length > 0 ? (
-            <Select value={profile} onChange={(e) => setProfile(e.target.value)}>
-              <option value="">No profile — use selected connections</option>
-              {profiles.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {(p.label || p.name) + (typeof p.tool_count === 'number' ? ` · ${p.tool_count} tools` : '')}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <span className="text-[12px] text-ink-3">No profiles yet — create one in Settings → MCP profiles.</span>
-          )}
-        </Field>
         {connections.length > 0 && (
-          <Field label="MCP connections the agent may use">
+          <Field
+            label="MCP connections the agent may use"
+            hint="Public services (web search, weather, Wikipedia…) are listed but off by default — tick them to let the agent reach the internet."
+          >
             <ConnectionPicker connections={connections} selected={selected} onChange={setSelected} />
           </Field>
         )}
