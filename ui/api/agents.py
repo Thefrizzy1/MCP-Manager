@@ -162,7 +162,30 @@ class AgentRunBody(BaseModel):
 async def api_v1_agent_run(body: AgentRunBody):
     extra = _agent_service_disallow(body.mcp_services)
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
-                        extra_disallowed=extra)
+                        extra_disallowed=extra, mcp_services=body.mcp_services)
+    if not ok:
+        return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
+    return {"ok": True, "queued": agent_runner._current["running"]}
+
+
+@router.post("/api/v1/agent/runs/{rid}/rerun")
+async def api_v1_agent_run_again(rid: str):
+    """Re-launch a past run with the same prompt *and* the same connection scope.
+
+    Runs record `mcp_services`, so a re-run reproduces the original scope rather
+    than silently widening to every tool. Runs recorded before that field existed
+    have no selection stored — those re-run unrestricted, same as they did.
+    """
+    rec = agent_runner.get_run(ROOT, rid)
+    if not rec:
+        raise HTTPException(404, "run not found")
+    prompt = (rec.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "that run has no stored prompt to repeat")
+    services = rec.get("mcp_services")
+    ok = _enqueue_agent(prompt, rec.get("label") or "agent", force=True,
+                        extra_disallowed=_agent_service_disallow(services),
+                        mcp_services=services)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}

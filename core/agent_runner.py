@@ -443,6 +443,7 @@ def run_agent(
     cwd: str | None = None,
     disallowed_tools: list[str] | None = None,
     model: str | None = None,
+    mcp_services: list[str] | None = None,
 ) -> dict:
     """Run one headless Claude Code agent call. Blocking; call in a thread."""
     with _LOCK:
@@ -455,7 +456,12 @@ def run_agent(
 
     cfg = load_agent_config(root)
     rec = {
-        "id": rid, "label": label, "prompt": prompt[:2000],
+        # Store the prompt at the API's own cap, not a display-sized slice — a
+        # truncated prompt cannot be re-run faithfully.
+        "id": rid, "label": label, "prompt": prompt[:20000],
+        # Which connections the run was scoped to, so "Run again" reproduces it
+        # instead of silently widening to every tool.
+        "mcp_services": mcp_services,
         "started": _now().isoformat(), "finished": None,
         "ok": False, "cost_usd": 0.0, "turns": None, "result": "",
         "over_budget": False, "cancelled": False, "error": None, "log": [],

@@ -250,6 +250,29 @@ def test_prompt_guard_holds_without_optional_flags():
     assert "--model" in with_model
 
 
+# ── run records must be re-runnable ──────────────────────────────────────────
+
+def test_run_record_stores_full_prompt_and_scope(tmp_path, monkeypatch):
+    """"Run again" replays a stored run, so the record has to keep the whole
+    prompt (not a display-sized slice) and the connection scope it ran with —
+    otherwise a repeat silently widens to every tool."""
+    from core import agent_runner as AR
+
+    monkeypatch.setattr(AR, "load_agent_config", lambda root: {
+        **AR.DEFAULT_AGENT_CONFIG, "give_plutus_tools": False,
+    })
+    monkeypatch.setattr(AR.subprocess, "Popen", lambda *a, **k: _FakeProc([_result_event(0.1)]))
+
+    long_prompt = "research " + ("x" * 5000)
+    rec = AR.run_agent(tmp_path, long_prompt, label="scoped",
+                       mcp_services=["jellyfin", "websearch"])
+
+    assert rec["prompt"] == long_prompt, "prompt was truncated below the API cap"
+    assert rec["mcp_services"] == ["jellyfin", "websearch"]
+    # And it survives the round-trip to disk that a re-run reads back.
+    assert AR.get_run(tmp_path, rec["id"])["mcp_services"] == ["jellyfin", "websearch"]
+
+
 # ── H5: stderr must not be left undrained ────────────────────────────────────
 
 def test_agent_stderr_is_merged_into_stdout(tmp_path, monkeypatch):

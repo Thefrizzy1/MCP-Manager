@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock } from 'lucide-react'
+import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock, RotateCw } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import type { Service } from '@/lib/health'
@@ -12,6 +12,7 @@ import { Field } from '@/components/ui/Field'
 import { Stat } from '@/components/ui/Stat'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
 
 interface AgentStatus {
@@ -54,6 +55,7 @@ function cronFrom(kind: string, time: string, dow: string, raw: string): string 
 
 export function Agents() {
   const qc = useQueryClient()
+  const toast = useToast()
   const status = useQuery({
     queryKey: ['agent-status'],
     queryFn: () => api.get<AgentStatus>('/api/v1/agent/status'),
@@ -104,11 +106,25 @@ export function Agents() {
   }
   useEffect(() => () => esRef.current?.close(), [])
 
+  const [rerunning, setRerunning] = useState<string | null>(null)
   const s = status.data
   const cap = s?.max_runs_per_day ?? 0
   const used = s?.runs_today ?? 0
   const mode = s?.auth?.mode ?? 'none'
   const onPlan = mode === 'session_token' || mode === 'subscription'
+
+  async function rerun(id: string) {
+    setRerunning(id)
+    try {
+      await api.post(`/api/v1/agent/runs/${encodeURIComponent(id)}/rerun`)
+      startStream()
+      status.refetch()
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setRerunning(null)
+    }
+  }
 
   async function clearRuns() {
     if (!confirm('Clear all agent run history? This removes old run records and resets the all-time cost.')) return
@@ -216,6 +232,17 @@ export function Agents() {
                     <div className="truncate text-[11.5px] text-ink-3">{(r.result || r.error || '').slice(0, 100)}</div>
                   </div>
                   <span className="text-[11px] text-ink-3">{(r.started || '').replace('T', ' ').slice(5, 16)}</span>
+                  {r.id && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Run again with the same prompt and connections"
+                      disabled={s?.running || rerunning === r.id}
+                      onClick={() => rerun(r.id!)}
+                    >
+                      <RotateCw size={13} />
+                    </Button>
+                  )}
                 </div>
               ))}
               {!s?.running && (runs.data?.runs ?? []).length === 0 && (
