@@ -63,10 +63,9 @@ def register_resource_tools(mcp, *, allow: "set[str] | None" = None) -> None:
 
     @mcp.resource("plutus://agent-runs/{run_id}", mime_type="text/markdown")
     def agent_run(run_id: str) -> str:
-        rec = next(
-            (r for r in agent_runner.list_runs(_ROOT, 9999) if str(r.get("id")) == str(run_id)),
-            None,
-        )
+        # Direct read by id — scanning and parsing every run file to find one was
+        # O(all runs) per resource fetch.
+        rec = agent_runner.get_run(_ROOT, str(run_id))
         if not rec:
             return f"# Agent run `{run_id}`\n\nNot found."
         lines = [

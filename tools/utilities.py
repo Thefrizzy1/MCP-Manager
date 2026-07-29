@@ -19,6 +19,9 @@ from client import TIMEOUT, _handle_error
 _DATA = Path(__file__).resolve().parents[1] / "data"
 _WEATHER_PREF = _DATA / "weather_location.txt"
 
+# web_fetch follows redirects manually so the SSRF guard can screen every hop.
+_MAX_REDIRECTS = 5
+
 
 def _effective_weather_city() -> str:
     if _WEATHER_PREF.exists():
@@ -335,13 +338,15 @@ def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         """
         import asyncio as _asyncio
         from core.ssrf_guard import screen_url
-        blocked = await _asyncio.to_thread(screen_url, params.url)
-        if blocked:
-            return f"Error: {blocked}"
         try:
+            # Redirects are followed by hand so every hop is screened. With
+            # follow_redirects=True the guard would only ever see the URL the
+            # caller supplied, and any public page could bounce us to
+            # 169.254.169.254 or a LAN admin panel — screening the first URL
+            # alone is not a guard at all.
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(15.0),
-                follow_redirects=True,
+                follow_redirects=False,
                 headers={"User-Agent": "Mozilla/5.0 (compatible; PlutusHotelabMCP/1.0)"}
             ) as client:
                 # Stream so we can stop early if the response is huge — without
@@ -349,24 +354,43 @@ def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 # memory before we truncate at max_chars.
                 # 4× max_chars ≈ enough for HTML overhead vs. extracted text.
                 cap_bytes = max(64 * 1024, params.max_chars * 4)
-                async with client.stream("GET", params.url) as r:
-                    r.raise_for_status()
-                    content_type = r.headers.get("content-type", "")
-                    chunks: list[bytes] = []
-                    received = 0
-                    async for chunk in r.aiter_bytes():
-                        chunks.append(chunk)
-                        received += len(chunk)
-                        if received >= cap_bytes:
-                            break
-                    body = b"".join(chunks)
+                url = params.url
+                for _hop in range(_MAX_REDIRECTS + 1):
+                    blocked = await _asyncio.to_thread(screen_url, url)
+                    if blocked:
+                        return f"Error: {blocked}"
+                    async with client.stream("GET", url) as r:
+                        if r.is_redirect:
+                            nxt = r.next_request
+                            if nxt is None:
+                                return f"Error: redirect from {url} had no usable Location header."
+                            url = str(nxt.url)
+                            continue
+                        r.raise_for_status()
+                        content_type = r.headers.get("content-type", "")
+                        chunks: list[bytes] = []
+                        received = 0
+                        async for chunk in r.aiter_bytes():
+                            chunks.append(chunk)
+                            received += len(chunk)
+                            if received >= cap_bytes:
+                                break
+                        body = b"".join(chunks)
+                    break
+                else:
+                    return f"Error: too many redirects (>{_MAX_REDIRECTS}) starting at {params.url}."
+
                 charset = "utf-8"
                 if "charset=" in content_type:
                     charset = content_type.split("charset=", 1)[1].split(";")[0].strip() or "utf-8"
-                text_full = body.decode(charset, errors="replace")
+                try:
+                    text_full = body.decode(charset, errors="replace")
+                except LookupError:
+                    # Remote server declared a charset Python doesn't know.
+                    text_full = body.decode("utf-8", errors="replace")
 
                 if "json" in content_type:
-                    return f"## JSON from {params.url}\n\n```json\n{text_full[:params.max_chars]}\n```"
+                    return f"## JSON from {url}\n\n```json\n{text_full[:params.max_chars]}\n```"
 
                 # Strip HTML tags, then decode ALL entities via the stdlib
                 # (&#39;, &quot;, &mdash;, numeric/hex — not just the four we
@@ -381,7 +405,7 @@ def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 text = re.sub(r'\s+', ' ', text).strip()
                 text = text[:params.max_chars]
 
-            return f"## Content from {params.url}\n\n{text}"
+            return f"## Content from {url}\n\n{text}"
         except Exception as e:
             return _handle_error(e, f"Web fetch ({params.url})")
 

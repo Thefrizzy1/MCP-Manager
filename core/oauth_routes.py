@@ -14,6 +14,8 @@ User authentication reuses the Plutus UI credentials, read live from .env.
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import html
 from urllib.parse import parse_qs
 
@@ -151,10 +153,11 @@ async def authorize(request: Request) -> Response:
             "error": "invalid_request", "error_description": "PKCE required",
             "state": fields["state"]}), status_code=302)
 
-    code = op.issue_code(ROOT, client_id=client_id, redirect_uri=redirect_uri,
-                         code_challenge=fields["code_challenge"],
-                         code_challenge_method=fields["code_challenge_method"],
-                         scope=fields["scope"], resource=fields["resource"])
+    code = await asyncio.to_thread(
+        functools.partial(op.issue_code, ROOT, client_id=client_id, redirect_uri=redirect_uri,
+                          code_challenge=fields["code_challenge"],
+                          code_challenge_method=fields["code_challenge_method"],
+                          scope=fields["scope"], resource=fields["resource"]))
     return RedirectResponse(op.build_redirect(redirect_uri, {"code": code, "state": fields["state"]}),
                             status_code=302)
 
@@ -165,14 +168,21 @@ async def token(request: Request) -> Response:
     p = await _params(request)
     grant = (p.get("grant_type") or "").strip()
     try:
+        # The provider's store is synchronous file I/O under a threading.Lock;
+        # calling it directly would block the event loop (and, with the lock held
+        # across a disk write, stall every other request behind it).
         if grant == "authorization_code":
-            out = op.exchange_code(ROOT, code=(p.get("code") or "").strip(),
-                                   code_verifier=(p.get("code_verifier") or "").strip(),
-                                   client_id=(p.get("client_id") or "").strip(),
-                                   redirect_uri=(p.get("redirect_uri") or "").strip())
+            out = await asyncio.to_thread(
+                functools.partial(op.exchange_code, ROOT,
+                                  code=(p.get("code") or "").strip(),
+                                  code_verifier=(p.get("code_verifier") or "").strip(),
+                                  client_id=(p.get("client_id") or "").strip(),
+                                  redirect_uri=(p.get("redirect_uri") or "").strip()))
         elif grant == "refresh_token":
-            out = op.refresh_token(ROOT, refresh=(p.get("refresh_token") or "").strip(),
-                                   client_id=(p.get("client_id") or "").strip())
+            out = await asyncio.to_thread(
+                functools.partial(op.refresh_token, ROOT,
+                                  refresh=(p.get("refresh_token") or "").strip(),
+                                  client_id=(p.get("client_id") or "").strip()))
         else:
             return JSONResponse({"error": "unsupported_grant_type"}, 400,
                                 headers={"Cache-Control": "no-store"})

@@ -91,7 +91,10 @@ def _is_address_in_use(exc: OSError) -> bool:
 
 def run_ui():
     try:
-        uvicorn.run(build_ui_app(), host="0.0.0.0", port=cfg.ui_port, log_level="warning")
+        uvicorn.run(
+            build_ui_app(), host="0.0.0.0", port=cfg.ui_port, log_level="warning",
+            proxy_headers=True, forwarded_allow_ips=cfg.forwarded_allow_ips,
+        )
     except OSError as e:
         if _is_address_in_use(e):
             print(
@@ -109,7 +112,12 @@ def run_ui():
 async def _run_mcp_streamable_http() -> None:
     starlette_app = build_mcp_asgi_app()
     server = uvicorn.Server(
-        uvicorn.Config(starlette_app, host=cfg.mcp_host, port=cfg.mcp_port, log_level="warning")
+        uvicorn.Config(
+            starlette_app, host=cfg.mcp_host, port=cfg.mcp_port, log_level="warning",
+            # Behind Tailscale serve / Caddy the TLS terminates upstream; without
+            # this uvicorn reports scheme "http" and hands clients plaintext URLs.
+            proxy_headers=True, forwarded_allow_ips=cfg.forwarded_allow_ips,
+        )
     )
     try:
         await server.serve()
@@ -148,13 +156,21 @@ def _wait_for_ui_start(proc: multiprocessing.Process, timeout: float = 10.0) -> 
 
 
 def _sweep_stale_tmp() -> None:
-    """Remove leftover *.tmp files from atomic writes interrupted by a crash."""
-    for d in (ROOT, ROOT / "data"):
-        try:
-            for f in d.glob("*.tmp"):
-                f.unlink(missing_ok=True)
-        except OSError:
-            pass
+    """Remove leftover *.tmp files from atomic writes interrupted by a crash.
+
+    Recurses through data/ so the per-feature subdirectories (data/oauth,
+    data/agent_runs) are covered too — the flat glob missed them entirely.
+    """
+    try:
+        for f in ROOT.glob("*.tmp"):
+            f.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        for f in (ROOT / "data").rglob("*.tmp"):
+            f.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _install_signal_handlers(ui_proc: "multiprocessing.Process | None") -> None:

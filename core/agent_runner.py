@@ -119,9 +119,16 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
         server["headers"] = {"Authorization": f"Bearer {token}"}
     conf = {"mcpServers": {"plutus": server}}
     path = _runs_dir(root).parent / "agent_mcp.json"
-    path.write_text(json.dumps(conf), encoding="utf-8")
+    # Create with 0600 rather than chmod-ing after writing — the old order left the
+    # bearer token world-readable for the duration of the write.
     try:
-        os.chmod(path, 0o600)  # contains the bearer token (no-op on Windows)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(conf))
+    except OSError:
+        path.write_text(json.dumps(conf), encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)  # re-assert for a pre-existing file (no-op on Windows)
     except OSError:
         pass
     return str(path)
@@ -150,7 +157,7 @@ def _subprocess_env() -> dict:
 
 def runs_today(root: Path) -> int:
     today = _now().strftime("%Y%m%d")
-    return sum(1 for r in list_runs(root, 9999) if str(r.get("id", "")).startswith(today))
+    return sum(1 for rid in _index(root) if str(rid).startswith(today))
 
 
 def cancel() -> dict:
@@ -227,8 +234,9 @@ def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
     Used by the 'build with Claude' playbook generator. Refuses while an agent run
     is active so we never spawn two `claude` processes at once.
     """
-    if _current.get("running"):
-        return {"ok": False, "text": "", "error": "Agent is busy — try again when the current run finishes."}
+    with _LOCK:
+        if _current.get("running"):
+            return {"ok": False, "text": "", "error": "Agent is busy — try again when the current run finishes."}
     cfg = load_agent_config(root)
     cmd = ["claude", "-p", "--output-format", "text"]
     if cfg.get("skip_permissions", True):
@@ -253,9 +261,13 @@ def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
 
 
 def save_run(root: Path, rec: dict) -> None:
-    (_runs_dir(root) / (rec["id"] + ".json")).write_text(
-        json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    p = _runs_dir(root) / (rec["id"] + ".json")
+    tmp = p.with_suffix(".json.tmp")
+    # Atomic like every other writer in the codebase. A torn write here produces a
+    # file that list_runs() silently skips, so the run just vanishes.
+    tmp.write_text(json.dumps(rec, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, p)
+    _index_add(root, rec)
 
 
 def list_runs(root: Path, limit: int = 30) -> list[dict]:
@@ -269,8 +281,82 @@ def list_runs(root: Path, limit: int = 30) -> list[dict]:
     return out
 
 
+def get_run(root: Path, run_id: str) -> dict | None:
+    """One run by id — a direct read instead of parsing every run file."""
+    if not run_id or "/" in run_id or "\\" in run_id or run_id.startswith("."):
+        return None
+    p = _runs_dir(root) / f"{run_id}.json"
+    if not p.is_file():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+# ── run index ────────────────────────────────────────────────────────────────
+# runs_today() and total_cost() used to read and JSON-parse *every* run file, and
+# total_cost() sits inside status(), which the dashboard polls. After a few
+# hundred runs that is hundreds of file reads per poll. The index keeps just the
+# fields those two need; it lives outside the runs dir so list_runs' glob is
+# unaffected, and is rebuilt whenever it disagrees with the file count.
+
+def _index_path(root: Path) -> Path:
+    return root / "data" / "agent_runs_index.json"
+
+
+def _index_write(root: Path, idx: dict) -> None:
+    p = _index_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(idx), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
+def _index_rebuild(root: Path, files: list[str]) -> dict:
+    idx: dict[str, dict] = {}
+    for fp in files:
+        try:
+            r = json.loads(Path(fp).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        rid = str(r.get("id") or Path(fp).stem)
+        idx[rid] = {"cost_usd": float(r.get("cost_usd") or 0.0), "ok": bool(r.get("ok"))}
+    _index_write(root, idx)
+    return idx
+
+
+def _index_stored(root: Path) -> dict:
+    try:
+        idx = json.loads(_index_path(root).read_text(encoding="utf-8"))
+        return idx if isinstance(idx, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _index(root: Path) -> dict:
+    idx = _index_stored(root)
+    files = glob.glob(str(_runs_dir(root) / "*.json"))
+    # One cheap glob (no parsing) detects drift from runs deleted out of band.
+    if len(idx) != len(files):
+        idx = _index_rebuild(root, files)
+    return idx
+
+
+def _index_add(root: Path, rec: dict) -> None:
+    # Deliberately skips the drift check: save_run has just added a file, so the
+    # counts legitimately differ for a moment and checking here would trigger a
+    # full rebuild on every single save.
+    idx = _index_stored(root)
+    idx[str(rec.get("id"))] = {"cost_usd": float(rec.get("cost_usd") or 0.0), "ok": bool(rec.get("ok"))}
+    _index_write(root, idx)
+
+
 def total_cost(root: Path) -> float:
-    return round(sum((r.get("cost_usd") or 0) for r in list_runs(root, 9999)), 4)
+    return round(sum(float(v.get("cost_usd") or 0) for v in _index(root).values()), 4)
 
 
 def clear_runs(root: Path) -> int:
@@ -286,6 +372,7 @@ def clear_runs(root: Path) -> int:
             n += 1
         except OSError:
             pass
+    _index_write(root, {})
     return n
 
 
@@ -303,8 +390,12 @@ def auth_info() -> dict:
     except Exception:
         pass
     claude_home = Path(os.path.expanduser("~/.claude"))
-    logged_in = (claude_home / ".credentials.json").exists() or (
-        claude_home.is_dir() and any(claude_home.glob("*.json"))
+    # Only credential files count. Treating any *.json in ~/.claude as proof of
+    # login reported "subscription" whenever a bare settings.json existed, so the
+    # UI claimed the agent was authenticated when it would fail on first run.
+    logged_in = any(
+        (claude_home / name).exists()
+        for name in (".credentials.json", "credentials.json")
     )
     if session_token:
         mode = "session_token"    # OAuth token from the dashboard -> your plan
@@ -368,14 +459,36 @@ def run_agent(
     cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
                           disallowed_tools=disallowed_tools, model=model)
     try:
+        # stderr is merged into stdout on purpose. Keeping it on its own pipe and
+        # only draining it after proc.wait() deadlocks the moment `claude` writes
+        # more than the ~64 KB pipe buffer: the child blocks on the stderr write,
+        # stops producing stdout, and both sides wait until the timeout fires.
         proc = subprocess.Popen(
             cmd, cwd=cwd or str(root), env=_subprocess_env(), text=True,
-            bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         with _LOCK:
             _current["proc"] = proc
-        timer = threading.Timer(int(cfg.get("timeout_min", 20)) * 60, proc.kill)
+
+        try:
+            timeout_min = int(cfg.get("timeout_min", 20) or 20)
+        except (TypeError, ValueError):
+            timeout_min = 20
+        # A bare proc.kill() as the timer target is indistinguishable from a crash
+        # downstream ("claude exited -9"), so record *why* we killed it.
+        timed_out = threading.Event()
+
+        def _on_timeout() -> None:
+            timed_out.set()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+
+        timer = threading.Timer(timeout_min * 60, _on_timeout)
         timer.start()
+        max_cost = float(cfg.get("max_cost_usd", 99) or 99)
+        noise: list[str] = []          # non-JSON output, kept for error classification
         try:
             for line in proc.stdout:
                 line = line.strip()
@@ -384,6 +497,8 @@ def run_agent(
                 try:
                     ev = json.loads(line)
                 except json.JSONDecodeError:
+                    noise.append(line)
+                    del noise[:-40]
                     _emit(line[:160])
                     continue
                 parsed = handle_event(ev, label)
@@ -396,14 +511,33 @@ def run_agent(
                     rec["turns"] = res["turns"]
                     rec["result"] = res["text"]
                     rec["ok"] = res["ok"]
+                    # Enforce the budget *while* the run is live. Checking it after
+                    # the loop (as this used to) only labelled the overspend after
+                    # the money was gone — a guard that never guarded.
+                    if rec["cost_usd"] > max_cost:
+                        rec["over_budget"] = True
+                        rec["ok"] = False
+                        _emit(f"! cost guard hit (${rec['cost_usd']} > ${max_cost}) — stopping run")
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        break
             proc.wait()
         finally:
             timer.cancel()
+        err = "\n".join(noise)[-400:]
         if _current.get("cancelled"):
             rec["cancelled"] = True
             rec["error"] = "Cancelled by user."
+        elif rec["over_budget"]:
+            rec["error"] = (f"Stopped: cost reached ${rec['cost_usd']}, over the "
+                            f"${max_cost} cap (Settings → Agent → max cost).")
+            _emit(rec["error"])
+        elif timed_out.is_set():
+            rec["error"] = f"Timed out after {timeout_min} min (Settings → Agent → timeout)."
+            _emit(rec["error"])
         elif proc.returncode not in (0, None) and not rec["result"]:
-            err = (proc.stderr.read() or "")[-400:] if proc.stderr else ""
             low = err.lower()
             if "root" in low and "permission" in low:
                 rec["error"] = ("Claude Code refused to run as root. Plutus now sets IS_SANDBOX=1 "
@@ -422,7 +556,10 @@ def run_agent(
         _emit("error: " + str(e))
     finally:
         rec["cost_usd"] = round(rec["cost_usd"] or 0.0, 5)
-        if rec["cost_usd"] > float(cfg.get("max_cost_usd", 99)):
+        # Backstop for a final cost that arrived without us seeing a result event
+        # (e.g. the process died right after billing). The live check above is what
+        # actually stops a run.
+        if not rec["over_budget"] and rec["cost_usd"] > float(cfg.get("max_cost_usd", 99) or 99):
             rec["over_budget"] = True
             _emit(f"! over cost guard (${cfg.get('max_cost_usd')})")
         rec["finished"] = _now().isoformat()

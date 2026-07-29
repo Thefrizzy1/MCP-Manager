@@ -152,14 +152,20 @@ def register_ssh_smb_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             ssh_args += ["-p", str(host["port"])]
         ssh_args.append(f"{host.get('user', 'root')}@{host['host']}")
         ssh_args.append(cmd_str)
+        # `sshpass -p <pw>` puts the password in argv, where anything sharing the
+        # PID namespace can read it from /proc/<pid>/cmdline. `-e` takes it from
+        # the SSHPASS env var instead, which is not world-readable.
+        env = None
         if password:
-            ssh_args = ["sshpass", "-p", password] + ssh_args
+            ssh_args = ["sshpass", "-e"] + ssh_args
+            env = {**os.environ, "SSHPASS": password}
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *ssh_args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
             output = stdout.decode("utf-8", errors="replace")
@@ -255,11 +261,13 @@ def register_ssh_smb_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             ssh_args += ["-p", str(host["port"])]
         ssh_args.append(f"{host.get('user', 'root')}@{host['host']}")
         ssh_args.append("echo OK_PLUTUS")
+        env = None
         if password:
-            ssh_args = ["sshpass", "-p", password] + ssh_args
+            ssh_args = ["sshpass", "-e"] + ssh_args   # password via env, not argv
+            env = {**os.environ, "SSHPASS": password}
         try:
             proc = await asyncio.create_subprocess_exec(
-                *ssh_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *ssh_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=12)
             if b"OK_PLUTUS" in stdout:
@@ -397,8 +405,9 @@ def register_ssh_smb_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     async def smb_add_share(params: SMBAddShareInput) -> str:
         """Add a new SMB share to the configuration.
 
-        Password is stored in .env. Mount point must be created manually.
-        To actually mount: mount -t cifs //{server}/{share} {mount} -o user={user},pass={password}
+        Password is stored in .env; it is never echoed back in the output. Mount
+        point must be created manually — the reply includes the mount command with
+        the password masked.
         """
         shares = _load_smb_shares()
         if any(s.get("name") == params.name for s in shares):

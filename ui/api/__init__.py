@@ -7,6 +7,7 @@ origin guard is installed here as app-wide middleware.
 from __future__ import annotations
 
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.staticfiles import StaticFiles
 
 from ui.api import (
@@ -50,7 +51,9 @@ def build_ui_app() -> FastAPI:
         # Hashed assets for the built React app (index.html references /spa/…).
         app.mount("/spa", StaticFiles(directory=str(DIST_DIR)), name="spa")
 
-    app.middleware("http")(csrf_origin_guard)
+    # add_middleware(BaseHTTPMiddleware, dispatch=…) rather than the
+    # @app.middleware("http") sugar, which Starlette deprecates for removal in 1.0.
+    app.add_middleware(BaseHTTPMiddleware, dispatch=csrf_origin_guard)
 
     app.include_router(public.router)
     for r in _AUTHED_ROUTERS:

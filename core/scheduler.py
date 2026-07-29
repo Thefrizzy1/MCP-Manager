@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -50,6 +51,10 @@ class PlutusScheduler:
                 self._sched.shutdown(wait=False)
             except Exception:
                 pass
+        # Without this, a post-shutdown reschedule() would happily try to add jobs
+        # to a dead scheduler.
+        self._available = False
+        _shutdown_tool_loop()
 
     @property
     def available(self) -> bool:
@@ -112,6 +117,45 @@ class PlutusScheduler:
         threading.Thread(target=self._make_job(sc), daemon=True).start()
 
 
+# One long-lived event loop for every scheduled tool call.
+#
+# asyncio.run() per invocation created and tore down a fresh loop each time. Any
+# tool holding a loop-bound resource (httpx.AsyncClient, a connection pool) works
+# over HTTP but breaks from a scheduled job, because the loop it was bound to is
+# already closed. A single shared loop makes both paths behave the same.
+_loop_lock = threading.Lock()
+_tool_loop: "asyncio.AbstractEventLoop | None" = None
+_tool_loop_thread: "threading.Thread | None" = None
+
+
+def _ensure_tool_loop() -> "asyncio.AbstractEventLoop":
+    global _tool_loop, _tool_loop_thread
+    with _loop_lock:
+        if _tool_loop is not None and not _tool_loop.is_closed():
+            return _tool_loop
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, name="plutus-tool-loop", daemon=True)
+        thread.start()
+        _tool_loop, _tool_loop_thread = loop, thread
+        return loop
+
+
+def _shutdown_tool_loop() -> None:
+    global _tool_loop, _tool_loop_thread
+    with _loop_lock:
+        loop, thread = _tool_loop, _tool_loop_thread
+        _tool_loop, _tool_loop_thread = None, None
+    if loop is None:
+        return
+    try:
+        loop.call_soon_threadsafe(loop.stop)
+        if thread is not None:
+            thread.join(timeout=5)
+        loop.close()
+    except Exception:
+        pass
+
+
 def invoke_tool_sync(tool_manager, tool_name: str, params: dict, timeout: float = 120.0):
     """Run an async MCP tool from a synchronous scheduler job thread."""
     from core.invoke_tool import invoke_mcp_tool_fn
@@ -123,4 +167,5 @@ def invoke_tool_sync(tool_manager, tool_name: str, params: dict, timeout: float 
     async def _call():
         return await asyncio.wait_for(invoke_mcp_tool_fn(tool.fn, payload=params or {}), timeout=timeout)
 
-    return asyncio.run(_call())
+    loop = _ensure_tool_loop()
+    return asyncio.run_coroutine_threadsafe(_call(), loop).result(timeout + 30)

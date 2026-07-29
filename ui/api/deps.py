@@ -70,13 +70,27 @@ async def csrf_origin_guard(request: Request, call_next):
     if request.method not in _CSRF_SAFE_METHODS and os.getenv("PLUTUS_DISABLE_CSRF", "").strip().lower() not in ("1", "true", "yes"):
         origin = request.headers.get("origin")
         if origin:
-            origin_host = (urlparse(origin).hostname or "").lower()
+            # Compare host *and* port. Hostname alone treats every other service on
+            # the same box (a homelab runs a dozen) as same-origin, so any of them
+            # could forge state-changing requests at the dashboard.
+            parsed = urlparse(origin)
+            origin_host = (parsed.hostname or "").lower()
+            origin_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+            def _hostport(raw: str) -> tuple[str, int]:
+                h = raw.split(",")[0].strip().lower()
+                if h.startswith("[") and "]" in h:            # bracketed IPv6
+                    host, _, rest = h.partition("]")
+                    return host[1:], int(rest.lstrip(":") or 0) or origin_port
+                host, _, port = h.partition(":")
+                return host, (int(port) if port.isdigit() else origin_port)
+
             allowed = {
-                h.split(",")[0].split(":")[0].strip().lower()
+                _hostport(h)
                 for h in (request.headers.get("host"), request.headers.get("x-forwarded-host"))
                 if h
             }
-            if origin_host and allowed and origin_host not in allowed:
+            if origin_host and allowed and (origin_host, origin_port) not in allowed:
                 return JSONResponse(
                     {"detail": "Cross-origin request rejected (CSRF protection). Set PLUTUS_DISABLE_CSRF=1 if this is a false positive."},
                     status_code=403,

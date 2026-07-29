@@ -121,8 +121,16 @@ def all_tool_names() -> list[str]:
 
 
 def build_mcp(name: str, allow: "set[str] | None"):
-    """A FastMCP with only ``allow`` registered (None = the full surface)."""
-    m = FastMCP(name, instructions=_MCP_INSTRUCTIONS)
+    """A FastMCP with only ``allow`` registered (None = the full surface).
+
+    ``host``/``port`` must match the main instance above. FastMCP auto-enables
+    DNS-rebinding protection when host is a loopback address (its default), which
+    allows only ``127.0.0.1``/``localhost`` Host headers and answers 421 to
+    everything else — so an instance built without them serves nothing but
+    localhost. That silently broke every /mcp/p/<name> profile endpoint, and the
+    main /mcp too whenever the tool slicer built a filtered instance.
+    """
+    m = FastMCP(name, host=cfg.mcp_host, port=cfg.mcp_port, instructions=_MCP_INSTRUCTIONS)
     register_all_tools(m, allow=allow)
     return m
 
@@ -138,27 +146,39 @@ def build_mcp_asgi_app():
     from contextlib import AsyncExitStack, asynccontextmanager
 
     from starlette.applications import Starlette
-    from starlette.routing import Mount
 
     from core.mcp_bearer_middleware import MCPBearerGateMiddleware
     from core.oauth_routes import oauth_routes
     from core.tool_exposure import resolve_exposed
 
+    def _serve_at(server, path: str):
+        """A FastMCP sub-app whose endpoint sits at exactly ``path``.
+
+        ``streamable_http_app()`` puts its endpoint on a plain ``Route`` at
+        ``settings.streamable_http_path`` (default ``/mcp``), so ``Mount``-ing it
+        under ``/mcp`` would nest the two into ``/mcp/mcp`` and leave the real
+        ``/mcp`` as a 307 to ``/mcp/`` that 404s. Point the sub-app's own path at
+        the absolute URL we advertise instead, and lift its route into the outer
+        app. Safe because Plutus supplies auth itself (MCPBearerGateMiddleware),
+        so FastMCP never attaches sub-app middleware that lifting would drop.
+        """
+        server.settings.streamable_http_path = path
+        return server.streamable_http_app()
+
     names = all_tool_names()
     # The main /mcp honours the global tool-exposure "slicer": if categories are
     # disabled, serve a filtered instance so the manifest (and its tokens) shrink.
     exposed = resolve_exposed(ROOT, names)
-    main_app = (mcp if exposed is None else build_mcp("plutus", exposed)).streamable_http_app()
-    mounted = [("/mcp", main_app)]
+    apps = [_serve_at(mcp if exposed is None else build_mcp("plutus", exposed), "/mcp")]
     for prof in load_profiles(ROOT):
         allow = resolve_tool_names(prof, names)
         sub = build_mcp(f"plutus-{prof['name']}", allow)
-        mounted.append((f"/mcp/p/{prof['name']}", sub.streamable_http_app()))
+        apps.append(_serve_at(sub, f"/mcp/p/{prof['name']}"))
 
     @asynccontextmanager
     async def _lifespan(_app):
         async with AsyncExitStack() as stack:
-            for _, sub_app in mounted:
+            for sub_app in apps:
                 await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
             yield
 
@@ -168,7 +188,8 @@ def build_mcp_asgi_app():
     routes: list = []
     if str(read_env().get("MCP_OAUTH_ENABLED", "")).strip().lower() in ("true", "1", "yes"):
         routes.extend(oauth_routes())
-    routes.extend(Mount(path, app=a) for path, a in mounted)
+    for sub_app in apps:
+        routes.extend(sub_app.routes)
 
     app = Starlette(routes=routes, lifespan=_lifespan)
     app.add_middleware(MCPBearerGateMiddleware)
@@ -341,14 +362,45 @@ def _run_task_bg(task_id: str, *, force: bool = False) -> None:
                   permission=task.get("permission") or None, model=task.get("model") or None, force=force)
 
 
+_HEALTH_TTL = 60.0
+
+
 async def get_health(force=False):
+    """Cached service health.
+
+    The refresh can take up to two minutes against slow/unreachable services, so
+    it must not be held under a lock that every reader queues behind — one dead
+    NAS would stall the whole dashboard. Readers with a usable cache get it
+    immediately; only one refresh runs at a time and the rest serve stale.
+    """
     global _health_cache, _health_states, _health_ts
+    fresh = _health_cache and (time.time() - _health_ts) <= _HEALTH_TTL
+    if fresh and not force:
+        return _health_cache
+
+    if _health_lock.locked() and _health_cache:
+        return _health_cache          # a refresh is already in flight — serve stale
+
     async with _health_lock:
-        if force or not _health_cache or (time.time() - _health_ts) > 60.0:
-            cache, rows = await asyncio.wait_for(gather_service_health(_services_live(), cfg), timeout=120.0)
+        # Someone may have refreshed while we waited for the lock.
+        if not force and _health_cache and (time.time() - _health_ts) <= _HEALTH_TTL:
+            return _health_cache
+        try:
+            cache, rows = await asyncio.wait_for(
+                gather_service_health(_services_live(), cfg), timeout=120.0
+            )
             _health_cache = cache
             _health_states = {r["id"]: r.get("state") for r in rows}
+        except Exception as exc:
+            # Stamp the clock even on failure. Without this a persistently failing
+            # probe left _health_ts stale, so every subsequent request immediately
+            # launched another 120s gather — a self-inflicted thundering herd.
             _health_ts = time.time()
+            log.warning("health refresh failed: %s", exc)
+            if _health_cache:
+                return _health_cache
+            raise
+        _health_ts = time.time()
         return _health_cache
 
 

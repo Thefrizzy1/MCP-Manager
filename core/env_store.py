@@ -38,9 +38,19 @@ def read_env(path: Path | None = None) -> dict[str, str]:
         text = p.read_text(encoding="latin-1")
     for line in text.splitlines():
         line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            env[k.strip()] = v.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        key = k.strip()
+        # Tolerate the two shapes people actually paste in. Without this a
+        # quoted token round-trips with its quotes attached and silently fails
+        # every comparison that uses it (e.g. the MCP bearer check).
+        if key.startswith("export "):
+            key = key[len("export "):].strip()
+        val = v.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        env[key] = val
     return env
 
 
@@ -62,20 +72,37 @@ def _write_env_file(p: Path, content: str) -> None:
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, p)
+        return
     except OSError:
         try:
             if tmp.exists():
                 tmp.unlink()
         except OSError:
             pass
-        with open(p, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
+
+    # Fallback: truncate-in-place. Under Docker's single-file bind mount this is
+    # the *normal* path, not an edge case — so keep a copy first. A crash between
+    # truncate and write would otherwise destroy every credential in .env.
+    try:
+        if p.exists():
+            bak = p.with_name(p.name + ".bak")
+            bak.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError:
+        pass
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def update_env(updates: dict, *, validate: bool = True, path: Path | None = None) -> dict[str, str]:
     """Merge ``updates`` into .env and atomically rewrite. Returns the new env.
+
+    Key semantics, which callers depend on:
+      - key absent from ``updates``, or value ``None`` -> leave as-is.
+      - value ``""`` -> **delete the key**. This is how a credential gets revoked
+        from the UI. Previously an empty value was silently skipped, so a leaked
+        API key could be set but never removed without editing .env by hand.
 
     Raises ValueError on a disallowed key name, an embedded newline, or an empty
     UI_PASSWORD. ``validate=False`` is for trusted internal writers (e.g. JSON
@@ -97,6 +124,8 @@ def update_env(updates: dict, *, validate: bool = True, path: Path | None = None
                 raise ValueError("UI_PASSWORD cannot be empty")
             if val:
                 env[key] = val
+            else:
+                env.pop(key, None)   # explicit "" clears; omit the key to keep it
 
         content = "# Plutus MCP Configuration\n\n" + "".join(f"{k}={v}\n" for k, v in env.items())
         _write_env_file(p, content)

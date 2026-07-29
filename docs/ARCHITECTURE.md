@@ -33,8 +33,14 @@ tools/apps.py           MCP App widget (plutus_status + ui://plutus/connections)
 ```
 
 **MCP serving.** The MCP process serves `ui.runtime.build_mcp_asgi_app()`: the full
-surface at `/mcp` (honouring the tool-exposure slicer), one mount per profile at
-`/mcp/p/<name>`, all behind `MCPBearerGateMiddleware`. Tool filtering is done at
+surface at `/mcp` (honouring the tool-exposure slicer), one endpoint per profile at
+`/mcp/p/<name>`, all behind `MCPBearerGateMiddleware`. Each FastMCP sub-app is asked
+to route *itself* at that absolute path (`settings.streamable_http_path`) and its
+route is lifted into the outer app — do **not** `Mount()` them, which nests FastMCP's
+own `/mcp` route into `/mcp/mcp` and turns the advertised `/mcp` into a 307→404.
+Sub-instances must also inherit `cfg.mcp_host`, or FastMCP's loopback default
+auto-enables DNS-rebinding protection and they 421 every non-localhost client.
+Tool filtering is done at
 *registration* (fail-safe) — a disallowed tool is never registered on that instance;
 there is no list-time monkeypatch. Profiles/exposure are **restart-to-apply** (the MCP
 server is a separate process from the UI). The old global tool gate is gone.

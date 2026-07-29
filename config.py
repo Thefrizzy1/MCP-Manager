@@ -60,6 +60,13 @@ class Config(BaseModel):
     ui_password: str = _get("UI_PASSWORD", DEFAULT_UI_PASSWORD)
     # HTTPS base behind Tailscale serve/funnel or proxy (path /mcp appended in UI)
     public_mcp_base: str = _get("PUBLIC_MCP_BASE", "")
+    # Peers whose X-Forwarded-* uvicorn should trust. Plutus is meant to sit
+    # behind Tailscale serve / Caddy, which terminate TLS and reach us from a
+    # different host or container IP — uvicorn's default ("127.0.0.1") ignores
+    # those headers, so request.url.scheme reads "http" and every generated URL
+    # (redirects, OAuth metadata) downgrades to plaintext. Narrow it to the
+    # proxy's IP if the port is ever exposed beyond LAN/Tailscale.
+    forwarded_allow_ips: str = _get("FORWARDED_ALLOW_IPS", "*")
     mcp_lan_host: str = _get("MCP_LAN_HOST", "192.168.1.111")
     mcp_require_bearer: bool = _get_bool("MCP_REQUIRE_BEARER", False)
     # OAuth 2.1 provider for browser-based MCP connectors (e.g. claude.ai). Opt-in;
@@ -289,8 +296,12 @@ def apply_live_env(updates: dict) -> None:
 
     Every ``from config import cfg`` holder shares this one object, so updating
     its attributes here makes probes, ``is_configured`` checks, and the tools'
-    own ``cfg.<service>_url`` reads all see the new values immediately. Empty
-    values are skipped (blank = keep current), matching ``update_env``.
+    own ``cfg.<service>_url`` reads all see the new values immediately.
+
+    An empty value means *clear*, matching ``update_env``: it is removed from
+    ``os.environ`` and the cfg attribute is reset. Without this half, revoking a
+    credential would rewrite .env but leave the old secret live in the running
+    process until a restart.
     """
     for raw_key, raw_val in updates.items():
         if raw_val is None:
@@ -300,6 +311,18 @@ def apply_live_env(updates: dict) -> None:
             continue
         sval = ("true" if raw_val else "false") if isinstance(raw_val, bool) else str(raw_val).strip()
         if not sval:
+            os.environ.pop(key, None)
+            attr = _cfg_attr_for(key)
+            if attr:
+                cur = getattr(cfg, attr, "")
+                # Ints are left alone on purpose: clearing a field like MCP_PORT
+                # to 0 would be worse than keeping the last working value.
+                if isinstance(cur, bool):
+                    setattr(cfg, attr, False)
+                elif isinstance(cur, list):
+                    setattr(cfg, attr, [])
+                elif isinstance(cur, str):
+                    setattr(cfg, attr, "")
             continue
         os.environ[key] = sval
         attr = _cfg_attr_for(key)

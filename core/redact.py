@@ -13,9 +13,12 @@ from __future__ import annotations
 import re
 
 # Key names whose assigned value should be masked.
+# `auth` is matched as a whole word so ordinary prose keys like `author:` or
+# `authored_by:` don't get masked; `auth_token`/`authorization` still do via the
+# other alternatives and the word-boundary forms below.
 _SECRET_KEY = re.compile(
     r"(?i)(password|passwd|secret|token|api[_-]?key|apikey|access[_-]?key"
-    r"|private[_-]?key|client[_-]?secret|auth|credential|bearer)"
+    r"|private[_-]?key|client[_-]?secret|\bauth\b|auth[_-]|credential|bearer)"
 )
 # KEY = value  /  KEY: value   (env files, yaml, ini, json-ish)
 _ASSIGN = re.compile(r"^(\s*[\"']?[A-Za-z0-9_.\-]+[\"']?\s*[:=]\s*)(.+?)(\s*)$")
@@ -32,6 +35,10 @@ def redact_secrets(text: str) -> tuple[str, int]:
     count = 0
     out_lines: list[str] = []
     in_pem = False
+    # splitlines() drops the information needed to rebuild the file verbatim, so
+    # remember the trailing newline and re-attach it. Otherwise every redacted
+    # preview silently loses its final newline.
+    trailing = "\n" if text.endswith(("\n", "\r")) else ""
     for line in text.splitlines():
         stripped = line.strip()
 
@@ -69,4 +76,4 @@ def redact_secrets(text: str) -> tuple[str, int]:
 
         out_lines.append(line)
 
-    return "\n".join(out_lines), count
+    return "\n".join(out_lines) + trailing, count

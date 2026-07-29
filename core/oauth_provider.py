@@ -185,9 +185,19 @@ def exchange_code(root: Path, *, code: str, code_verifier: str, client_id: str,
 
 
 def refresh_token(root: Path, *, refresh: str, client_id: str) -> dict:
+    """Refresh-token grant with rotation.
+
+    OAuth 2.1 requires rotation for public clients: the presented token is
+    single-use and is consumed here. Leaving it valid (as this did) meant a
+    stolen refresh token stayed replayable for its full 180-day TTL, and the
+    store grew a new entry on every refresh without ever dropping one.
+    """
+    presented = (refresh or "").strip()
     with _LOCK:
         refreshes = _prune(_load(root, "refresh"))
-        rec = refreshes.get((refresh or "").strip())
+        rec = refreshes.pop(presented, None)
+        if rec is not None:
+            _save(root, "refresh", refreshes)
     if not rec:
         raise ValueError("invalid_grant: unknown or expired refresh token")
     if rec["client_id"] != (client_id or "").strip():
@@ -195,12 +205,47 @@ def refresh_token(root: Path, *, refresh: str, client_id: str) -> dict:
     return _new_token_set(root, client_id=rec["client_id"], scope=rec["scope"])
 
 
+def revoke_token(root: Path, token: str) -> bool:
+    """RFC 7009-style revocation: drop an access or refresh token. Returns True if
+    something was removed. Lets a compromised connector be cut off without
+    hand-deleting data/oauth/*.json."""
+    t = (token or "").strip()
+    if not t:
+        return False
+    removed = False
+    with _LOCK:
+        for name in ("tokens", "refresh"):
+            store = _load(root, name)
+            if store.pop(t, None) is not None:
+                _save(root, name, store)
+                removed = True
+    if removed:
+        _ACCESS_CACHE.pop(t, None)
+    return removed
+
+
+# Access-token validation runs on *every* authenticated MCP request. Reading and
+# parsing the whole token file each time is a synchronous disk hit on the event
+# loop; cache the verdict briefly instead. TTL is short so a revoked token stops
+# working promptly, and revoke_token() evicts immediately.
+_ACCESS_TTL = 5.0
+_ACCESS_CACHE: dict[str, tuple[float, bool]] = {}
+
+
 def validate_access_token(root: Path, token: str) -> bool:
     token = (token or "").strip()
     if not token:
         return False
+    now = time.time()
+    hit = _ACCESS_CACHE.get(token)
+    if hit and hit[0] > now:
+        return hit[1]
     rec = _load(root, "tokens").get(token)
-    return bool(rec) and float(rec.get("expires_at", 0)) > time.time()
+    ok = bool(rec) and float(rec.get("expires_at", 0)) > now
+    if len(_ACCESS_CACHE) > 512:          # bound it: tokens are attacker-suppliable
+        _ACCESS_CACHE.clear()
+    _ACCESS_CACHE[token] = (now + _ACCESS_TTL, ok)
+    return ok
 
 
 # ── discovery metadata ────────────────────────────────────────────────────────

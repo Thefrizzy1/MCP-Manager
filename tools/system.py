@@ -3,6 +3,7 @@ tools/system.py — Homelab system tools.
 Covers: Docker, OMV, Ntfy, Filesystem
 """
 
+import asyncio
 import os
 import httpx
 from typing import Optional
@@ -13,6 +14,11 @@ from config import cfg
 from client import fmt_size, TIMEOUT, _handle_error
 from core.path_guard import is_within_any
 from core.redact import redact_secrets
+
+# Upper bound on directories visited by a single fs_* walk. A NAS share can hold
+# millions of directories; without this a search ties up a worker thread for
+# minutes and returns nothing useful.
+_MAX_WALK_DIRS = 20_000
 
 
 def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
@@ -389,9 +395,21 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
     # ─── FILESYSTEM ───────────────────────────────────────────────────────────
 
+    # Every tool below touches the disk, and the MCP server is one process with
+    # one event loop: a synchronous read of a stalled NFS/SMB mount would freeze
+    # *all* concurrent MCP traffic, including the standalone SSE stream (which the
+    # client then drops as a dead connection). So each tool keeps its blocking
+    # body in a nested sync function and hands it to a worker thread. The path
+    # check goes inside that body too — is_within_any() calls realpath(), which is
+    # itself a syscall that can block on a dead mount.
+
     def _check_path(path: str) -> bool:
         """Check if path is within an allowed directory (boundary-aware)."""
         return is_within_any(path, cfg.filesystem_allowed_paths)
+
+    def _denied(path: str) -> str:
+        allowed = ", ".join(cfg.filesystem_allowed_paths) or "(none configured)"
+        return f"Error: Path '{path}' is not in allowed directories: {allowed}"
 
     class FsListInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -403,31 +421,33 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     )
     async def fs_list_directory(params: FsListInput) -> str:
         """List files and directories in an allowed path on the server."""
-        if not _check_path(params.path):
-            allowed = ", ".join(cfg.filesystem_allowed_paths)
-            return f"Error: Path '{params.path}' is not in allowed directories: {allowed}"
-        try:
-            if not os.path.exists(params.path):
-                return f"Error: Path '{params.path}' does not exist."
-            if not os.path.isdir(params.path):
-                return f"Error: '{params.path}' is a file, not a directory. Use fs_read_file instead."
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                if not os.path.exists(params.path):
+                    return f"Error: Path '{params.path}' does not exist."
+                if not os.path.isdir(params.path):
+                    return f"Error: '{params.path}' is a file, not a directory. Use fs_read_file instead."
 
-            entries = os.listdir(params.path)
-            dirs = sorted([e for e in entries if os.path.isdir(os.path.join(params.path, e))])
-            files = sorted([e for e in entries if os.path.isfile(os.path.join(params.path, e))])
+                entries = os.listdir(params.path)
+                dirs = sorted([e for e in entries if os.path.isdir(os.path.join(params.path, e))])
+                files = sorted([e for e in entries if os.path.isfile(os.path.join(params.path, e))])
 
-            result = f"## Directory: {params.path}\n\n"
-            result += f"📁 {len(dirs)} directories, 📄 {len(files)} files\n\n"
-            for d in dirs:
-                result += f"📁 {d}/\n"
-            for f in files:
-                size = os.path.getsize(os.path.join(params.path, f))
-                result += f"📄 {f} ({fmt_size(size)})\n"
-            return result
-        except PermissionError:
-            return f"Error: Permission denied reading '{params.path}'"
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+                result = f"## Directory: {params.path}\n\n"
+                result += f"📁 {len(dirs)} directories, 📄 {len(files)} files\n\n"
+                for d in dirs:
+                    result += f"📁 {d}/\n"
+                for f in files:
+                    size = os.path.getsize(os.path.join(params.path, f))
+                    result += f"📄 {f} ({fmt_size(size)})\n"
+                return result
+            except PermissionError:
+                return f"Error: Permission denied reading '{params.path}'"
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
 
     class FsReadInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -441,60 +461,65 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     )
     async def fs_read_file(params: FsReadInput) -> str:
         """Read the contents of a text file in an allowed path."""
-        if not _check_path(params.path):
-            allowed = ", ".join(cfg.filesystem_allowed_paths)
-            return f"Error: Path '{params.path}' is not in allowed directories: {allowed}"
-        try:
-            if not os.path.exists(params.path):
-                return f"Error: File '{params.path}' does not exist."
-            if os.path.isdir(params.path):
-                return f"Error: '{params.path}' is a directory. Use fs_list_directory instead."
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                if not os.path.exists(params.path):
+                    return f"Error: File '{params.path}' does not exist."
+                if os.path.isdir(params.path):
+                    return f"Error: '{params.path}' is a directory. Use fs_list_directory instead."
 
-            size = os.path.getsize(params.path)
-            if size > 1024 * 1024:  # 1MB limit
-                return f"Error: File too large ({fmt_size(size)}). Max 1MB."
+                size = os.path.getsize(params.path)
+                if size > 1024 * 1024:  # 1MB limit
+                    return f"Error: File too large ({fmt_size(size)}). Max 1MB."
 
-            with open(params.path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+                with open(params.path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
 
-            total = len(lines)
-            shown = lines[:params.max_lines]
-            body = "".join(shown)
-            redacted_note = ""
-            if not params.reveal_secrets:
-                body, n = redact_secrets(body)
-                if n:
-                    redacted_note = f"\n\n_{n} secret value(s) masked. Pass reveal_secrets=true to see them._"
-            result = f"## File: {params.path} ({total} lines, {fmt_size(size)})\n\n"
-            result += "```\n" + body + "\n```"
-            if total > params.max_lines:
-                result += f"\n\n...{total - params.max_lines} more lines (increase max_lines to see more)"
-            result += redacted_note
-            return result
-        except PermissionError:
-            return f"Error: Permission denied reading '{params.path}'"
-        except UnicodeDecodeError:
-            return f"Error: File '{params.path}' is binary — cannot read as text."
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+                total = len(lines)
+                shown = lines[:params.max_lines]
+                body = "".join(shown)
+                redacted_note = ""
+                if not params.reveal_secrets:
+                    body, n = redact_secrets(body)
+                    if n:
+                        redacted_note = f"\n\n_{n} secret value(s) masked. Pass reveal_secrets=true to see them._"
+                result = f"## File: {params.path} ({total} lines, {fmt_size(size)})\n\n"
+                result += "```\n" + body + "\n```"
+                if total > params.max_lines:
+                    result += f"\n\n...{total - params.max_lines} more lines (increase max_lines to see more)"
+                result += redacted_note
+                return result
+            except PermissionError:
+                return f"Error: Permission denied reading '{params.path}'"
+            except UnicodeDecodeError:
+                return f"Error: File '{params.path}' is binary — cannot read as text."
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
 
     @mcp.tool(name="fs_list_shares", annotations={"readOnlyHint": True})
     async def fs_list_shares() -> str:
         """List all configured filesystem shares and their paths."""
-        result = "## Configured Filesystem Shares\n\n"
-        for path in cfg.filesystem_allowed_paths:
-            exists = os.path.exists(path)
-            icon = "✅" if exists else "❌"
-            if exists:
-                try:
-                    entries = os.listdir(path)
-                    count = len(entries)
-                    result += f"{icon} **{path}** — {count} items\n"
-                except Exception:
-                    result += f"{icon} **{path}** — (permission denied)\n"
-            else:
-                result += f"{icon} **{path}** — not mounted\n"
-        return result
+        def _run() -> str:
+            result = "## Configured Filesystem Shares\n\n"
+            for path in cfg.filesystem_allowed_paths:
+                exists = os.path.exists(path)
+                icon = "✅" if exists else "❌"
+                if exists:
+                    try:
+                        entries = os.listdir(path)
+                        count = len(entries)
+                        result += f"{icon} **{path}** — {count} items\n"
+                    except Exception:
+                        result += f"{icon} **{path}** — (permission denied)\n"
+                else:
+                    result += f"{icon} **{path}** — not mounted\n"
+            return result
+
+        return await asyncio.to_thread(_run)
 
     class FsWriteInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -505,17 +530,23 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     @mcp.tool(name="fs_write_file", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def fs_write_file(params: FsWriteInput) -> str:
         """Write text content to a file in an allowed path."""
-        if not _check_path(params.path):
-            return f"Error: Path '{params.path}' not in allowed directories."
-        try:
-            os.makedirs(os.path.dirname(params.path), exist_ok=True)
-            mode = "a" if params.append else "w"
-            with open(params.path, mode, encoding="utf-8") as f:
-                f.write(params.content)
-            action = "Appended to" if params.append else "Written"
-            return f"✓ {action} '{params.path}' ({len(params.content)} chars)"
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                # A bare filename has no dirname; makedirs("") raises FileNotFoundError.
+                parent = os.path.dirname(params.path)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                mode = "a" if params.append else "w"
+                with open(params.path, mode, encoding="utf-8") as f:
+                    f.write(params.content)
+                action = "Appended to" if params.append else "Written"
+                return f"✓ {action} '{params.path}' ({len(params.content)} chars)"
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
 
     class FsMoveInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -525,17 +556,22 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     @mcp.tool(name="fs_move_file", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def fs_move_file(params: FsMoveInput) -> str:
         """Move or rename a file within allowed paths."""
-        if not _check_path(params.source):
-            return "Error: Source path not in allowed directories."
-        if not _check_path(params.destination):
-            return "Error: Destination path not in allowed directories."
-        try:
-            import shutil
-            os.makedirs(os.path.dirname(params.destination), exist_ok=True)
-            shutil.move(params.source, params.destination)
-            return f"✓ Moved '{params.source}' → '{params.destination}'"
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+        def _run() -> str:
+            if not _check_path(params.source):
+                return "Error: Source path not in allowed directories."
+            if not _check_path(params.destination):
+                return "Error: Destination path not in allowed directories."
+            try:
+                import shutil
+                parent = os.path.dirname(params.destination)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                shutil.move(params.source, params.destination)
+                return f"✓ Moved '{params.source}' → '{params.destination}'"
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
 
     class FsRecentInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -546,41 +582,51 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     @mcp.tool(name="fs_recent_files", annotations={"readOnlyHint": True})
     async def fs_recent_files(params: FsRecentInput) -> str:
         """List recently modified files in a directory."""
-        if not _check_path(params.path):
-            return "Error: Path not in allowed directories."
-        try:
-            import time
-            cutoff = time.time() - (params.days * 86400)
-            recent = []
-            for root, dirs, files in os.walk(params.path):
-                if not _check_path(root):
-                    continue
-                for f in files:
-                    full = os.path.join(root, f)
-                    try:
-                        mtime = os.path.getmtime(full)
-                        if mtime >= cutoff:
-                            recent.append((mtime, full))
-                    except Exception:
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                import time
+                cutoff = time.time() - (params.days * 86400)
+                recent = []
+                scanned = 0
+                # followlinks=False (the default) is load-bearing: it stops the walk
+                # escaping the allowed root through a symlinked directory.
+                for root, dirs, files in os.walk(params.path, followlinks=False):
+                    if not _check_path(root):
+                        dirs[:] = []          # don't descend further down this branch
                         continue
-                if len(recent) > 500:
-                    break
+                    scanned += 1
+                    if scanned > _MAX_WALK_DIRS:
+                        break
+                    for f in files:
+                        full = os.path.join(root, f)
+                        try:
+                            mtime = os.path.getmtime(full)
+                            if mtime >= cutoff:
+                                recent.append((mtime, full))
+                        except Exception:
+                            continue
+                    if len(recent) > 500:
+                        break
 
-            recent.sort(reverse=True)
-            recent = recent[:params.limit]
+                recent.sort(reverse=True)
+                recent = recent[:params.limit]
 
-            if not recent:
-                return f"No files modified in the last {params.days} days in '{params.path}'"
+                if not recent:
+                    return f"No files modified in the last {params.days} days in '{params.path}'"
 
-            import datetime
-            result = f"## Recent Files in {params.path} (last {params.days} days)\n\n"
-            for mtime, path in recent:
-                dt = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
-                size = os.path.getsize(path)
-                result += f"- {dt} — {os.path.relpath(path, params.path)} ({fmt_size(size)})\n"
-            return result
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+                import datetime
+                result = f"## Recent Files in {params.path} (last {params.days} days)\n\n"
+                for mtime, path in recent:
+                    dt = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+                    size = os.path.getsize(path)
+                    result += f"- {dt} — {os.path.relpath(path, params.path)} ({fmt_size(size)})\n"
+                return result
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
 
     class FsSearchInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -593,30 +639,45 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     )
     async def fs_search_files(params: FsSearchInput) -> str:
         """Search for files matching a pattern in an allowed directory."""
-        if not _check_path(params.path):
-            allowed = ", ".join(cfg.filesystem_allowed_paths)
-            return f"Error: Path '{params.path}' is not in allowed directories: {allowed}"
-        try:
-            pattern = params.pattern.lower()
-            matches = []
-            for root, dirs, files in os.walk(params.path):
-                if not _check_path(root):
-                    continue
-                for f in files:
-                    if pattern in f.lower():
-                        full = os.path.join(root, f)
-                        size = os.path.getsize(full)
-                        matches.append((full, size))
-                if len(matches) >= 100:
-                    break
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                pattern = params.pattern.lower()
+                matches = []
+                scanned = 0
+                truncated = False
+                for root, dirs, files in os.walk(params.path, followlinks=False):
+                    if not _check_path(root):
+                        dirs[:] = []
+                        continue
+                    scanned += 1
+                    if scanned > _MAX_WALK_DIRS:
+                        truncated = True
+                        break
+                    for f in files:
+                        if pattern in f.lower():
+                            full = os.path.join(root, f)
+                            try:
+                                size = os.path.getsize(full)
+                            except OSError:
+                                continue
+                            matches.append((full, size))
+                    if len(matches) >= 100:
+                        break
 
-            if not matches:
-                return f"No files matching '{params.pattern}' found in '{params.path}'"
-            result = f"## Search: '{params.pattern}' in {params.path} ({len(matches)} results)\n\n"
-            for path, size in matches[:50]:
-                result += f"- {path} ({fmt_size(size)})\n"
-            if len(matches) > 50:
-                result += f"\n...and {len(matches) - 50} more"
-            return result
-        except Exception as e:
-            return _handle_error(e, "Filesystem")
+                if not matches:
+                    extra = " (search stopped early — directory tree too large)" if truncated else ""
+                    return f"No files matching '{params.pattern}' found in '{params.path}'{extra}"
+                result = f"## Search: '{params.pattern}' in {params.path} ({len(matches)} results)\n\n"
+                for path, size in matches[:50]:
+                    result += f"- {path} ({fmt_size(size)})\n"
+                if len(matches) > 50:
+                    result += f"\n...and {len(matches) - 50} more"
+                if truncated:
+                    result += f"\n\n_Stopped after {_MAX_WALK_DIRS} directories — narrow the starting path._"
+                return result
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)

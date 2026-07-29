@@ -39,6 +39,7 @@ export function ConfigureModal({
     queryFn: () => api.get<ConfigResp>(`/api/v1/service/${id}/config`),
   })
   const [values, setValues] = useState<Record<string, string>>({})
+  const [cleared, setCleared] = useState<Record<string, boolean>>({})
   const [msg, setMsg] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -47,15 +48,20 @@ export function ConfigureModal({
       const init: Record<string, string> = {}
       for (const f of data.fields) init[f.key] = f.secret ? '' : (f.value ?? '')
       setValues(init)
+      setCleared({})
     }
   }, [data])
 
   async function save() {
-    // Only send changed values; blank secret = keep current.
+    // Only send changed values. A blank secret box means "keep current" (we never
+    // render the stored value), so removing a secret needs the explicit Remove
+    // action below — it sends "", which the backend treats as delete.
     const body: Record<string, string> = {}
     for (const f of data?.fields ?? []) {
       const v = values[f.key] ?? ''
-      if (f.secret) {
+      if (cleared[f.key]) {
+        body[f.key] = ''
+      } else if (f.secret) {
         if (v !== '') body[f.key] = v
       } else if (v !== (f.value ?? '')) {
         body[f.key] = v
@@ -121,12 +127,31 @@ export function ConfigureModal({
         <div className="space-y-3">
           {data.fields.map((f) => (
             <Field key={f.key} label={f.label}>
-              <Input
-                type={f.secret ? 'password' : 'text'}
-                value={values[f.key] ?? ''}
-                placeholder={f.secret && f.set ? '•••••• set — blank keeps it' : f.placeholder}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  className="flex-1"
+                  type={f.secret ? 'password' : 'text'}
+                  value={cleared[f.key] ? '' : (values[f.key] ?? '')}
+                  disabled={!!cleared[f.key]}
+                  placeholder={
+                    cleared[f.key]
+                      ? 'will be removed on save'
+                      : f.secret && f.set
+                        ? '•••••• set — blank keeps it'
+                        : f.placeholder
+                  }
+                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                />
+                {(f.set || (f.value ?? '') !== '') && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCleared((c) => ({ ...c, [f.key]: !c[f.key] }))}
+                  >
+                    {cleared[f.key] ? 'Undo' : 'Remove'}
+                  </Button>
+                )}
+              </div>
             </Field>
           ))}
         </div>
