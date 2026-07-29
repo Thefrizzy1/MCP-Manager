@@ -93,7 +93,9 @@ class PlutusScheduler:
                     # connection selection is now the only tool gate.
                     self._run_agent(payload.get("prompt", ""), f"sched:{name}",
                                     mcp_services=payload.get("mcp_services"),
-                                    profile=payload.get("profile"))
+                                    profile=payload.get("profile"),
+                                    provider=payload.get("provider") or "",
+                                    account_id=payload.get("account_id") or "")
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:

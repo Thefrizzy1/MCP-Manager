@@ -8,6 +8,7 @@ import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
 import { ClaudeCodeSection } from '@/components/settings/ClaudeCodeSection'
+import { AiProvidersSection } from '@/components/settings/AiProvidersSection'
 import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
@@ -192,6 +193,8 @@ export function Settings() {
               {ciMsg && <span className="text-[12px] text-ink-3">{ciMsg}</span>}
             </div>
           </Section>
+
+          <AiProvidersSection />
 
           <Section title="Defaults">
             <Row label="Weather city">

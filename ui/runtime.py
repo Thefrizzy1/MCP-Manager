@@ -272,6 +272,7 @@ def _agent_queue_worker() -> None:
                 mcp_url=url, bearer_token=token,
                 disallowed_tools=job.get("disallowed"), model=job.get("model") or None,
                 mcp_services=job.get("mcp_services"),
+                provider=job.get("provider") or "", account_id=job.get("account_id") or "",
             )
             _maybe_notify_agent(rec)
         except Exception as exc:
@@ -324,7 +325,8 @@ def _agent_profile_disallow(profile_name: str | None) -> list[str]:
 def _enqueue_agent(prompt: str, label: str, *,
                    model: str | None = None, force: bool = False,
                    extra_disallowed: list[str] | None = None,
-                   mcp_services: list[str] | None = None) -> bool:
+                   mcp_services: list[str] | None = None,
+                   provider: str = "", account_id: str = "") -> bool:
     """Queue an agent run.
 
     The connection selection is the *only* tool gate: picking a connection grants
@@ -337,7 +339,8 @@ def _enqueue_agent(prompt: str, label: str, *,
     try:
         _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
                                  "model": model, "force": force,
-                                 "mcp_services": mcp_services})
+                                 "mcp_services": mcp_services,
+                                 "provider": provider, "account_id": account_id})
         return True
     except queue.Full:
         log.warning("Agent queue full — dropping '%s'", label)
@@ -346,14 +349,15 @@ def _enqueue_agent(prompt: str, label: str, *,
 
 def _run_agent_bg(prompt: str, label: str = "agent", *,
                   model: str | None = None, force: bool = False,
-                  mcp_services: list[str] | None = None, profile: str | None = None) -> None:
+                  mcp_services: list[str] | None = None, profile: str | None = None,
+                  provider: str = "", account_id: str = "") -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
     # callers and older schedules that never stored a selection). `profile` is no
     # longer offered in the UI; it stays here so schedules saved before it was
     # removed keep working.
     extra = sorted(set(_agent_service_disallow(mcp_services)) | set(_agent_profile_disallow(profile)))
     _enqueue_agent(prompt, label, model=model, force=force, extra_disallowed=extra,
-                   mcp_services=mcp_services)
+                   mcp_services=mcp_services, provider=provider, account_id=account_id)
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):

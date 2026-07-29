@@ -156,13 +156,18 @@ class AgentRunBody(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=20000)
     label: str = Field(default="agent", max_length=40)
     mcp_services: list[str] | None = None  # per-connection ACL; None = no restriction
+    # Which authenticated CLI account executes the run. Empty = the legacy single
+    # login (mounted ~/.claude, else a saved token).
+    provider: str = ""
+    account_id: str = ""
 
 
 @router.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody):
     extra = _agent_service_disallow(body.mcp_services)
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
-                        extra_disallowed=extra, mcp_services=body.mcp_services)
+                        extra_disallowed=extra, mcp_services=body.mcp_services,
+                        provider=body.provider, account_id=body.account_id)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}
@@ -185,7 +190,9 @@ async def api_v1_agent_run_again(rid: str):
     services = rec.get("mcp_services")
     ok = _enqueue_agent(prompt, rec.get("label") or "agent", force=True,
                         extra_disallowed=_agent_service_disallow(services),
-                        mcp_services=services)
+                        mcp_services=services,
+                        provider=rec.get("provider") or "",
+                        account_id=rec.get("account_id") or "")
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}

@@ -345,6 +345,23 @@ function LaunchWizard({
   const [time, setTime] = useState('07:00')
   const [dow, setDow] = useState('1')
   const [cron, setCron] = useState('0 7 * * *')
+  const [account, setAccount] = useState('')
+  // Only accounts with a completed CLI login can actually run anything, so
+  // unlinked ones are not offered.
+  const providersQ = useQuery({
+    queryKey: ['ai-providers'],
+    queryFn: () =>
+      api.get<{
+        providers: { id: string; label: string; runnable: boolean; accounts: { id: string; label: string; authenticated: boolean }[] }[]
+      }>('/api/v1/providers'),
+  })
+  const linkedAccounts = (providersQ.data?.providers ?? [])
+    .filter((p) => p.runnable)
+    .flatMap((p) =>
+      p.accounts
+        .filter((a) => a.authenticated)
+        .map((a) => ({ provider: p.id, providerLabel: p.label, id: a.id, label: a.label })),
+    )
   // Access level and timeout are no longer per-launch choices — they come from
   // Settings → Agent (tool_permission / timeout_min). The connection picker is
   // the single control over what an agent may touch.
@@ -380,6 +397,7 @@ function LaunchWizard({
       const mcpServices = Object.entries(selected)
         .filter(([, v]) => v)
         .map(([k]) => k)
+      const [provider = '', accountId = ''] = account ? account.split('/') : []
       await api.post('/api/v1/agent/config', { model: model.trim() })
       const cronExpr = cronFrom(sched, time, dow, cron)
       if (cronExpr) {
@@ -389,7 +407,7 @@ function LaunchWizard({
           cron: cronExpr,
           timezone: 'Europe/Berlin',
           enabled: true,
-          payload: { prompt: prompt.trim(), mcp_services: mcpServices },
+          payload: { prompt: prompt.trim(), mcp_services: mcpServices, provider, account_id: accountId },
         })
         onScheduled()
       } else {
@@ -397,6 +415,8 @@ function LaunchWizard({
           prompt: prompt.trim(),
           label: name || 'agent',
           mcp_services: mcpServices,
+          provider,
+          account_id: accountId,
         })
         onLaunched()
       }
@@ -423,6 +443,21 @@ function LaunchWizard({
             </Select>
           </Field>
         </div>
+        {linkedAccounts.length > 0 && (
+          <Field
+            label="Account"
+            hint="Which authenticated CLI login runs this agent. Manage them in Settings → AI providers."
+          >
+            <Select value={account} onChange={(e) => setAccount(e.target.value)}>
+              <option value="">Default login</option>
+              {linkedAccounts.map((a) => (
+                <option key={`${a.provider}/${a.id}`} value={`${a.provider}/${a.id}`}>
+                  {a.providerLabel} · {a.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Goal / prompt">
           <Textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="What should the agent do?" />
         </Field>

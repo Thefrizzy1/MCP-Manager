@@ -140,8 +140,12 @@ def cli_logged_in() -> bool:
     return any((home / name).exists() for name in (".credentials.json", "credentials.json"))
 
 
-def _subprocess_env() -> dict:
+def _subprocess_env(root: Path | None = None, provider: str = "",
+                    account_id: str = "") -> dict:
     """Environment for the headless `claude` run.
+
+    With a provider account selected, that account's credentials directory is the
+    whole story (see core/ai_providers). Without one, the legacy behaviour applies.
 
     A real CLI session (mounted ~/.claude login) is authoritative: when one
     exists we use it and strip any CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_API_KEY
@@ -157,6 +161,25 @@ def _subprocess_env() -> dict:
     """
     env = dict(os.environ)
     env.setdefault("IS_SANDBOX", "1")
+
+    # A named provider account is authoritative when one is selected: point the
+    # CLI at that account's own config dir and strip every ambient credential, so
+    # accounts cannot bleed into each other and a stale global token cannot
+    # shadow the account's login.
+    if root is not None and provider and account_id:
+        from core import ai_providers
+        try:
+            env.update(ai_providers.account_env(root, provider, account_id))
+        except ValueError:
+            pass
+        else:
+            env.pop("ANTHROPIC_API_KEY", None)
+            tok_env = ai_providers.PROVIDERS.get(provider, {}).get("token_env")
+            if tok_env:
+                env.pop(tok_env, None)
+            return env
+
+    # Legacy single-login path: a mounted ~/.claude session wins over a saved token.
     try:
         from core.env_store import read_env
         tok = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
@@ -456,6 +479,8 @@ def run_agent(
     disallowed_tools: list[str] | None = None,
     model: str | None = None,
     mcp_services: list[str] | None = None,
+    provider: str = "",
+    account_id: str = "",
 ) -> dict:
     """Run one headless Claude Code agent call. Blocking; call in a thread."""
     with _LOCK:
@@ -474,6 +499,9 @@ def run_agent(
         # Which connections the run was scoped to, so "Run again" reproduces it
         # instead of silently widening to every tool.
         "mcp_services": mcp_services,
+        # Which provider account executed it — so a failure can be traced to the
+        # right login, and "Run again" reuses the same one.
+        "provider": provider or "", "account_id": account_id or "",
         "started": _now().isoformat(), "finished": None,
         "ok": False, "cost_usd": 0.0, "turns": None, "result": "",
         "over_budget": False, "cancelled": False, "error": None, "log": [],
@@ -495,7 +523,8 @@ def run_agent(
         # more than the ~64 KB pipe buffer: the child blocks on the stderr write,
         # stops producing stdout, and both sides wait until the timeout fires.
         proc = subprocess.Popen(
-            cmd, cwd=cwd or str(root), env=_subprocess_env(), text=True,
+            cmd, cwd=cwd or str(root),
+            env=_subprocess_env(root, provider, account_id), text=True,
             bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         with _LOCK:
