@@ -3,6 +3,7 @@ import {
   Plug,
   Radar,
   Bot,
+  Users,
   Sparkles,
   FolderOpen,
   Settings,
@@ -33,6 +34,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Automation',
     items: [
       { id: 'agents', label: 'Agents', icon: Bot },
+      { id: 'rooms', label: 'Rooms', icon: Users },
       { id: 'builder', label: 'AI Builder', icon: Sparkles },
     ],
   },

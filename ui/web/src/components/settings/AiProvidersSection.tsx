@@ -217,7 +217,10 @@ export function AiProvidersSection() {
                       </div>
                     </div>
 
-                    {p.cli.installed && (
+                    {/* Always shown. Gating this on cli.installed hid the log-in
+                        command exactly when detection was wrong or the CLI had been
+                        wiped by an update — leaving no way forward. */}
+                    {a.login_command && (
                       <div className="mt-1.5">
                         <Cmd
                           label={

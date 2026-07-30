@@ -22,6 +22,7 @@ from ui.api import (
     public,
     settings,
     system,
+    workforce,
 )
 from ui.api.deps import csrf_origin_guard
 from ui.runtime import DIST_DIR, ICONS_DIR, STATIC_DIR, ui_lifespan
@@ -39,6 +40,7 @@ _AUTHED_ROUTERS = (
     agents.router,
     settings.router,
     system.router,
+    workforce.router,
 )
 
 

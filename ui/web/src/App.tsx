@@ -4,6 +4,7 @@ import { Dashboard } from '@/pages/Dashboard'
 import { Connections } from '@/pages/Connections'
 import { Discover } from '@/pages/Discover'
 import { Agents } from '@/pages/Agents'
+import { Rooms } from '@/pages/Rooms'
 import { Builder } from '@/pages/Builder'
 import { Files } from '@/pages/Files'
 import { Settings } from '@/pages/Settings'
@@ -19,6 +20,8 @@ function renderPage(route: string) {
       return <Discover />
     case 'agents':
       return <Agents />
+    case 'rooms':
+      return <Rooms />
     case 'builder':
       return <Builder />
     case 'files':
