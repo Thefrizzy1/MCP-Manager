@@ -17,6 +17,23 @@ import pytest
 from core.invoke_tool import invoke_mcp_tool_fn
 
 
+@pytest.fixture(autouse=True)
+def _agent_has_credentials(monkeypatch):
+    """Give run_agent a credential for every test in this module.
+
+    run_agent refuses to spawn the CLI when no credential exists (it would only
+    come back 401). The tests below exercise cost caps and pipe plumbing, not
+    auth — without this they pass or fail depending on whether the machine running
+    them happens to have a ~/.claude login, which is exactly why CI failed on a
+    tree that was green locally. Tests that *do* cover credential selection live
+    in test_agent_credentials.py and control the seam themselves.
+    """
+    from core import agent_runner as AR
+
+    monkeypatch.setattr(AR, "legacy_credential_source",
+                        lambda: ("cli", "test credential"))
+
+
 def _tool(register, name, **kwargs):
     """Register a tool domain onto a throwaway FastMCP and return the tool's fn."""
     from mcp.server.fastmcp import FastMCP
