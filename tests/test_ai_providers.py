@@ -319,9 +319,9 @@ def test_capability_test_invokes_the_providers_own_command(tmp_path, monkeypatch
     assert seen["home"] == str(AP.account_dir(tmp_path, "codex", acct["id"]))
 
 
-def test_mcp_check_is_only_claimed_for_claude(tmp_path, monkeypatch):
-    """--mcp-config is Claude-specific; asserting MCP works for the others would
-    be a lie."""
+def test_no_mcp_claim_without_something_to_check(tmp_path, monkeypatch):
+    """Only Claude is driven with --mcp-config; handing that path to another CLI
+    would break the run, so the check must not be silently attempted."""
     monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
                                                    "version": "", "install_hint": ""})
     acct = AP.add_account(tmp_path, "codex", "Personal")
@@ -332,6 +332,37 @@ def test_mcp_check_is_only_claimed_for_claude(tmp_path, monkeypatch):
     res = AP.capability_test(tmp_path, "codex", acct["id"], mcp_config_path="/tmp/x.json")
     assert [c["name"] for c in res["checks"]] == ["CLI installed", "Session credentials present",
                                                   "Can execute prompt"]
+
+
+def test_codex_mcp_is_checked_at_the_endpoint_the_bridge_uses(tmp_path, monkeypatch):
+    """Codex does reach Plutus's tools — through the stdio bridge — so the check
+    is real, it just isn't --mcp-config."""
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
+                                                   "version": "", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "codex", "Personal")
+    (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(AP, "_run_cli", lambda *a, **k: {"code": 0, "out": "PLUTUS_OK",
+                                                        "err": "", "timeout": False})
+    monkeypatch.setattr(AP, "mcp_reachable",
+                        lambda url, token="", timeout=30: {"ok": True, "count": 209, "error": ""})
+
+    res = AP.capability_test(tmp_path, "codex", acct["id"], mcp_url="http://x/mcp")
+    last = res["checks"][-1]
+    assert last["name"] == "MCP tools reachable" and last["ok"] is True
+    assert "209 Plutus tools" in last["detail"]
+
+
+def test_an_unreachable_endpoint_fails_the_mcp_check(tmp_path, monkeypatch):
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "k")
+    _fake_http(monkeypatch, lambda *a: _text("PLUTUS_OK"))
+    monkeypatch.setattr(AP, "mcp_reachable",
+                        lambda url, token="", timeout=30: {"ok": False, "count": 0,
+                                                           "error": "connection refused"})
+
+    res = AP.capability_test(tmp_path, "gemini", acct["id"], mcp_url="http://x/mcp")
+    assert res["ok"] is False
+    assert "connection refused" in res["checks"][-1]["detail"]
 
 
 # ── per-account API keys ─────────────────────────────────────────────────────

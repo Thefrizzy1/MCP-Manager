@@ -85,16 +85,15 @@ nothing else breaks.
 
 ## 2b. Other providers (Codex, Gemini)
 
-Everything above is the **Claude** runtime, which is still the default and the
-only one wired to Plutus's MCP tools. Settings → **AI providers** adds accounts on
-two more, and the launch wizard's **Account** picker chooses which one executes a
-run (`core/ai_providers.py`).
+Everything above is the **Claude** runtime, still the default. Settings → **AI
+providers** adds accounts on two more, and the launch wizard's **Account** picker
+chooses which one executes a run (`core/ai_providers.py`).
 
-| Provider | Kind | Credential | Plutus MCP tools |
+| Provider | Kind | Credential | How it reaches Plutus's tools |
 |---|---|---|---|
-| Claude Code | CLI (`claude -p`) | login in the account's `CLAUDE_CONFIG_DIR`, or a `setup-token` | yes |
-| Codex | CLI (`codex exec`) | login in the account's `CODEX_HOME` | no |
-| Gemini | HTTP API | free key from <https://aistudio.google.com/apikey> | no (Google Search grounding instead) |
+| Claude Code | CLI (`claude -p`) | login in the account's `CLAUDE_CONFIG_DIR`, or a `setup-token` | `--mcp-config` |
+| Codex | CLI (`codex exec`) | login in the account's `CODEX_HOME` | stdio bridge in `config.toml` |
+| Gemini | HTTP API | free key from <https://aistudio.google.com/apikey> | function calling |
 
 The runtime follows the **account**, not a setting: pick a Codex account and
 `codex exec` is what runs. Getting that wrong was a real bug — the runner built a
@@ -115,12 +114,46 @@ id, because vendors add and drop models between releases. The choice rides with 
 run; it is no longer written into `data/agent_config.json`, where one Opus launch
 used to pin Opus on every later run including ones on other providers.
 
-**What "no MCP tools" means.** `--mcp-config` is Claude Code's flag; the other
-runtimes configure servers through their own files, which Plutus does not write. A
-Codex or Gemini agent therefore works from its prompt alone, and the run log says so
-rather than leaving you to guess why it never called a tool. Gemini requests Google
-Search grounding so a research seat can still look things up, and retries without it
-if the model or tier rejects the tool.
+### All three runtimes get the same ~209 tools
+
+Three roads, one destination — every provider ends at Plutus's own MCP endpoint,
+so an agent's abilities do not depend on which account happens to run it.
+
+- **Claude** — the generated `--mcp-config`, unchanged.
+- **Codex** — `codex exec` has no `--mcp-config`, but it reads
+  `$CODEX_HOME/config.toml`, and every account already has its own `CODEX_HOME`.
+  Before each run Plutus writes an `[mcp_servers.plutus]` block there pointing at
+  **`tools/mcp_stdio_bridge.py`**, a stdio MCP server that relays to the HTTP
+  endpoint. Only that block is rewritten; anything else in the file survives.
+
+  Why a bridge instead of giving Codex the URL: stdio (`command`/`args`/`env`) is
+  the one transport shape every Codex release has accepted. HTTP support has moved
+  between an experimental flag and different config keys across versions, and a key
+  the installed Codex rejects fails the *whole run*, not just the tool wiring.
+
+- **Gemini** — no MCP support at all, so the equivalent is its **function calling**
+  loop (`core/agent_runner._execute_api`). Plutus reads its own `tools/list`,
+  converts each JSON Schema into Gemini's stricter OpenAPI subset
+  (`core/agent_tools.py`), and every time the model asks for a tool it is really
+  called and the result fed back. Up to `MAX_TOOL_TURNS` rounds per run.
+
+  The conversion is not optional tidying: Plutus's schemas are Pydantic-generated
+  (`$ref` into `$defs`, `anyOf` with a null branch, `default`/`title`/`minimum`),
+  and Gemini validates the entire request — one stray keyword and *every* tool call
+  in the run fails. `tests/test_agent_tools.py` converts the whole live registry and
+  asserts the result stays inside the accepted dialect.
+
+  Gemini forbids mixing function declarations with built-in tools, so a run with
+  Plutus tools does not also get Google Search grounding. Nothing is lost: Plutus's
+  own web-search tools are in the set. A run with tools switched off still gets
+  grounding.
+
+**Scope still comes from the connection picker.** Claude gets `--disallowedTools`;
+`codex exec` has no equivalent, so the bridge enforces it — denied tools are
+removed from `tools/list` and refused on `tools/call`, which is stricter than a CLI
+flag because the model is never even told they exist. Gemini simply never has them
+declared. Gemini also caps declarations at `agent_tools.MAX_DECLARATIONS`; past
+that the run log names how many were left out, and narrowing connections is the fix.
 
 ---
 

@@ -108,13 +108,17 @@ async def api_test_account(pid: str, aid: str, with_mcp: bool = False):
     """Real capability test: executes a prompt through the CLI, optionally with
     Plutus's own MCP config attached. Not an HTTP ping."""
     _known_account(pid, aid)
-    mcp_path = None
+    mcp_path, url, token = None, "", ""
     if with_mcp:
         from ui.runtime import _agent_mcp_target
         url, token = _agent_mcp_target()
-        mcp_path = agent_runner.write_plutus_mcp_config(ROOT, mcp_url=url, token=token)
+        # Claude's check runs through --mcp-config; the others end at the same
+        # endpoint by a different road, so they get the url instead of a file.
+        if pid == "claude":
+            mcp_path = agent_runner.write_plutus_mcp_config(ROOT, mcp_url=url, token=token)
     res = await asyncio.to_thread(
-        ai_providers.capability_test, ROOT, pid, aid, mcp_config_path=mcp_path
+        ai_providers.capability_test, ROOT, pid, aid,
+        mcp_config_path=mcp_path, mcp_url=url, mcp_token=token,
     )
     return {"ok": res["ok"], "checks": res["checks"]}
 

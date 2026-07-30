@@ -699,45 +699,79 @@ def _http(method: str, url: str, key: str, *, payload: dict | None = None,
     return {"code": r.status_code, "json": body, "error": err}
 
 
-def api_generate(root: Path, provider: str, account_id: str, prompt: str, *,
-                 model: str = "", timeout: int = 120, search: bool = True) -> dict:
-    """One completion from an HTTP provider. {"ok", "text", "error", "model"}.
+def api_turn(root: Path, provider: str, account_id: str, *, contents: list[dict],
+             declarations: list[dict] | None = None, model: str = "",
+             timeout: int = 120, search: bool = False) -> dict:
+    """One turn of a conversation with an HTTP provider.
 
-    Google Search grounding is requested by default: a research runtime with no
-    way to look anything up is not a research runtime. It is not universally
-    available (model and tier dependent), so a rejection of the *tool* retries
-    the same prompt without it rather than failing the whole run — losing
-    grounding is a degradation, not an error.
+    {"ok", "parts", "text", "calls", "error", "model", "finish"} — ``parts`` is
+    the model's raw content, kept so the caller can append it to ``contents``
+    verbatim, which the API requires for a multi-turn tool exchange.
+
+    ``declarations`` and ``search`` are mutually exclusive by Gemini's own rules:
+    a request may carry function declarations *or* a built-in tool like
+    google_search, not both. Declarations win when present — Plutus's own tools
+    include web search, so nothing is actually lost.
     """
     spec = _spec(provider)
     if spec.get("kind") != KIND_API:
-        return {"ok": False, "text": "", "error": f"{spec['label']} is not an HTTP provider",
-                "model": ""}
+        return {"ok": False, "parts": [], "text": "", "calls": [],
+                "error": f"{spec['label']} is not an HTTP provider", "model": "", "finish": ""}
     key = stored_token(root, provider, account_id)
     if not key:
-        return {"ok": False, "text": "", "error":
+        return {"ok": False, "parts": [], "text": "", "calls": [], "error":
                 f"no API key stored for this account. {spec.get('key_hint', '')}".strip(),
-                "model": ""}
+                "model": "", "finish": ""}
 
     chosen = (model or spec.get("default_model") or "").strip()
     if not chosen:
-        return {"ok": False, "text": "", "error": "no model selected", "model": ""}
+        return {"ok": False, "parts": [], "text": "", "calls": [],
+                "error": "no model selected", "model": "", "finish": ""}
+
     url = f"{spec['api_base']}/models/{chosen}:generateContent"
-    body: dict[str, Any] = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-    if search:
+    body: dict[str, Any] = {"contents": contents}
+    if declarations:
+        body["tools"] = [{"functionDeclarations": declarations}]
+    elif search:
         body["tools"] = [{"google_search": {}}]
 
     res = _http("POST", url, key, payload=body, timeout=timeout)
-    if res["error"] and search and _rejects_the_search_tool(res["error"]):
-        body.pop("tools", None)
-        res = _http("POST", url, key, payload=body, timeout=timeout)
+    if res["error"] and "tools" in body and _rejects_the_search_tool(res["error"]):
+        # Grounding is a degradation when unavailable, not a failure. Function
+        # declarations are not: dropping those would silently strip the agent's
+        # tools, so only the built-in retry is worth making.
+        if not declarations:
+            body.pop("tools", None)
+            res = _http("POST", url, key, payload=body, timeout=timeout)
     if res["error"]:
-        return {"ok": False, "text": "", "error": _explain_api(res), "model": chosen}
+        return {"ok": False, "parts": [], "text": "", "calls": [],
+                "error": _explain_api(res), "model": chosen, "finish": ""}
 
-    text = _api_text(res["json"])
-    if not text:
-        return {"ok": False, "text": "", "error": _empty_reason(res["json"]), "model": chosen}
-    return {"ok": True, "text": text, "error": "", "model": chosen}
+    cand = (res["json"].get("candidates") or [{}])[0]
+    parts = ((cand.get("content") or {}).get("parts")) or []
+    calls = [p["functionCall"] for p in parts
+             if isinstance(p, dict) and isinstance(p.get("functionCall"), dict)]
+    text = "\n".join(p["text"] for p in parts
+                     if isinstance(p, dict) and isinstance(p.get("text"), str)).strip()
+    if not text and not calls:
+        return {"ok": False, "parts": parts, "text": "", "calls": [],
+                "error": _empty_reason(res["json"]), "model": chosen,
+                "finish": cand.get("finishReason") or ""}
+    return {"ok": True, "parts": parts, "text": text, "calls": calls, "error": "",
+            "model": chosen, "finish": cand.get("finishReason") or ""}
+
+
+def api_generate(root: Path, provider: str, account_id: str, prompt: str, *,
+                 model: str = "", timeout: int = 120, search: bool = True) -> dict:
+    """One completion, no tools. {"ok", "text", "error", "model"}.
+
+    The capability test's shape: prove a key can get an answer back, nothing more.
+    """
+    res = api_turn(root, provider, account_id,
+                   contents=[{"role": "user", "parts": [{"text": prompt}]}],
+                   model=model, timeout=timeout, search=search)
+    return {"ok": res["ok"], "text": res["text"], "error": res["error"],
+            "model": res["model"]}
 
 
 def _rejects_the_search_tool(err: str) -> bool:
@@ -841,8 +875,28 @@ def _check(name: str, ok: bool, detail: str = "") -> dict:
     return {"name": name, "ok": bool(ok), "detail": detail}
 
 
+def mcp_reachable(mcp_url: str, token: str = "", timeout: int = 30) -> dict:
+    """Can Plutus's own MCP endpoint be reached with this token, and how many tools?
+
+    The check behind "MCP tools reachable" for the runtimes that do not go through
+    Claude's ``--mcp-config``: Codex reaches it through the stdio bridge and Gemini
+    through function calling, but both end at this endpoint with this token, so
+    this is the thing that is actually shared.
+    """
+    from core.mcp_client import McpHttpClient
+
+    client = McpHttpClient(mcp_url, token, timeout=timeout)
+    try:
+        return {"ok": True, "count": len(client.list_tools()), "error": ""}
+    except Exception as e:
+        return {"ok": False, "count": 0, "error": str(e)[:200]}
+    finally:
+        client.close()
+
+
 def capability_test(root: Path, provider: str, account_id: str, *,
                     mcp_config_path: str | None = None,
+                    mcp_url: str = "", mcp_token: str = "",
                     model: str | None = None, timeout: int = 120) -> dict:
     """Actually exercise the provider instead of probing a port.
 
@@ -862,7 +916,8 @@ def capability_test(root: Path, provider: str, account_id: str, *,
 
     if spec.get("kind") == KIND_API:
         return _api_capability_test(root, provider, account_id, spec,
-                                    model=model, timeout=timeout)
+                                    model=model, timeout=timeout, mcp_url=mcp_url,
+                                    mcp_token=mcp_token)
 
     cli = cli_info(provider)
     checks.append(_check("CLI installed", cli["installed"],
@@ -911,9 +966,8 @@ def capability_test(root: Path, provider: str, account_id: str, *,
     if sentinel not in ran["out"]:
         return {"ok": False, "checks": checks}
 
-    # MCP wiring is Claude-specific for now (--mcp-config); the other CLIs
-    # configure their servers through their own config files, so claiming to have
-    # tested it there would be a lie.
+    # Claude is driven with --mcp-config, so its MCP check goes through the CLI
+    # and proves the real thing end to end.
     if mcp_config_path and provider == "claude":
         mcp_prompt = ("List the name of any one tool you can call from the 'plutus' MCP "
                       f"server, then the word {sentinel}. If you have no such tools, "
@@ -924,12 +978,26 @@ def capability_test(root: Path, provider: str, account_id: str, *,
         got = sentinel in mran["out"] and "NO_MCP" not in mran["out"]
         checks.append(_check("MCP tools reachable", got,
                              mran["out"][:200] if mran["out"] else _explain(mran, sentinel)))
+    elif mcp_url:
+        # Codex reaches the same endpoint through the stdio bridge. Prompting the
+        # CLI to prove it would cost a full agent turn per Test press, so check
+        # the endpoint the bridge will use — and say that is what was checked.
+        checks.append(_mcp_check(mcp_url, mcp_token,
+                                 "the stdio bridge points here (docs/AGENTS.md §2b)"))
 
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 
+def _mcp_check(mcp_url: str, token: str, how: str) -> dict:
+    res = mcp_reachable(mcp_url, token)
+    return _check("MCP tools reachable", res["ok"],
+                  f"{res['count']} Plutus tools — {how}" if res["ok"]
+                  else f"could not reach {mcp_url}: {res['error']}")
+
+
 def _api_capability_test(root: Path, provider: str, account_id: str, spec: dict, *,
-                         model: str | None = None, timeout: int = 120) -> dict:
+                         model: str | None = None, timeout: int = 120,
+                         mcp_url: str = "", mcp_token: str = "") -> dict:
     key = stored_token(root, provider, account_id)
     checks = [_check("API key stored", bool(key),
                      "key present for this account" if key
@@ -945,6 +1013,9 @@ def _api_capability_test(root: Path, provider: str, account_id: str, spec: dict,
     got = sentinel in (res["text"] or "")
     checks.append(_check("Can execute prompt", got,
                          f"{res['model']} answered" if got else (res["error"] or res["text"][:200])))
+    if got and mcp_url:
+        checks.append(_mcp_check(mcp_url, mcp_token,
+                                 "offered as function declarations (docs/AGENTS.md §2b)"))
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
 
 

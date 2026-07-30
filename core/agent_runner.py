@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -132,6 +133,72 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
         os.chmod(path, 0o600)  # re-assert for a pre-existing file (no-op on Windows)
     except OSError:
         pass
+    return str(path)
+
+
+MCP_BRIDGE = Path(__file__).resolve().parent.parent / "tools" / "mcp_stdio_bridge.py"
+
+
+def _toml_str(value: str) -> str:
+    """A TOML basic string. Windows paths are full of backslashes; unescaped they
+    become escape sequences and Codex reads a path that does not exist."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+_CODEX_BLOCK = re.compile(r"^\[mcp_servers\.plutus\][^\[]*", re.MULTILINE)
+
+
+def write_codex_mcp_config(root: Path, account_id: str, *, mcp_url: str,
+                           token: str = "", disallowed: list[str] | None = None) -> str:
+    """Register Plutus's MCP server in one Codex account's config.toml.
+
+    Codex reads ``$CODEX_HOME/config.toml``, and each account already has its own
+    ``CODEX_HOME`` (that is how multi-account works), so this is per account and
+    cannot leak one run's scope into another's.
+
+    A **stdio** entry, not a URL: ``command``/``args``/``env`` is the one MCP
+    transport shape every Codex release has accepted. HTTP support has moved
+    between an experimental flag and different config keys across versions, and a
+    key the installed Codex rejects fails the entire run rather than just the tool
+    wiring.
+
+    Only our own block is rewritten — the rest of the file is preserved verbatim,
+    so anything the operator put there survives.
+    """
+    from core import ai_providers
+
+    d = ai_providers.account_dir(root, "codex", account_id)
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / "config.toml"
+
+    env_pairs = [f"PLUTUS_MCP_URL = {_toml_str(mcp_url)}"]
+    if token:
+        env_pairs.append(f"PLUTUS_MCP_TOKEN = {_toml_str(token)}")
+    if disallowed:
+        env_pairs.append(f"PLUTUS_MCP_DENY = {_toml_str(','.join(sorted(disallowed)))}")
+
+    block = (
+        "[mcp_servers.plutus]\n"
+        "# Written by Plutus before each run — edits here are overwritten.\n"
+        f"command = {_toml_str(sys.executable or 'python3')}\n"
+        f"args = [{_toml_str(str(MCP_BRIDGE))}]\n"
+        "env = { " + ", ".join(env_pairs) + " }\n"
+    )
+
+    existing = ""
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        pass
+    kept = _CODEX_BLOCK.sub("", existing).rstrip()
+    text = (kept + "\n\n" + block) if kept else block
+    # 0600: the block carries the MCP bearer token.
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        path.write_text(text, encoding="utf-8")
     return str(path)
 
 
@@ -1007,9 +1074,54 @@ def _explain_cli_failure(spec: dict, provider: str, account_id: str,
     return f"{spec['cli']} exited {code}. {head}".strip()
 
 
+# How many times a Gemini run may call tools and come back. A loop is the whole
+# point of function calling, but a model that keeps re-calling the same failing
+# tool would otherwise burn the run's budget without ever answering.
+MAX_TOOL_TURNS = 12
+
+
+def _plutus_declarations(mcp_url: str, token: str,
+                         disallowed: list[str] | None) -> tuple[list[dict], object]:
+    """(function declarations, live MCP client) for a run that gets Plutus tools.
+
+    The tool list comes from a real ``tools/list`` against Plutus's own endpoint,
+    so a Gemini agent is offered exactly what a Claude agent is offered. Returns
+    an empty list and no client when tools are off or the endpoint is unreachable
+    — a model-only run is a worse run, not a dead one.
+    """
+    from core import agent_tools
+    from core.mcp_client import McpHttpClient
+
+    if not mcp_url:
+        return [], None
+    client = McpHttpClient(mcp_url, token)
+    try:
+        tools = client.list_tools()
+    except Exception as e:
+        client.close()
+        _emit(f"warn: could not read Plutus tools ({e}) — running without them")
+        return [], None
+    decls, dropped = agent_tools.gemini_declarations(tools, disallowed)
+    if dropped:
+        _emit(f"note: {dropped} tools left out (cap {agent_tools.MAX_DECLARATIONS}) — "
+              "narrow the connections for this run to choose which")
+    _emit(f"Plutus MCP tools available: {len(decls)}")
+    return decls, client
+
+
 def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
-                 model: str, cfg: dict, transcript: list[dict]) -> None:
-    """An HTTP provider (Gemini): one call with the account's own key."""
+                 model: str, cfg: dict, transcript: list[dict], *,
+                 mcp_url: str = "", bearer_token: str = "",
+                 disallowed: list[str] | None = None) -> None:
+    """An HTTP provider (Gemini), with Plutus's tools attached as functions.
+
+    Gemini has no MCP support, so the equivalent is its function-calling loop:
+    declare Plutus's tools, and every time the model asks for one, actually call
+    it through the MCP endpoint and hand the result back. Same tools, same scope,
+    same transcript rows as a Claude run — the wire format is the only difference.
+    """
+    import json as _json
+
     from core import ai_providers
 
     spec = ai_providers.PROVIDERS[provider]
@@ -1017,27 +1129,81 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
     if not ok:
         raise RuntimeError(why)
 
-    _emit(f"calling {spec['label']}…")
-    started = time.monotonic()
-    res = ai_providers.api_generate(root, provider, account_id, prompt,
-                                    model=model, timeout=_timeout_min(cfg) * 60)
-    _emit(f"{spec['label']} replied in {time.monotonic() - started:.1f}s")
+    decls, client = _plutus_declarations(mcp_url, bearer_token, disallowed)
+    contents: list[dict] = [{"role": "user", "parts": [{"text": prompt}]}]
+    deadline = time.monotonic() + _timeout_min(cfg) * 60
+    turns = 0
+    try:
+        for _ in range(MAX_TOOL_TURNS):
+            if _current.get("cancelled"):
+                rec["cancelled"] = True
+                rec["error"] = "Cancelled by user."
+                return
+            left = deadline - time.monotonic()
+            if left <= 0:
+                rec["error"] = (f"Timed out after {_timeout_min(cfg)} min "
+                                "(Settings → Agent → timeout).")
+                _emit(rec["error"])
+                return
 
-    if _current.get("cancelled"):
-        rec["cancelled"] = True
-        rec["error"] = "Cancelled by user."
-        return
-    rec["model"] = res.get("model") or model
-    if not res["ok"]:
-        rec["error"] = f"{spec['label']}: {res['error']}"
+            turns += 1
+            res = ai_providers.api_turn(root, provider, account_id, contents=contents,
+                                        declarations=decls, model=model,
+                                        timeout=int(left),
+                                        search=not decls)
+            rec["model"] = res.get("model") or model
+            if not res["ok"]:
+                rec["error"] = f"{spec['label']}: {res['error']}"
+                _emit(rec["error"])
+                return
+
+            if res["text"]:
+                transcript.append({"kind": "assistant", "text": _clip(res["text"])})
+            if not res["calls"]:
+                rec["result"] = res["text"][-3000:]
+                rec["turns"] = turns
+                rec["ok"] = True
+                transcript.append({"kind": "final", "cost_usd": None, "turns": turns,
+                                   "text": _clip(res["text"])})
+                return
+
+            # The model's own message has to go back verbatim, or the API rejects
+            # the function responses as unsolicited.
+            contents.append({"role": "model", "parts": res["parts"]})
+            replies = []
+            for call in res["calls"]:
+                name = str(call.get("name") or "")
+                args = call.get("args") if isinstance(call.get("args"), dict) else {}
+                _emit(f"-> {name}: {_json.dumps(args, default=str)[:110]}")
+                transcript.append({"kind": "tool_call", "name": name, "id": "",
+                                   "input": _clip(args)})
+                if client is None:
+                    out = {"text": "Plutus tools are not available to this run.",
+                           "is_error": True}
+                else:
+                    try:
+                        out = client.call_tool(name, args)
+                    except Exception as e:
+                        out = {"text": f"tool call failed: {e}", "is_error": True}
+                transcript.append({"kind": "tool_result", "id": "",
+                                   "is_error": out["is_error"],
+                                   "text": _clip(out["text"])})
+                replies.append({"functionResponse": {
+                    "name": name,
+                    # A tool's own error is data the model should see and work
+                    # around, not a transport failure — so it rides in the same
+                    # response envelope.
+                    "response": {"error" if out["is_error"] else "result": out["text"]},
+                }})
+            contents.append({"role": "user", "parts": replies})
+
+        rec["turns"] = turns
+        rec["error"] = (f"Stopped after {MAX_TOOL_TURNS} tool rounds without a final "
+                        "answer. Narrow the task or the connections.")
         _emit(rec["error"])
-        return
-    text = res["text"]
-    transcript.append({"kind": "assistant", "text": _clip(text)})
-    transcript.append({"kind": "final", "cost_usd": None, "turns": 1, "text": _clip(text)})
-    rec["result"] = text[-3000:]
-    rec["turns"] = 1
-    rec["ok"] = True
+    finally:
+        if client is not None:
+            client.close()
 
 
 # ── the run ──────────────────────────────────────────────────────────────────
@@ -1116,24 +1282,30 @@ def run_agent(
     _emit(f"auth: {cred_why}")
     rec["auth_source"] = cred_source
 
-    # Plutus's own MCP tools are wired through Claude's --mcp-config, so they only
-    # reach the Claude runtime. Say that out loud rather than letting an agent
-    # quietly come back empty-handed from a task that needed a tool.
+    # Every runtime reaches the same tools, by three different roads: Claude's
+    # --mcp-config, a stdio bridge for Codex, and function calling for Gemini
+    # (which has no MCP support at all). See docs/AGENTS.md §2b.
+    give_tools = bool(cfg.get("give_plutus_tools", True))
     mcp_config_path = None
-    if cfg.get("give_plutus_tools", True):
-        if runtime == "claude":
-            try:
-                mcp_config_path = write_plutus_mcp_config(root, mcp_url=mcp_url, token=bearer_token)
-            except Exception as e:
-                _emit(f"warn: could not write MCP config ({e})")
-        else:
-            _emit(f"note: Plutus MCP tools are not wired into {spec['label']} runs — "
-                  "this agent works from the prompt alone")
+    if give_tools:
+        try:
+            if runtime == "claude":
+                mcp_config_path = write_plutus_mcp_config(root, mcp_url=mcp_url,
+                                                          token=bearer_token)
+            elif prov == "codex":
+                write_codex_mcp_config(root, aid, mcp_url=mcp_url, token=bearer_token,
+                                       disallowed=disallowed_tools)
+                _emit("Plutus MCP tools wired into Codex via the stdio bridge")
+        except Exception as e:
+            # Losing tools is bad; failing the run over it is worse.
+            _emit(f"warn: could not wire Plutus MCP tools ({e})")
 
     transcript: list[dict] = []    # full detail, persisted beside the run
     try:
         if runtime == "api":
-            _execute_api(root, rec, prompt, prov, aid, chosen_model, cfg, transcript)
+            _execute_api(root, rec, prompt, prov, aid, chosen_model, cfg, transcript,
+                         mcp_url=mcp_url if give_tools else "",
+                         bearer_token=bearer_token, disallowed=disallowed_tools)
         elif runtime == "cli":
             _execute_cli(root, rec, prompt, prov, aid, chosen_model, cfg, cwd, transcript)
         else:
