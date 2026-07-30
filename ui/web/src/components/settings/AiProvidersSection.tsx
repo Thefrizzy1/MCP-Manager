@@ -13,6 +13,8 @@ interface Account {
   authenticated: boolean
   state: string
   config_dir: string
+  login_command: string
+  role_label: string
 }
 interface Provider {
   id: string
@@ -22,6 +24,7 @@ interface Provider {
   login_command: string
   cli: { installed: boolean; path: string; version: string; install_hint: string }
   accounts: Account[]
+  role_label: string
 }
 interface Check {
   name: string
@@ -129,6 +132,7 @@ export function AiProvidersSection() {
                 {STATE_TEXT[p.state] ?? p.state}
               </span>
               {p.cli.version && <span className="text-[11.5px] text-ink-3">{p.cli.version}</span>}
+              {p.role_label && <span className="text-[11.5px] text-ink-3">· {p.role_label}</span>}
               {!p.runnable && (
                 <span className="text-[11.5px] text-ink-3">· detection only — agents can’t use this yet</span>
               )}
@@ -173,7 +177,7 @@ export function AiProvidersSection() {
                       <div className="mt-1.5">
                         <p className="text-[11.5px] text-ink-3">Link this account by running:</p>
                         <code className="mt-1 block overflow-x-auto whitespace-pre rounded bg-surface px-2 py-1 text-[11px] text-ink-2">
-                          {`docker exec -it -e CLAUDE_CONFIG_DIR=${a.config_dir} plutus-mcp claude`}
+                          {a.login_command}
                         </code>
                       </div>
                     )}

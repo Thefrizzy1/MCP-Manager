@@ -365,7 +365,13 @@ function LaunchWizard({
     queryKey: ['ai-providers'],
     queryFn: () =>
       api.get<{
-        providers: { id: string; label: string; runnable: boolean; accounts: { id: string; label: string; authenticated: boolean }[] }[]
+        providers: {
+          id: string
+          label: string
+          runnable: boolean
+          role_label: string
+          accounts: { id: string; label: string; authenticated: boolean }[]
+        }[]
       }>('/api/v1/providers'),
   })
   const linkedAccounts = (providersQ.data?.providers ?? [])
@@ -373,7 +379,13 @@ function LaunchWizard({
     .flatMap((p) =>
       p.accounts
         .filter((a) => a.authenticated)
-        .map((a) => ({ provider: p.id, providerLabel: p.label, id: a.id, label: a.label })),
+        .map((a) => ({
+          provider: p.id,
+          providerLabel: p.label,
+          role: p.role_label,
+          id: a.id,
+          label: a.label,
+        })),
     )
   // Access level and timeout are no longer per-launch choices — they come from
   // Settings → Agent (tool_permission / timeout_min). The connection picker is
@@ -459,13 +471,14 @@ function LaunchWizard({
         {linkedAccounts.length > 0 && (
           <Field
             label="Account"
-            hint="Which authenticated CLI login runs this agent. Manage them in Settings → AI providers."
+            hint="Which authenticated CLI login runs this agent. Codex is a coding runtime, Gemini a research one — pick to match the task. Manage accounts in Settings → AI providers."
           >
             <Select value={account} onChange={(e) => setAccount(e.target.value)}>
               <option value="">Default login</option>
               {linkedAccounts.map((a) => (
                 <option key={`${a.provider}/${a.id}`} value={`${a.provider}/${a.id}`}>
                   {a.providerLabel} · {a.label}
+                  {a.role ? ` (${a.role})` : ''}
                 </option>
               ))}
             </Select>

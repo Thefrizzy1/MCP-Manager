@@ -110,6 +110,103 @@ def test_login_hint_targets_the_unlinked_account(tmp_path, monkeypatch):
     assert f"CLAUDE_CONFIG_DIR={AP.account_dir(tmp_path, 'claude', acct['id'])}" in hint
 
 
+# ── the login command must match the provider ────────────────────────────────
+
+def test_login_command_is_per_provider(tmp_path):
+    """The UI hardcoded the Claude form, so a Codex account was told to run
+    `CLAUDE_CONFIG_DIR=… plutus-mcp claude` — wrong env var, wrong binary."""
+    claude = AP.add_account(tmp_path, "claude", "Personal Pro")
+    codex = AP.add_account(tmp_path, "codex", "Personal ChatGPT")
+    gemini = AP.add_account(tmp_path, "gemini", "Personal Google")
+
+    c = AP.login_command(tmp_path, "claude", claude["id"])
+    assert "CLAUDE_CONFIG_DIR=" in c and c.endswith("plutus-mcp claude")
+
+    x = AP.login_command(tmp_path, "codex", codex["id"])
+    assert "CODEX_HOME=" in x and x.endswith("plutus-mcp codex")
+    assert "CLAUDE" not in x and " claude" not in x
+
+    g = AP.login_command(tmp_path, "gemini", gemini["id"])
+    assert "GEMINI_CONFIG_DIR=" in g and g.endswith("plutus-mcp gemini")
+
+    # Each account's own directory, so two accounts never share a login.
+    assert AP.account_dir(tmp_path, "codex", codex["id"]).name in x
+
+
+def test_account_status_carries_its_own_login_command(tmp_path):
+    acct = AP.add_account(tmp_path, "codex", "Work")
+    st = AP.account_status(tmp_path, "codex", acct)
+    assert "CODEX_HOME=" in st["login_command"]
+    assert st["provider_label"] == "Codex"
+    assert st["role"] == AP.ROLE_CODING
+
+
+# ── provider roles and runnability ───────────────────────────────────────────
+
+def test_every_provider_is_runnable_with_an_exec_builder():
+    for pid, spec in AP.PROVIDERS.items():
+        assert spec["runnable"] is True, pid
+        assert callable(spec["exec"]), pid
+
+
+def test_roles_route_coding_and_research_separately():
+    assert AP.PROVIDERS["codex"]["role"] == AP.ROLE_CODING
+    assert AP.PROVIDERS["gemini"]["role"] == AP.ROLE_RESEARCH
+    assert AP.PROVIDERS["claude"]["role"] == AP.ROLE_GENERAL
+
+
+def test_each_cli_is_driven_with_its_own_flags():
+    """The capability test used to hardcode Claude's `-p --output-format text`,
+    which no other CLI understands."""
+    claude = AP.PROVIDERS["claude"]["exec"]("hello", "haiku")
+    assert claude[:3] == ["-p", "--output-format", "text"]
+    assert claude[-2:] == ["--", "hello"], "the prompt needs the -- guard"
+
+    codex = AP.PROVIDERS["codex"]["exec"]("hello", "")
+    assert codex == ["exec", "hello"]
+    assert AP.PROVIDERS["codex"]["exec"]("hello", "gpt-5") == ["exec", "--model", "gpt-5", "hello"]
+
+    gemini = AP.PROVIDERS["gemini"]["exec"]("hello", "")
+    assert gemini == ["-p", "hello"], "gemini takes the prompt as -p's value"
+
+
+def test_capability_test_invokes_the_providers_own_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
+                                                   "version": "1.0", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "codex", "Personal")
+    (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
+
+    seen = {}
+
+    def fake_run(cmd, env, timeout):
+        seen["cmd"] = cmd
+        seen["home"] = env.get("CODEX_HOME")
+        return {"code": 0, "out": "PLUTUS_OK", "err": "", "timeout": False}
+
+    monkeypatch.setattr(AP, "_run_cli", fake_run)
+    res = AP.capability_test(tmp_path, "codex", acct["id"])
+
+    assert res["ok"] is True
+    assert seen["cmd"][1] == "exec", seen["cmd"]
+    assert "--output-format" not in seen["cmd"], "Claude's flags must not leak into Codex"
+    assert seen["home"] == str(AP.account_dir(tmp_path, "codex", acct["id"]))
+
+
+def test_mcp_check_is_only_claimed_for_claude(tmp_path, monkeypatch):
+    """--mcp-config is Claude-specific; asserting MCP works for the others would
+    be a lie."""
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
+                                                   "version": "", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    (AP.account_dir(tmp_path, "gemini", acct["id"]) / "oauth_creds.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(AP, "_run_cli", lambda *a, **k: {"code": 0, "out": "PLUTUS_OK",
+                                                        "err": "", "timeout": False})
+
+    res = AP.capability_test(tmp_path, "gemini", acct["id"], mcp_config_path="/tmp/x.json")
+    assert [c["name"] for c in res["checks"]] == ["CLI installed", "Session credentials present",
+                                                  "Can execute prompt"]
+
+
 # ── CLI resolution ───────────────────────────────────────────────────────────
 
 def test_resolve_cli_finds_an_auto_updated_native_install(tmp_path, monkeypatch):
@@ -235,14 +332,19 @@ def test_out_of_usage_is_not_reported_as_an_auth_failure(tmp_path, monkeypatch):
     assert "re-link" not in detail
 
 
-def test_codex_is_detected_but_not_claimed_runnable(tmp_path, monkeypatch):
-    """Declaring a provider we cannot actually drive must not report healthy."""
-    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": "/usr/bin/codex",
+def test_a_non_runnable_provider_never_reports_healthy(tmp_path, monkeypatch):
+    """Every shipped provider is runnable now, but the guard has to stay: a
+    provider we cannot actually drive must say so rather than report healthy and
+    fail on first use. Tested with a synthetic provider so it keeps working as
+    real ones come and go."""
+    monkeypatch.setitem(AP.PROVIDERS, "toy", {
+        **AP.PROVIDERS["claude"], "label": "Toy CLI", "cli": "toy", "runnable": False,
+    })
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": "/usr/bin/toy",
                                                    "version": "1.0", "install_hint": ""})
-    acct = AP.add_account(tmp_path, "codex", "Personal")
-    (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
+    acct = AP.add_account(tmp_path, "toy", "Personal")
 
-    res = AP.capability_test(tmp_path, "codex", acct["id"])
+    res = AP.capability_test(tmp_path, "toy", acct["id"])
     assert res["ok"] is False
     assert any("cannot run agents through it yet" in c["detail"] for c in res["checks"])
 

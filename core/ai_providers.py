@@ -37,6 +37,47 @@ ACCOUNTS_FILE = "ai_accounts.json"
 
 # ── provider registry ────────────────────────────────────────────────────────
 
+# Roles are a routing *label*, not a sandbox. Codex is a coding agent and makes a
+# poor research runtime; Gemini is the reverse. The launch picker groups accounts
+# by role so the sensible choice is the obvious one — nothing here stops an
+# operator deliberately picking the other.
+ROLE_GENERAL = "general"
+ROLE_CODING = "coding"
+ROLE_RESEARCH = "research"
+
+ROLE_LABEL = {
+    ROLE_GENERAL: "general purpose",
+    ROLE_CODING: "coding",
+    ROLE_RESEARCH: "research",
+}
+
+
+def _claude_exec(prompt: str, model: str) -> list[str]:
+    # `--` terminates option parsing: several Claude Code options are variadic and
+    # would otherwise swallow a bare positional prompt (see build_agent_cmd).
+    args = ["-p", "--output-format", "text"]
+    if model:
+        args += ["--model", model]
+    return args + ["--", prompt]
+
+
+def _codex_exec(prompt: str, model: str) -> list[str]:
+    # `codex exec <prompt>` is Codex's non-interactive mode; the prompt is
+    # positional and --model takes exactly one value.
+    args = ["exec"]
+    if model:
+        args += ["--model", model]
+    return args + [prompt]
+
+
+def _gemini_exec(prompt: str, model: str) -> list[str]:
+    # Gemini CLI takes the prompt as the *value* of -p, so no option can eat it.
+    args: list[str] = []
+    if model:
+        args += ["-m", model]
+    return args + ["-p", prompt]
+
+
 PROVIDERS: dict[str, dict[str, Any]] = {
     "claude": {
         "label": "Claude Code",
@@ -54,6 +95,9 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "login_cmd": ("claude",),
         "token_cmd": ("claude", "setup-token"),
         "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
+        "exec": _claude_exec,
+        "test_model": "haiku",
+        "role": ROLE_GENERAL,
         "runnable": True,
     },
     "codex": {
@@ -62,12 +106,30 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "install_hint": "docker exec plutus-mcp npm install -g @openai/codex",
         "config_dir_env": "CODEX_HOME",
         "credential_files": ("auth.json", ".credentials.json"),
-        "login_cmd": ("codex", "login"),
+        # `codex` on its own opens the interactive TUI and completes the browser
+        # sign-in from there; `codex login` also exists but the plain command is
+        # what actually worked in the container.
+        "login_cmd": ("codex",),
         "token_cmd": None,
         "token_env": None,
-        # Detection only. Plutus will not claim it can run agents through Codex
-        # until its non-interactive flags are verified against the real CLI.
-        "runnable": False,
+        "exec": _codex_exec,
+        "test_model": "",           # use whatever the account defaults to
+        "role": ROLE_CODING,
+        "runnable": True,
+    },
+    "gemini": {
+        "label": "Gemini CLI",
+        "cli": "gemini",
+        "install_hint": "docker exec plutus-mcp npm install -g @google/gemini-cli",
+        "config_dir_env": "GEMINI_CONFIG_DIR",
+        "credential_files": ("oauth_creds.json", "google_accounts.json", ".credentials.json"),
+        "login_cmd": ("gemini",),
+        "token_cmd": None,
+        "token_env": "GEMINI_API_KEY",
+        "exec": _gemini_exec,
+        "test_model": "",
+        "role": ROLE_RESEARCH,
+        "runnable": True,
     },
 }
 
@@ -271,19 +333,37 @@ def account_env(root: Path, provider: str, account_id: str,
     return env
 
 
+def login_command(root: Path, provider: str, account_id: str) -> str:
+    """The exact `docker exec` one-liner that links *this* account.
+
+    Per-account and per-provider on purpose: the UI used to hardcode the Claude
+    form, so a Codex account was told to run `CLAUDE_CONFIG_DIR=… plutus-mcp
+    claude` — the wrong env var and the wrong binary.
+    """
+    spec = _spec(provider)
+    cmd = " ".join(spec["login_cmd"])
+    d = account_dir(root, provider, account_id)
+    return f"docker exec -it -e {spec['config_dir_env']}={d} plutus-mcp {cmd}"
+
+
 def account_status(root: Path, provider: str, account: dict) -> dict:
     """Auth state for one account, without running the CLI."""
+    spec = _spec(provider)
     aid = account.get("id", "")
     cred = credentials_file(root, provider, aid)
     d = account_dir(root, provider, aid)
     return {
         **account,
         "provider": provider,
+        "provider_label": spec["label"],
+        "role": spec.get("role", ROLE_GENERAL),
+        "role_label": ROLE_LABEL.get(spec.get("role", ROLE_GENERAL), ""),
         "config_dir": str(d),
         "authenticated": cred is not None,
         "credentials_path": str(cred) if cred else "",
         "linked_at": int(cred.stat().st_mtime) if cred else None,
         "state": "connected" if cred else "login_required",
+        "login_command": login_command(root, provider, aid),
     }
 
 
@@ -304,31 +384,19 @@ def provider_status(root: Path, provider: str) -> dict:
         "id": provider,
         "label": spec["label"],
         "runnable": bool(spec.get("runnable")),
+        "role": spec.get("role", ROLE_GENERAL),
+        "role_label": ROLE_LABEL.get(spec.get("role", ROLE_GENERAL), ""),
         "cli": cli,
         "accounts": accounts,
         "state": state,
-        "login_command": _login_command_hint(root, provider, accounts),
+        # Kept for callers that want a provider-level hint; each account also
+        # carries its own, which is what the UI renders.
+        "login_command": accounts[0]["login_command"] if accounts else "",
     }
 
 
 def all_status(root: Path) -> list[dict]:
     return [provider_status(root, p) for p in PROVIDERS]
-
-
-def _login_command_hint(root: Path, provider: str, accounts: list[dict]) -> str:
-    """The exact `docker exec` one-liner that links an account.
-
-    Shown in the UI verbatim. The interactive OAuth handshake needs a real
-    terminal, so this is the reliable path; the guided in-app flow (see
-    core/provider_login.py) drives the same command through a pty.
-    """
-    spec = _spec(provider)
-    target = next((a for a in accounts if not a["authenticated"]), None) or (accounts[0] if accounts else None)
-    if not target:
-        return ""
-    cmd = " ".join(spec["login_cmd"])
-    return (f"docker exec -it -e {spec['config_dir_env']}={target['config_dir']} "
-            f"plutus-mcp {cmd}")
 
 
 # ── real capability tests ────────────────────────────────────────────────────
@@ -339,12 +407,16 @@ def _check(name: str, ok: bool, detail: str = "") -> dict:
 
 def capability_test(root: Path, provider: str, account_id: str, *,
                     mcp_config_path: str | None = None,
-                    model: str = "haiku", timeout: int = 120) -> dict:
+                    model: str | None = None, timeout: int = 120) -> dict:
     """Actually exercise the provider instead of probing a port.
 
     Runs, in order: CLI present → credentials on disk → a real prompt round-trip
     → (optionally) the same round-trip with Plutus's MCP config attached. Stops at
     the first failure, because every later check depends on it.
+
+    The invocation comes from the provider's own ``exec`` builder, so each CLI is
+    driven with its real flags rather than Claude's — this used to hardcode
+    ``-p --output-format text``, which no other CLI understands.
     """
     spec = _spec(provider)
     checks: list[dict] = []
@@ -372,20 +444,26 @@ def capability_test(root: Path, provider: str, account_id: str, *,
     env.pop(spec["token_env"] or "_", None)
 
     sentinel = "PLUTUS_OK"
-    base = [cli["path"], "-p", "--output-format", "text", "--model", model]
+    chosen = spec.get("test_model", "") if model is None else model
+    build = spec["exec"]
     prompt = f"Reply with exactly this word and nothing else: {sentinel}"
 
-    ran = _run_cli(base + ["--", prompt], env, timeout)
+    ran = _run_cli([cli["path"], *build(prompt, chosen)], env, timeout)
     checks.append(_check("Can execute prompt", sentinel in ran["out"],
                          _explain(ran, sentinel)))
     if sentinel not in ran["out"]:
         return {"ok": False, "checks": checks}
 
-    if mcp_config_path:
+    # MCP wiring is Claude-specific for now (--mcp-config); the other CLIs
+    # configure their servers through their own config files, so claiming to have
+    # tested it there would be a lie.
+    if mcp_config_path and provider == "claude":
         mcp_prompt = ("List the name of any one tool you can call from the 'plutus' MCP "
                       f"server, then the word {sentinel}. If you have no such tools, "
                       "reply NO_MCP.")
-        mran = _run_cli(base + ["--mcp-config", mcp_config_path, "--", mcp_prompt], env, timeout)
+        mran = _run_cli(
+            [cli["path"], "-p", "--output-format", "text", "--mcp-config", mcp_config_path,
+             "--", mcp_prompt], env, timeout)
         got = sentinel in mran["out"] and "NO_MCP" not in mran["out"]
         checks.append(_check("MCP tools reachable", got,
                              mran["out"][:200] if mran["out"] else _explain(mran, sentinel)))
