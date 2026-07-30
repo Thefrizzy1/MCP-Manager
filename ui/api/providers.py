@@ -156,22 +156,29 @@ class TokenBody(BaseModel):
 
 @router.post("/api/v1/providers/{pid}/accounts/{aid}/token")
 async def api_save_token(pid: str, aid: str, body: TokenBody):
-    """Paste-a-token fallback, stored per account rather than globally.
+    """Store an API key / session token for one account.
 
-    Quotes are stripped: a pasted `"sk-ant-oat01-…"` used to be persisted verbatim
-    and then rejected as an invalid bearer token, with nothing explaining why.
+    Per account rather than one global value: the key is injected as the
+    provider's env var per invocation, which is the only auth path that isolates
+    accounts for a CLI with no config-dir override (Gemini). Quotes are stripped —
+    a pasted `"AIza…"` used to be persisted verbatim and then rejected.
     """
     spec = _known(pid)
     _known_account(pid, aid)
-    if not spec.get("token_env"):
-        raise HTTPException(400, f"{spec['label']} does not support token auth")
     tok = body.token.strip().strip("'\"").strip()
-    if tok.startswith("sk-ant-api") and "oat" not in tok:
+    if pid == "claude" and tok.startswith("sk-ant-api") and "oat" not in tok:
         raise HTTPException(400, "That is an API key, not a session token. Run `claude setup-token`.")
-    d = ai_providers.account_dir(ROOT, pid, aid)
-    d.mkdir(parents=True, exist_ok=True)
-    f = d / "plutus_token"
-    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(tok)
-    return {"ok": True, "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
+    try:
+        ai_providers.save_token(ROOT, pid, aid, tok)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "env": spec["token_env"],
+            "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
+
+
+@router.delete("/api/v1/providers/{pid}/accounts/{aid}/token")
+async def api_clear_token(pid: str, aid: str):
+    _known_account(pid, aid)
+    removed = ai_providers.clear_token(ROOT, pid, aid)
+    return {"ok": True, "removed": removed,
+            "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}

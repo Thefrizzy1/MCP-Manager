@@ -64,7 +64,12 @@ def _claude_exec(prompt: str, model: str) -> list[str]:
 def _codex_exec(prompt: str, model: str) -> list[str]:
     # `codex exec <prompt>` is Codex's non-interactive mode; the prompt is
     # positional and --model takes exactly one value.
-    args = ["exec"]
+    #
+    # --skip-git-repo-check is required, not optional: Codex refuses to run
+    # outside a git repository, and the agent's working directory (/app in the
+    # container) is not one. Its own error names the flag —
+    # "Not inside a trusted directory and --skip-git-repo-check was not specified".
+    args = ["exec", "--skip-git-repo-check"]
     if model:
         args += ["--model", model]
     return args + [prompt]
@@ -96,6 +101,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "login_cmd": ("claude",),
         "token_cmd": ("claude", "setup-token"),
         "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
+        "key_hint": "Session token from `claude setup-token`",
         "exec": _claude_exec,
         "test_model": "haiku",
         "role": ROLE_GENERAL,
@@ -137,6 +143,10 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "login_cmd": ("gemini",),
         "token_cmd": None,
         "token_env": "GEMINI_API_KEY",
+        # Gemini's free tier issues a key from AI Studio, which is the simplest
+        # way to run it headlessly *and* the only one that isolates accounts,
+        # since the CLI shares one ~/.gemini for OAuth logins.
+        "key_hint": "Free key from https://aistudio.google.com/apikey",
         "exec": _gemini_exec,
         "test_model": "",
         "role": ROLE_RESEARCH,
@@ -343,6 +353,47 @@ def cli_info(provider: str, *, fresh: bool = False) -> dict:
     return info
 
 
+# A per-account API key, written 0600 by the providers API.
+#
+# This is the cleanest auth path for a CLI with no config-dir override: a key is
+# injected per invocation, so two accounts are genuinely isolated without either
+# touching a shared directory. Gemini's free tier makes it the practical default
+# there; Claude accepts a session token the same way.
+TOKEN_FILE = "plutus_token"
+
+
+def stored_token(root: Path, provider: str, account_id: str) -> str:
+    _spec(provider)
+    try:
+        return account_dir(root, provider, account_id).joinpath(TOKEN_FILE).read_text(
+            encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return ""
+
+
+def save_token(root: Path, provider: str, account_id: str, token: str) -> None:
+    spec = _spec(provider)
+    if not spec.get("token_env"):
+        raise ValueError(f"{spec['label']} does not support key/token auth")
+    tok = (token or "").strip().strip("'\"").strip()
+    if not tok:
+        raise ValueError("token is empty")
+    d = account_dir(root, provider, account_id)
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / TOKEN_FILE
+    fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(tok)
+
+
+def clear_token(root: Path, provider: str, account_id: str) -> bool:
+    try:
+        account_dir(root, provider, account_id).joinpath(TOKEN_FILE).unlink()
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def credentials_file(root: Path, provider: str, account_id: str) -> Path | None:
     spec = _spec(provider)
     d = account_dir(root, provider, account_id)
@@ -375,8 +426,11 @@ def account_env(root: Path, provider: str, account_id: str,
     env: dict[str, str] = {}
     if spec.get("config_dir_env"):
         env[spec["config_dir_env"]] = str(account_dir(root, provider, account_id))
-    if token and spec.get("token_env"):
-        env[spec["token_env"]] = token
+    # The account's own key, read here so every caller gets it without having to
+    # remember to look it up.
+    tok = token or stored_token(root, provider, account_id)
+    if tok and spec.get("token_env"):
+        env[spec["token_env"]] = tok
     return env
 
 
@@ -450,10 +504,11 @@ def account_status(root: Path, provider: str, account: dict) -> dict:
     spec = _spec(provider)
     aid = account.get("id", "")
     cred = credentials_file(root, provider, aid)
+    has_key = bool(stored_token(root, provider, aid))
     d = account_dir(root, provider, aid)
     # A login the CLI left in its default home: not owned by this account yet, but
     # visible, so the UI can offer to adopt it instead of reporting a dead end.
-    pending = None if cred else shared_credentials_file(provider)
+    pending = None if (cred or has_key) else shared_credentials_file(provider)
     return {
         **account,
         "provider": provider,
@@ -461,11 +516,17 @@ def account_status(root: Path, provider: str, account: dict) -> dict:
         "role": spec.get("role", ROLE_GENERAL),
         "role_label": ROLE_LABEL.get(spec.get("role", ROLE_GENERAL), ""),
         "config_dir": str(d),
-        "isolated": supports_isolation(provider),
-        "authenticated": cred is not None,
+        "isolated": supports_isolation(provider) or bool(spec.get("token_env")),
+        # An API key counts as linked: it is injected per invocation, so the
+        # account is authenticated and isolated without any shared directory.
+        "authenticated": cred is not None or has_key,
+        "auth_kind": "api_key" if has_key else ("cli_login" if cred else ""),
+        "accepts_key": bool(spec.get("token_env")),
+        "key_hint": spec.get("key_hint", ""),
         "credentials_path": str(cred) if cred else "",
         "linked_at": int(cred.stat().st_mtime) if cred else None,
-        "state": "connected" if cred else ("adoptable" if pending else "login_required"),
+        "state": ("connected" if (cred or has_key)
+                  else ("adoptable" if pending else "login_required")),
         "adoptable": pending is not None,
         "adoptable_from": str(default_home(provider)) if pending else "",
         "login_command": login_command(root, provider, aid),
@@ -542,7 +603,11 @@ def capability_test(root: Path, provider: str, account_id: str, *,
         return {"ok": False, "checks": checks}
 
     cred = credentials_file(root, provider, account_id)
-    if cred is None:
+    key = stored_token(root, provider, account_id)
+    if cred is None and key:
+        checks.append(_check("Session credentials present", True,
+                             f"API key stored for this account ({spec['token_env']})"))
+    elif cred is None:
         pending = shared_credentials_file(provider)
         detail = (f"a login exists in {default_home(provider)} but is not claimed by "
                   "this account yet — use Adopt login") if pending else \
@@ -552,9 +617,14 @@ def capability_test(root: Path, provider: str, account_id: str, *,
         return {"ok": False, "checks": checks}
     checks.append(_check("Session credentials present", True, str(cred)))
 
-    env = {**os.environ, **account_env(root, provider, account_id), "IS_SANDBOX": "1"}
-    env.pop("ANTHROPIC_API_KEY", None)      # the account's own login is authoritative
-    env.pop(spec["token_env"] or "_", None)
+    # Strip ambient credentials FIRST, then overlay the account's own. Doing it the
+    # other way round popped the account's stored API key straight back out and
+    # left the run with no credential at all.
+    env = {**os.environ, "IS_SANDBOX": "1"}
+    env.pop("ANTHROPIC_API_KEY", None)
+    if spec.get("token_env"):
+        env.pop(spec["token_env"], None)
+    env.update(account_env(root, provider, account_id))
 
     sentinel = "PLUTUS_OK"
     chosen = spec.get("test_model", "") if model is None else model
@@ -586,7 +656,11 @@ def capability_test(root: Path, provider: str, account_id: str, *,
 
 def _run_cli(cmd: list[str], env: dict, timeout: int) -> dict:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+        # DEVNULL, not inherited: Codex announces "Reading additional input from
+        # stdin…" even with a positional prompt, and an inherited terminal would
+        # leave it waiting for input nobody is going to type.
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=env, stdin=subprocess.DEVNULL)
         return {"code": r.returncode, "out": (r.stdout or "").strip(),
                 "err": (r.stderr or "").strip(), "timeout": False}
     except subprocess.TimeoutExpired:

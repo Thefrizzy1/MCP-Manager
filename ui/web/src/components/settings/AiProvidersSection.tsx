@@ -18,6 +18,9 @@ interface Account {
   isolated: boolean
   adoptable: boolean
   adoptable_from: string
+  accepts_key: boolean
+  key_hint: string
+  auth_kind: string
 }
 interface Provider {
   id: string
@@ -87,6 +90,7 @@ export function AiProvidersSection() {
   const [busy, setBusy] = useState('')
   const [adding, setAdding] = useState('')
   const [checks, setChecks] = useState<Record<string, Check[]>>({})
+  const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
 
   async function addAccount(pid: string) {
     const label = (newLabel[pid] || '').trim()
@@ -104,10 +108,10 @@ export function AiProvidersSection() {
     }
   }
 
-  async function act(path: string, ok: string) {
+  async function act(path: string, ok: string, body?: unknown) {
     setBusy(path)
     try {
-      await api.post(path)
+      await api.post(path, body)
       toast.success(ok)
       refetch()
     } catch (e) {
@@ -198,6 +202,22 @@ export function AiProvidersSection() {
                       <span className={'text-[11.5px] ' + (a.authenticated ? 'text-ok' : 'text-ink-3')}>
                         {a.authenticated ? 'linked' : 'not linked'}
                       </span>
+                      {/* The single action that moves this account forward, placed
+                          where it cannot be missed. It used to sit below the
+                          log-in command, so the Test result said "use Adopt login"
+                          while the button was out of sight. */}
+                      {!a.authenticated && a.adoptable && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={busy === `/api/v1/providers/${p.id}/accounts/${a.id}/adopt`}
+                          onClick={() =>
+                            act(`/api/v1/providers/${p.id}/accounts/${a.id}/adopt`, 'Login adopted.')
+                          }
+                        >
+                          Adopt login
+                        </Button>
+                      )}
                       <div className="ml-auto flex items-center gap-1">
                         <Button variant="ghost" size="sm" disabled={busy === key} onClick={() => test(p.id, a.id)}>
                           {busy === key ? <Loader2 size={13} className="animate-spin" /> : 'Test'}
@@ -233,6 +253,38 @@ export function AiProvidersSection() {
                           cmd={a.login_command}
                           tone={a.authenticated ? 'muted' : 'accent'}
                         />
+                        {a.accepts_key && (
+                          <div className="mt-1.5">
+                            <p className="text-[11.5px] text-ink-3">
+                              {a.auth_kind === 'api_key'
+                                ? 'An API key is stored for this account.'
+                                : `Or paste an API key — simplest for headless use. ${a.key_hint}`}
+                            </p>
+                            <div className="mt-1 flex items-center gap-2">
+                              <Input
+                                className="flex-1"
+                                type="password"
+                                placeholder={a.auth_kind === 'api_key' ? '•••••• stored — paste to replace' : 'API key'}
+                                value={keyDraft[a.id] ?? ''}
+                                onChange={(e) => setKeyDraft((v) => ({ ...v, [a.id]: e.target.value }))}
+                              />
+                              <Button
+                                variant="default"
+                                size="sm"
+                                disabled={!(keyDraft[a.id] || '').trim()}
+                                onClick={() =>
+                                  act(
+                                    `/api/v1/providers/${p.id}/accounts/${a.id}/token`,
+                                    'Key saved.',
+                                    { token: (keyDraft[a.id] || '').trim() },
+                                  ).then(() => setKeyDraft((v) => ({ ...v, [a.id]: '' })))
+                                }
+                              >
+                                Save key
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                         {a.adoptable ? (
                           <div className="mt-1.5 flex flex-wrap items-center gap-2">
                             <span className="text-[11.5px] text-ok">

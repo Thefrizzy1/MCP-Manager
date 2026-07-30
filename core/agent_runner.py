@@ -228,14 +228,16 @@ def _subprocess_env(root: Path | None = None, provider: str = "",
     if root is not None and provider and account_id:
         from core import ai_providers
         try:
-            env.update(ai_providers.account_env(root, provider, account_id))
-        except ValueError:
-            pass
-        else:
+            # Ambient credentials out first, then the account's own in. Reversed,
+            # this popped the account's stored API key back out again.
             env.pop("ANTHROPIC_API_KEY", None)
             tok_env = ai_providers.PROVIDERS.get(provider, {}).get("token_env")
             if tok_env:
                 env.pop(tok_env, None)
+            env.update(ai_providers.account_env(root, provider, account_id))
+        except ValueError:
+            pass
+        else:
             return env
 
     # Legacy single-login path: whichever credential was established most recently.
@@ -733,6 +735,10 @@ def run_agent(
         proc = subprocess.Popen(
             cmd, cwd=cwd or str(root),
             env=_subprocess_env(root, provider, account_id), text=True,
+            # No inherited stdin: a CLI that decides to read from it (Codex does,
+            # even with a positional prompt) would otherwise block forever waiting
+            # for input that is never coming.
+            stdin=subprocess.DEVNULL,
             bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         with _LOCK:

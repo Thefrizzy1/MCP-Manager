@@ -253,8 +253,9 @@ def test_each_cli_is_driven_with_its_own_flags():
     assert claude[-2:] == ["--", "hello"], "the prompt needs the -- guard"
 
     codex = AP.PROVIDERS["codex"]["exec"]("hello", "")
-    assert codex == ["exec", "hello"]
-    assert AP.PROVIDERS["codex"]["exec"]("hello", "gpt-5") == ["exec", "--model", "gpt-5", "hello"]
+    assert codex == ["exec", "--skip-git-repo-check", "hello"]
+    assert AP.PROVIDERS["codex"]["exec"]("hello", "gpt-5") == [
+        "exec", "--skip-git-repo-check", "--model", "gpt-5", "hello"]
 
     gemini = AP.PROVIDERS["gemini"]["exec"]("hello", "")
     assert gemini == ["-p", "hello"], "gemini takes the prompt as -p's value"
@@ -295,6 +296,78 @@ def test_mcp_check_is_only_claimed_for_claude(tmp_path, monkeypatch):
     res = AP.capability_test(tmp_path, "gemini", acct["id"], mcp_config_path="/tmp/x.json")
     assert [c["name"] for c in res["checks"]] == ["CLI installed", "Session credentials present",
                                                   "Can execute prompt"]
+
+
+# ── per-account API keys ─────────────────────────────────────────────────────
+
+def test_an_api_key_links_an_account_and_is_injected_per_run(tmp_path):
+    """The clean answer for a CLI with no config-dir override: a key is an env var
+    per invocation, so two accounts are genuinely isolated without sharing a
+    directory. Gemini's free tier makes this the practical default there."""
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    assert AP.account_status(tmp_path, "gemini", acct)["authenticated"] is False
+
+    AP.save_token(tmp_path, "gemini", acct["id"], '  "AIzaFAKE-123"  ')
+
+    st = AP.account_status(tmp_path, "gemini", acct)
+    assert st["authenticated"] is True
+    assert st["auth_kind"] == "api_key" and st["state"] == "connected"
+    # Quotes and whitespace stripped, or the key round-trips unusable.
+    assert AP.stored_token(tmp_path, "gemini", acct["id"]) == "AIzaFAKE-123"
+    assert AP.account_env(tmp_path, "gemini", acct["id"]) == {"GEMINI_API_KEY": "AIzaFAKE-123"}
+
+
+def test_two_accounts_keep_separate_keys(tmp_path):
+    a = AP.add_account(tmp_path, "gemini", "Personal")
+    b = AP.add_account(tmp_path, "gemini", "Work")
+    AP.save_token(tmp_path, "gemini", a["id"], "key-a")
+    AP.save_token(tmp_path, "gemini", b["id"], "key-b")
+
+    assert AP.account_env(tmp_path, "gemini", a["id"])["GEMINI_API_KEY"] == "key-a"
+    assert AP.account_env(tmp_path, "gemini", b["id"])["GEMINI_API_KEY"] == "key-b"
+
+
+def test_a_provider_without_key_auth_refuses_one(tmp_path):
+    acct = AP.add_account(tmp_path, "codex", "Personal")
+    with pytest.raises(ValueError, match="does not support"):
+        AP.save_token(tmp_path, "codex", acct["id"], "abc123")
+
+
+def test_clearing_a_key_unlinks_the_account(tmp_path):
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "key")
+    assert AP.clear_token(tmp_path, "gemini", acct["id"]) is True
+    assert AP.account_status(tmp_path, "gemini", acct)["authenticated"] is False
+
+
+def test_a_stored_key_satisfies_the_capability_test(tmp_path, monkeypatch):
+    monkeypatch.setattr(AP, "cli_info", lambda p, **k: {"installed": True, "path": "/usr/bin/gemini",
+                                                        "version": "0.53", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "key")
+
+    seen = {}
+
+    def fake_run(cmd, env, timeout):
+        seen["env"] = env
+        return {"code": 0, "out": "PLUTUS_OK", "err": "", "timeout": False}
+
+    monkeypatch.setattr(AP, "_run_cli", fake_run)
+    res = AP.capability_test(tmp_path, "gemini", acct["id"])
+
+    assert res["ok"] is True
+    assert seen["env"]["GEMINI_API_KEY"] == "key"
+
+
+# ── Codex must be told the working directory is not a repo ───────────────────
+
+def test_codex_exec_skips_the_git_repo_check():
+    """Codex refuses to run outside a git repo, and /app in the container is not
+    one: "Not inside a trusted directory and --skip-git-repo-check was not
+    specified"."""
+    args = AP.PROVIDERS["codex"]["exec"]("hello", "")
+    assert args[:2] == ["exec", "--skip-git-repo-check"]
+    assert args[-1] == "hello"
 
 
 # ── the CLIs must survive a redeploy ─────────────────────────────────────────
