@@ -28,8 +28,22 @@ def test_gitlab_pid_encoding():
 def test_services_registered():
     svcs = {s["id"]: s for s in all_services(Path("."))}
     assert "github" in svcs and "gitlab" in svcs
-    assert len(svcs["github"]["tools"]) == 4
     assert len(svcs["gitlab"]["tools"]) == 4
-    # both are read-only public integrations (no required configured_keys)
+    # Neither *requires* configuration — both read public data without a token.
     assert svcs["github"]["configured_keys"] == ()
     assert svcs["gitlab"]["configured_keys"] == ()
+
+
+def test_every_github_tool_is_on_the_card():
+    """The card is how a tool is reachable from the UI, so a tool missing from it
+    exists only for agents — which is how half a feature ships unnoticed."""
+    from mcp.server.fastmcp import FastMCP
+    from tools.github import register_github_tools
+
+    m = FastMCP("t")
+    register_github_tools(m)
+    registered = {t.name for t in m._tool_manager.list_tools()}
+    carded = {t["name"] for t in
+              {s["id"]: s for s in all_services(Path("."))}["github"]["tools"]}
+    assert registered == carded, registered ^ carded
+

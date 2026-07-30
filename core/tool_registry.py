@@ -187,8 +187,18 @@ TOOL_SAFETY_LEVELS: dict[str, int] = {
     "docker_restart_container": 2,
     "docker_start_container": 2,
     "fs_write_file": 1,
+    "fs_create_directory": 1,
+    "fs_delete": 2,
     "habitica_add_todo": 1,
     "habitica_delete_task": 2,
+    # GitHub writes land in somebody's real repository — visible, attributed to
+    # the token's account, and not something a smoke run should be creating.
+    "github_write_file": 2,
+    "github_create_issue": 2,
+    "github_comment": 2,
+    "github_set_issue_state": 2,
+    "github_create_branch": 2,
+    "github_create_pull": 2,
 }
 
 
