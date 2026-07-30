@@ -35,6 +35,14 @@ interface Run {
   started?: string
   cancelled?: boolean
 }
+interface RunPrefill {
+  id?: string
+  label: string
+  prompt: string
+  mcp_services: string[] | null
+  provider: string
+  account_id: string
+}
 interface Schedule {
   id: string
   name: string
@@ -77,6 +85,7 @@ export function Agents() {
   })
 
   const [wizard, setWizard] = useState(false)
+  const [prefill, setPrefill] = useState<RunPrefill | null>(null)
   const [console, setConsole] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
 
@@ -115,12 +124,14 @@ export function Agents() {
   const mode = s?.auth?.mode ?? 'none'
   const onPlan = mode === 'session_token' || mode === 'subscription'
 
+  // Open the wizard prefilled from a past run, so the prompt, connections or
+  // schedule can be adjusted before spending another run.
   async function rerun(id: string) {
     setRerunning(id)
     try {
-      await api.post(`/api/v1/agent/runs/${encodeURIComponent(id)}/rerun`)
-      startStream()
-      status.refetch()
+      const rec = await api.get<RunPrefill>(`/api/v1/agent/runs/${encodeURIComponent(id)}`)
+      setPrefill(rec)
+      setWizard(true)
     } catch (e) {
       toast.error(String(e))
     } finally {
@@ -145,7 +156,14 @@ export function Agents() {
         title="Agents"
         subtitle="Launch, schedule and monitor headless agents"
         actions={
-          <Button variant="primary" size="sm" onClick={() => setWizard((w) => !w)}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setPrefill(null)
+              setWizard((w) => !w)
+            }}
+          >
             <Plus size={14} /> New agent
           </Button>
         }
@@ -182,16 +200,20 @@ export function Agents() {
 
           {wizard && (
             <LaunchWizard
+              key={prefill?.id ?? 'blank'}
+              initial={prefill}
               connections={orderConnections(
                 (conns.data?.services ?? []).filter((x) => x.configured && !x.ignored),
               )}
               onLaunched={() => {
                 setWizard(false)
+                setPrefill(null)
                 startStream()
                 status.refetch()
               }}
               onScheduled={() => {
                 setWizard(false)
+                setPrefill(null)
                 qc.invalidateQueries({ queryKey: ['schedules'] })
               }}
             />
@@ -247,7 +269,7 @@ export function Agents() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        title="Run again with the same prompt and connections"
+                        title="Open the wizard prefilled from this run"
                         disabled={s?.running || rerunning === r.id}
                         onClick={() => rerun(r.id!)}
                       >
@@ -344,21 +366,25 @@ const orderConnections = (list: Service[]) =>
 
 function LaunchWizard({
   connections,
+  initial,
   onLaunched,
   onScheduled,
 }: {
   connections: Service[]
+  initial?: RunPrefill | null
   onLaunched: () => void
   onScheduled: () => void
 }) {
-  const [name, setName] = useState('')
+  const [name, setName] = useState(initial?.label ?? '')
   const [model, setModel] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const [prompt, setPrompt] = useState(initial?.prompt ?? '')
   const [sched, setSched] = useState('now')
   const [time, setTime] = useState('07:00')
   const [dow, setDow] = useState('1')
   const [cron, setCron] = useState('0 7 * * *')
-  const [account, setAccount] = useState('')
+  const [account, setAccount] = useState(
+    initial?.provider && initial?.account_id ? `${initial.provider}/${initial.account_id}` : '',
+  )
   // Only accounts with a completed CLI login can actually run anything, so
   // unlinked ones are not offered.
   const providersQ = useQuery({
@@ -390,8 +416,15 @@ function LaunchWizard({
   // Access level and timeout are no longer per-launch choices — they come from
   // Settings → Agent (tool_permission / timeout_min). The connection picker is
   // the single control over what an agent may touch.
-  const [selected, setSelected] = useState<Record<string, boolean>>(
-    Object.fromEntries(connections.map((c) => [c.id, defaultOn(c)])),
+  // A repeated run starts from the scope it actually ran with. `null` means the
+  // original had no restriction, which is not the same as an empty selection.
+  const [selected, setSelected] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(
+      connections.map((c) => [
+        c.id,
+        initial?.mcp_services ? initial.mcp_services.includes(c.id) : defaultOn(c),
+      ]),
+    ),
   )
   // Connections may resolve after this wizard mounts; default any newly
   // arrived ones without clobbering the user's toggles.
@@ -401,7 +434,7 @@ function LaunchWizard({
       const next = { ...prev }
       for (const c of connections) {
         if (!(c.id in next)) {
-          next[c.id] = defaultOn(c)
+          next[c.id] = initial?.mcp_services ? initial.mcp_services.includes(c.id) : defaultOn(c)
           changed = true
         }
       }

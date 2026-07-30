@@ -200,29 +200,29 @@ async def api_v1_agent_run_transcript(rid: str):
     }
 
 
-@router.post("/api/v1/agent/runs/{rid}/rerun")
-async def api_v1_agent_run_again(rid: str):
-    """Re-launch a past run with the same prompt *and* the same connection scope.
+@router.get("/api/v1/agent/runs/{rid}")
+async def api_v1_agent_run_detail(rid: str):
+    """One past run, shaped for prefilling the launch wizard.
 
-    Runs record `mcp_services`, so a re-run reproduces the original scope rather
-    than silently widening to every tool. Runs recorded before that field existed
-    have no selection stored — those re-run unrestricted, same as they did.
+    "Run again" opens the wizard rather than firing immediately, so the prompt,
+    connection scope and account can be adjusted before spending another run —
+    a repeat is usually a repeat *with a tweak*.
     """
     rec = agent_runner.get_run(ROOT, rid)
     if not rec:
         raise HTTPException(404, "run not found")
-    prompt = (rec.get("prompt") or "").strip()
-    if not prompt:
-        raise HTTPException(400, "that run has no stored prompt to repeat")
-    services = rec.get("mcp_services")
-    ok = _enqueue_agent(prompt, rec.get("label") or "agent", force=True,
-                        extra_disallowed=_agent_service_disallow(services),
-                        mcp_services=services,
-                        provider=rec.get("provider") or "",
-                        account_id=rec.get("account_id") or "")
-    if not ok:
-        return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
-    return {"ok": True, "queued": agent_runner._current["running"]}
+    return {
+        "id": rec.get("id"),
+        "label": rec.get("label") or "agent",
+        "prompt": rec.get("prompt") or "",
+        # None means "no restriction" — distinct from an empty list, which means
+        # "every connection was deselected". The wizard has to tell them apart.
+        "mcp_services": rec.get("mcp_services"),
+        "provider": rec.get("provider") or "",
+        "account_id": rec.get("account_id") or "",
+        "started": rec.get("started"),
+        "ok": rec.get("ok"),
+    }
 
 
 # ─── Web login (session/OAuth token — never an API key) ───────────────────────
