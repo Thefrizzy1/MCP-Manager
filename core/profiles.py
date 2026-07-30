@@ -92,6 +92,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "ai":            ["comfyui_", "fal_"],
     "weather":       ["weather_", "get_context"],
     "search":        ["web_", "wikipedia_", "google_search", "maps_"],
+    "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_"],
     "finance":       ["currency_"],
     "trivia": [
         "pub_chuck_joke", "pub_kanye_quote", "pub_bored_activity", "pub_animechan_quote", "pub_breaking_bad_quote",
@@ -121,7 +122,8 @@ INTENT_PRESETS: dict[str, list[str]] = {
     "homelab":  ["system_ops", "monitoring", "automation"],
     "smarthome": ["home", "automation", "notifications", "monitoring"],
     "creative": ["ai", "photos", "files"],
-    "web":      ["search", "weather", "finance", "ip_network"],
+    "web":      ["search", "weather", "finance", "ip_network", "social"],
+    "social":   ["social", "search"],
     "fun":      ["trivia", "crypto"],
 }
 

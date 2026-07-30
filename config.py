@@ -173,6 +173,15 @@ class Config(BaseModel):
 
     # YouTube Data API v3 (same Google Cloud key type; separate key recommended)
     youtube_api_key: str = _get("YOUTUBE_API_KEY")
+    # Reddit — a "script" app (https://www.reddit.com/prefs/apps). Optional: the
+    # social tools read public feeds without it. With it, requests go to
+    # oauth.reddit.com as *you*, which is the difference between an anonymous
+    # search client and an account that can see its own subscriptions and saves.
+    reddit_client_id: str = _get("REDDIT_CLIENT_ID")
+    reddit_client_secret: str = _get("REDDIT_CLIENT_SECRET")
+    reddit_username: str = _get("REDDIT_USERNAME")
+    reddit_password: str = _get("REDDIT_PASSWORD")
+
     hf_token: str = _get("HF_TOKEN")
     github_token: str = _get("GITHUB_TOKEN")
     gitlab_url: str = _get("GITLAB_URL", "https://gitlab.com")
