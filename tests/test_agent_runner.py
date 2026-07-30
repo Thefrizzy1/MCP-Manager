@@ -49,9 +49,20 @@ def test_cli_login_wins_over_saved_token(monkeypatch):
     assert ar.auth_info()["mode"] == "subscription"
 
 
-def test_subprocess_env_strips_stale_creds_when_logged_in(monkeypatch):
-    from core import env_store
-    monkeypatch.setattr(ar, "cli_logged_in", lambda: True)
+# The credential decision runs through cli_credentials_file() + the token's saved-at
+# stamp (see agent_runner.legacy_credential_source), so these patch that seam
+# rather than cli_logged_in — otherwise the result depends on whether the machine
+# running the tests happens to have a real ~/.claude login.
+
+def test_subprocess_env_strips_stale_creds_when_cli_login_is_newer(monkeypatch, tmp_path):
+    from core import agent_login, env_store
+    cred = tmp_path / ".credentials.json"
+    cred.write_text("{}", encoding="utf-8")
+    import os
+    os.utime(cred, (9_000_000, 9_000_000))          # login newer than the token
+    monkeypatch.setattr(ar, "cli_credentials_file", lambda: cred)
+    monkeypatch.setattr(agent_login, "read_env", lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "stale"})
+    monkeypatch.setattr(agent_login, "token_saved_at", lambda: 1_000)
     monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "stale"})
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-bad")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stale")
@@ -60,9 +71,11 @@ def test_subprocess_env_strips_stale_creds_when_logged_in(monkeypatch):
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
 
 
-def test_subprocess_env_uses_token_when_not_logged_in(monkeypatch):
-    from core import env_store
-    monkeypatch.setattr(ar, "cli_logged_in", lambda: False)
+def test_subprocess_env_uses_token_when_there_is_no_cli_login(monkeypatch):
+    from core import agent_login, env_store
+    monkeypatch.setattr(ar, "cli_credentials_file", lambda: None)
+    monkeypatch.setattr(agent_login, "read_env", lambda: {"CLAUDE_CODE_OAUTH_TOKEN": "good"})
+    monkeypatch.setattr(agent_login, "token_saved_at", lambda: 5_000)
     monkeypatch.setattr(env_store, "read_env", lambda path=None: {"CLAUDE_CODE_OAUTH_TOKEN": "good"})
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     env = ar._subprocess_env()

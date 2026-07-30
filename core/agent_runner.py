@@ -133,11 +133,63 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str
     return str(path)
 
 
+def cli_credentials_file() -> "Path | None":
+    """The mounted CLI login file, if there is one."""
+    home = Path(os.path.expanduser("~/.claude"))
+    for name in (".credentials.json", "credentials.json"):
+        f = home / name
+        if f.exists():
+            return f
+    return None
+
+
 def cli_logged_in() -> bool:
     """True if the Claude Code CLI has a real login in ~/.claude (mounted). Only
     credential files count — a bare settings.json is not proof of a session."""
-    home = Path(os.path.expanduser("~/.claude"))
-    return any((home / name).exists() for name in (".credentials.json", "credentials.json"))
+    return cli_credentials_file() is not None
+
+
+def legacy_credential_source() -> tuple[str, str]:
+    """Which credential a run *without* a provider account will use, and why.
+
+    A mounted ~/.claude login and a saved session token can **both** be stale, so
+    neither may win unconditionally — and each fixed order fails in one direction:
+
+      - always prefer the file  -> a freshly pasted token is silently discarded,
+        so the user updates the token, nothing changes, and the run still 401s
+        against dead credentials with no hint why. (This was the live bug.)
+      - always prefer the token -> a stale token shadows a working CLI login,
+        which is the failure the previous fix was written to stop.
+
+    So the most recently *established* credential wins: that is the one the user
+    just acted on. Returns ("cli"|"token"|"none", human explanation) — the
+    explanation is written into the run log so the choice is visible rather than
+    guessed at.
+    """
+    from core import agent_login
+
+    cred = cli_credentials_file()
+    try:
+        tok = (agent_login.read_env().get(agent_login.TOKEN_KEY, "") or "").strip()
+        saved_at = agent_login.token_saved_at()
+    except Exception:
+        tok, saved_at = "", 0
+
+    if cred and tok:
+        try:
+            cred_at = int(cred.stat().st_mtime)
+        except OSError:
+            cred_at = 0
+        if saved_at > cred_at:
+            return "token", ("saved session token (newer than the mounted CLI login, "
+                             "so it takes precedence)")
+        return "cli", (f"mounted CLI login {cred} (newer than the saved token, "
+                       "so it takes precedence)")
+    if cred:
+        return "cli", f"mounted CLI login {cred}"
+    if tok:
+        return "token", "saved session token"
+    return "none", "no Claude credentials found"
 
 
 def _subprocess_env(root: Path | None = None, provider: str = "",
@@ -179,18 +231,21 @@ def _subprocess_env(root: Path | None = None, provider: str = "",
                 env.pop(tok_env, None)
             return env
 
-    # Legacy single-login path: a mounted ~/.claude session wins over a saved token.
-    try:
-        from core.env_store import read_env
-        tok = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
-    except Exception:
-        tok = ""
-    if cli_logged_in():
-        # The CLI's own session wins — don't let stale creds shadow it.
+    # Legacy single-login path: whichever credential was established most recently.
+    source, _why = legacy_credential_source()
+    if source == "cli":
+        # Let the CLI read its own login; nothing in the env may shadow it.
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
         env.pop("ANTHROPIC_API_KEY", None)
-    elif tok:
-        env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
+    elif source == "token":
+        try:
+            from core.env_store import read_env
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = (read_env().get("CLAUDE_CODE_OAUTH_TOKEN", "") or "").strip()
+        except Exception:
+            pass
+        env.pop("ANTHROPIC_API_KEY", None)
+    # source == "none": leave the env alone so a deliberately configured
+    # ANTHROPIC_API_KEY (compose-only opt-in) still works.
     return env
 
 
@@ -508,6 +563,16 @@ def run_agent(
     }
     _emit(f"agent '{label}' starting")
 
+    # Say which credential this run uses. Without this line an auth failure was
+    # indistinguishable from a bad token, a stale mounted login, or no login at
+    # all — every case surfaced as the same opaque "401 Invalid bearer token".
+    if provider and account_id:
+        cred_source, cred_why = "account", f"{provider} account '{account_id}'"
+    else:
+        cred_source, cred_why = legacy_credential_source()
+    _emit(f"auth: {cred_why}")
+    rec["auth_source"] = cred_source
+
     mcp_config_path = None
     if cfg.get("give_plutus_tools", True):
         try:
@@ -518,6 +583,13 @@ def run_agent(
     cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
                           disallowed_tools=disallowed_tools, model=model)
     try:
+        if cred_source == "none":
+            # Fail before spending a run that can only come back 401.
+            raise RuntimeError(
+                "No Claude credentials. Either log the CLI in once — "
+                "`docker exec -it plutus-mcp claude` — or paste a session token "
+                "in Settings (Connect Claude account)."
+            )
         # stderr is merged into stdout on purpose. Keeping it on its own pipe and
         # only draining it after proc.wait() deadlocks the moment `claude` writes
         # more than the ~64 KB pipe buffer: the child blocks on the stderr write,

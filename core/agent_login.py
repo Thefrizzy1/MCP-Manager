@@ -13,20 +13,33 @@ that is API billing and stays a compose-only opt-in.
 """
 from __future__ import annotations
 
+import time
+
 from core.env_store import read_env, update_env
 
 TOKEN_KEY = "CLAUDE_CODE_OAUTH_TOKEN"
+# When the token was last saved. Needed because a mounted ~/.claude login and a
+# saved token can *both* be stale, so neither can win unconditionally — see
+# agent_runner.legacy_credential_source().
+TOKEN_SAVED_KEY = "CLAUDE_CODE_OAUTH_TOKEN_SAVED_AT"
 
 
 def token_present() -> bool:
     return bool((read_env().get(TOKEN_KEY, "") or "").strip())
 
 
+def token_saved_at() -> int:
+    try:
+        return int((read_env().get(TOKEN_SAVED_KEY, "") or "0").strip() or 0)
+    except ValueError:
+        return 0
+
+
 def save_token(token: str) -> dict:
-    token = (token or "").strip()
+    token = (token or "").strip().strip("'\"").strip()
     if not token:
         return {"ok": False, "error": "Empty token."}
     if token.startswith("sk-ant-api") and "oat" not in token:
         return {"ok": False, "error": "That looks like an API key, not a session token. Run `claude setup-token`."}
-    update_env({TOKEN_KEY: token})
+    update_env({TOKEN_KEY: token, TOKEN_SAVED_KEY: str(int(time.time()))})
     return {"ok": True}
