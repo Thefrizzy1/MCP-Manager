@@ -8,6 +8,27 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture
+def agent_preconditions(monkeypatch):
+    """Satisfy the two *environment* preconditions run_agent checks before spawning.
+
+    run_agent refuses to start when there is no usable credential, and when the
+    Claude CLI cannot be resolved on disk. Both are properties of the machine, not
+    of the code under test — so any test about something else (cost caps, pipe
+    plumbing, what a run record stores) has to stub them, or it passes on a
+    developer box that happens to have Claude Code installed and logged in, and
+    fails on a runner that has neither. That exact divergence has broken CI twice.
+
+    Tests that genuinely cover credential selection or CLI resolution do not use
+    this fixture; they drive those seams themselves.
+    """
+    from core import agent_runner as AR
+    from core import ai_providers as AP
+
+    monkeypatch.setattr(AR, "legacy_credential_source", lambda: ("cli", "test credential"))
+    monkeypatch.setattr(AP, "resolve_cli", lambda name: f"/usr/bin/{name}")
+
+
 @pytest.fixture(autouse=True)
 def _reset_bearer_gate_cache():
     """Clear the bearer gate's module-level auth cache around every test.

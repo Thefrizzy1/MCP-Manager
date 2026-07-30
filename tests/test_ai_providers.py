@@ -271,7 +271,7 @@ def test_agent_env_without_an_account_keeps_legacy_behaviour(tmp_path, monkeypat
     assert "CLAUDE_CONFIG_DIR" not in env
 
 
-def test_run_record_notes_which_account_executed_it(tmp_path, monkeypatch):
+def test_run_record_notes_which_account_executed_it(tmp_path, monkeypatch, agent_preconditions):
     """A failed run has to be traceable to the login that failed."""
     from core import agent_runner as AR
 
