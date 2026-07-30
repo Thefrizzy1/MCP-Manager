@@ -173,6 +173,33 @@ async def api_v1_agent_run(body: AgentRunBody):
     return {"ok": True, "queued": agent_runner._current["running"]}
 
 
+@router.get("/api/v1/agent/runs/{rid}/transcript")
+async def api_v1_agent_run_transcript(rid: str):
+    """Full detail for one run: assistant messages, every tool call with its
+    arguments, and every tool result.
+
+    The console log only ever held one-line summaries, so after a run there was no
+    way to see which tools actually ran or what they returned — a run could report
+    success while you could not find what it claimed to have written."""
+    rec = agent_runner.get_run(ROOT, rid)
+    if not rec:
+        raise HTTPException(404, "run not found")
+    entries = agent_runner.get_transcript(ROOT, rid)
+    return {
+        "id": rid,
+        "label": rec.get("label"),
+        "ok": rec.get("ok"),
+        "error": rec.get("error"),
+        "auth_source": rec.get("auth_source"),
+        "mcp_services": rec.get("mcp_services"),
+        # Runs recorded before transcripts existed have none; say so rather than
+        # rendering an empty panel that looks broken.
+        "available": entries is not None,
+        "entries": entries or [],
+        "log": rec.get("log") or [],
+    }
+
+
 @router.post("/api/v1/agent/runs/{rid}/rerun")
 async def api_v1_agent_run_again(rid: str):
     """Re-launch a past run with the same prompt *and* the same connection scope.

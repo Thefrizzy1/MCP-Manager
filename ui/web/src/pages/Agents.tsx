@@ -14,6 +14,7 @@ import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
+import { RunTranscriptModal } from '@/components/agents/RunTranscriptModal'
 
 interface AgentStatus {
   auth?: { mode?: string }
@@ -107,6 +108,7 @@ export function Agents() {
   useEffect(() => () => esRef.current?.close(), [])
 
   const [rerunning, setRerunning] = useState<string | null>(null)
+  const [openRun, setOpenRun] = useState<string | null>(null)
   const s = status.data
   const cap = s?.max_runs_per_day ?? 0
   const used = s?.runs_today ?? 0
@@ -233,15 +235,25 @@ export function Agents() {
                   </div>
                   <span className="text-[11px] text-ink-3">{(r.started || '').replace('T', ' ').slice(5, 16)}</span>
                   {r.id && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      title="Run again with the same prompt and connections"
-                      disabled={s?.running || rerunning === r.id}
-                      onClick={() => rerun(r.id!)}
-                    >
-                      <RotateCw size={13} />
-                    </Button>
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="See the full transcript: messages, tool calls and results"
+                        onClick={() => setOpenRun(r.id!)}
+                      >
+                        View
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Run again with the same prompt and connections"
+                        disabled={s?.running || rerunning === r.id}
+                        onClick={() => rerun(r.id!)}
+                      >
+                        <RotateCw size={13} />
+                      </Button>
+                    </>
                   )}
                 </div>
               ))}
@@ -315,6 +327,7 @@ export function Agents() {
           )}
         </div>
       </PageBody>
+      {openRun && <RunTranscriptModal runId={openRun} onClose={() => setOpenRun(null)} />}
     </>
   )
 }

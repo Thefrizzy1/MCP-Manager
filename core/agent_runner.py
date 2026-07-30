@@ -310,6 +310,109 @@ def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = Non
     return cmd
 
 
+_MAX_ENTRY_CHARS = 6000
+_MAX_TRANSCRIPT_ENTRIES = 600
+
+
+def _clip(text, limit: int = _MAX_ENTRY_CHARS) -> str:
+    s = text if isinstance(text, str) else json.dumps(text, ensure_ascii=False, default=str)
+    return s if len(s) <= limit else s[:limit] + f"\n… [{len(s) - limit} more chars]"
+
+
+def _tool_result_text(content) -> str:
+    """Flatten a tool_result's content, which is either a string or content blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict):
+                parts.append(b.get("text") or json.dumps(b, ensure_ascii=False, default=str))
+            else:
+                parts.append(str(b))
+        return "\n".join(parts)
+    return "" if content is None else str(content)
+
+
+def transcript_entries(ev: dict) -> list[dict]:
+    """Structured transcript rows for one stream-json event.
+
+    handle_event() produces one-line console summaries — assistant text clipped to
+    160 chars, tool arguments to 110 — which is fine live and useless afterwards:
+    you cannot tell which tools ran, with what arguments, or what came back. So a
+    run could report success while you had no way to find the note it claimed to
+    write. These rows keep the detail, and are stored beside the run.
+    """
+    t = ev.get("type")
+    out: list[dict] = []
+    if t == "system" and ev.get("subtype") == "init":
+        out.append({"kind": "session", "model": ev.get("model") or "",
+                    "cwd": ev.get("cwd") or "",
+                    "tools": ev.get("tools") or [],
+                    "mcp_servers": ev.get("mcp_servers") or []})
+    elif t == "assistant":
+        for b in (ev.get("message", {}) or {}).get("content", []) or []:
+            if not isinstance(b, dict):
+                continue
+            bt = b.get("type")
+            if bt == "text" and (b.get("text") or "").strip():
+                out.append({"kind": "assistant", "text": _clip(b["text"])})
+            elif bt == "thinking" and (b.get("thinking") or "").strip():
+                out.append({"kind": "thinking", "text": _clip(b["thinking"])})
+            elif bt == "tool_use":
+                out.append({"kind": "tool_call", "name": b.get("name") or "tool",
+                            "id": b.get("id") or "", "input": _clip(b.get("input") or {})})
+    elif t == "user":
+        for b in (ev.get("message", {}) or {}).get("content", []) or []:
+            if isinstance(b, dict) and b.get("type") == "tool_result":
+                out.append({"kind": "tool_result", "id": b.get("tool_use_id") or "",
+                            "is_error": bool(b.get("is_error")),
+                            "text": _clip(_tool_result_text(b.get("content")))})
+    elif t == "result":
+        out.append({"kind": "final", "cost_usd": ev.get("total_cost_usd"),
+                    "turns": ev.get("num_turns"), "text": _clip(ev.get("result") or "")})
+    return out
+
+
+def _transcripts_dir(root: Path) -> Path:
+    """Transcripts live in their own directory, NOT beside the run records.
+
+    list_runs() globs `data/agent_runs/*.json`, so a `<id>.transcript.json` sidecar
+    in there matches — it showed up as a phantom run and made _index_rebuild raise
+    AttributeError on a JSON list, breaking total_cost()/runs_today().
+    """
+    d = root / "data" / "agent_transcripts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _transcript_path(root: Path, run_id: str) -> Path:
+    return _transcripts_dir(root) / f"{run_id}.json"
+
+
+def save_transcript(root: Path, run_id: str, entries: list[dict]) -> None:
+    p = _transcript_path(root, run_id)
+    tmp = p.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
+def get_transcript(root: Path, run_id: str) -> list[dict] | None:
+    if not run_id or "/" in run_id or "\\" in run_id or run_id.startswith("."):
+        return None
+    p = _transcript_path(root, run_id)
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def handle_event(ev: dict, label: str = "") -> dict:
     """Turn a stream-json event into a console line + optional result fields.
 
@@ -391,9 +494,11 @@ def list_runs(root: Path, limit: int = 30) -> list[dict]:
     out = []
     for fp in files[:limit]:
         try:
-            out.append(json.loads(Path(fp).read_text(encoding="utf-8")))
+            rec = json.loads(Path(fp).read_text(encoding="utf-8"))
         except Exception:
-            pass
+            continue
+        if isinstance(rec, dict):      # ignore anything that isn't a run record
+            out.append(rec)
     return out
 
 
@@ -438,6 +543,8 @@ def _index_rebuild(root: Path, files: list[str]) -> dict:
         try:
             r = json.loads(Path(fp).read_text(encoding="utf-8"))
         except Exception:
+            continue
+        if not isinstance(r, dict):    # not a run record — skip, don't crash
             continue
         rid = str(r.get("id") or Path(fp).stem)
         idx[rid] = {"cost_usd": float(r.get("cost_usd") or 0.0), "ok": bool(r.get("ok"))}
@@ -486,6 +593,11 @@ def clear_runs(root: Path) -> int:
         try:
             Path(fp).unlink()
             n += 1
+        except OSError:
+            pass
+    for fp in glob.glob(str(_transcripts_dir(root) / "*.json")):
+        try:
+            Path(fp).unlink()      # clearing history must not orphan transcripts
         except OSError:
             pass
     _index_write(root, {})
@@ -645,6 +757,7 @@ def run_agent(
         timer.start()
         max_cost = float(cfg.get("max_cost_usd", 99) or 99)
         noise: list[str] = []          # non-JSON output, kept for error classification
+        transcript: list[dict] = []    # full detail, persisted beside the run
         try:
             for line in proc.stdout:
                 line = line.strip()
@@ -657,6 +770,8 @@ def run_agent(
                     del noise[:-40]
                     _emit(line[:160])
                     continue
+                if len(transcript) < _MAX_TRANSCRIPT_ENTRIES:
+                    transcript.extend(transcript_entries(ev))
                 parsed = handle_event(ev, label)
                 if parsed["line"]:
                     for sub in parsed["line"].split("\n"):
@@ -745,6 +860,14 @@ def run_agent(
             _emit(f"! over cost guard (${cfg.get('max_cost_usd')})")
         rec["finished"] = _now().isoformat()
         rec["log"] = list(LIVE["lines"])
+        # Sidecar file: the transcript can be large, and keeping it out of the
+        # run record leaves list_runs() cheap.
+        try:
+            if transcript:
+                save_transcript(root, rid, transcript)
+                rec["transcript_entries"] = len(transcript)
+        except Exception:
+            pass
         save_run(root, rec)
         LIVE["done"] = True
         with _LOCK:

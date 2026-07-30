@@ -41,7 +41,10 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "claude": {
         "label": "Claude Code",
         "cli": "claude",
-        "install_hint": "npm install -g @anthropic-ai/claude-code",
+        # Runnable as-is: the CLI has to exist *inside the container*, so the hint
+        # is the docker exec form rather than a bare npm line that would install it
+        # on the host where nothing can reach it.
+        "install_hint": "docker exec plutus-mcp npm install -g @anthropic-ai/claude-code",
         # Env var that relocates the CLI's whole config/credential directory.
         "config_dir_env": "CLAUDE_CONFIG_DIR",
         # Files that prove a completed login inside a config directory.
@@ -56,7 +59,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     "codex": {
         "label": "Codex",
         "cli": "codex",
-        "install_hint": "npm install -g @openai/codex",
+        "install_hint": "docker exec plutus-mcp npm install -g @openai/codex",
         "config_dir_env": "CODEX_HOME",
         "credential_files": ("auth.json", ".credentials.json"),
         "login_cmd": ("codex", "login"),
