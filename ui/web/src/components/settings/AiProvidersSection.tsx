@@ -1,38 +1,12 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import { Check, X, Loader2, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
+import { useProviders, type ProviderAccount as Account } from '@/lib/providers'
 
-interface Account {
-  id: string
-  label: string
-  authenticated: boolean
-  state: string
-  config_dir: string
-  login_command: string
-  role_label: string
-  isolated: boolean
-  adoptable: boolean
-  adoptable_from: string
-  accepts_key: boolean
-  key_hint: string
-  auth_kind: string
-}
-interface Provider {
-  id: string
-  label: string
-  runnable: boolean
-  state: string
-  login_command: string
-  cli: { installed: boolean; path: string; version: string; install_hint: string }
-  accounts: Account[]
-  role_label: string
-  isolated: boolean
-}
 interface Check {
   name: string
   ok: boolean
@@ -43,6 +17,7 @@ const STATE_TEXT: Record<string, string> = {
   connected: 'Connected',
   adoptable: 'Login found — adopt it',
   login_required: 'Login required',
+  key_required: 'API key required',
   no_accounts: 'No accounts',
   cli_missing: 'CLI not installed',
 }
@@ -75,17 +50,53 @@ function Cmd({ label, cmd, tone = 'muted' }: { label: string; cmd: string; tone?
   )
 }
 
+/** The key field. For an HTTP provider this is the *only* way to link an account,
+ *  so it is not tucked under a log-in command that does not exist. */
+function KeyField({
+  account,
+  primary,
+  draft,
+  setDraft,
+  onSave,
+}: {
+  account: Account
+  primary: boolean
+  draft: string
+  setDraft: (v: string) => void
+  onSave: (key: string) => void
+}) {
+  const stored = account.auth_kind === 'api_key'
+  return (
+    <div className={primary ? '' : 'mt-1.5'}>
+      <p className="text-[11.5px] text-ink-3">
+        {stored
+          ? 'An API key is stored for this account.'
+          : primary
+            ? `Paste an API key to link this account. ${account.key_hint}`
+            : `Or paste an API key — simplest for headless use. ${account.key_hint}`}
+      </p>
+      <div className="mt-1 flex items-center gap-2">
+        <Input
+          className="flex-1"
+          type="password"
+          placeholder={stored ? '•••••• stored — paste to replace' : 'API key'}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draft.trim()) onSave(draft.trim())
+          }}
+        />
+        <Button variant={primary && !stored ? 'primary' : 'default'} size="sm" disabled={!draft.trim()} onClick={() => onSave(draft.trim())}>
+          Save key
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 export function AiProvidersSection() {
   const toast = useToast()
-  const { data, refetch } = useQuery({
-    queryKey: ['ai-providers'],
-    queryFn: () => api.get<{ providers: Provider[]; guided_login_available: boolean }>('/api/v1/providers'),
-    // A CLI installed or a login completed from a terminal has to show up without
-    // a page reload — the card used to sit on cached data saying "not installed"
-    // while Test reported the very same CLI as present.
-    refetchInterval: 15000,
-    refetchOnWindowFocus: true,
-  })
+  const { data, refetch } = useProviders()
   const [newLabel, setNewLabel] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState('')
   const [adding, setAdding] = useState('')
@@ -155,10 +166,12 @@ export function AiProvidersSection() {
     <Card>
       <CardHeader
         title="AI providers"
-        subtitle="Agents run through an authenticated CLI, not an API key. Each account keeps its own login."
+        subtitle="Claude Code and Codex run as authenticated CLIs; Gemini runs on a free API key. Each account keeps its own credential."
       />
       <div className="space-y-4 px-4 pb-4">
-        {(data?.providers ?? []).map((p) => (
+        {(data?.providers ?? []).map((p) => {
+          const isApi = p.kind === 'api'
+          return (
           <div key={p.id} className="rounded-[var(--radius-md)] border border-border p-3">
             <div className="flex flex-wrap items-center gap-2">
               <strong className="text-[13px] text-ink">{p.label}</strong>
@@ -174,7 +187,8 @@ export function AiProvidersSection() {
               >
                 {STATE_TEXT[p.state] ?? p.state}
               </span>
-              {p.cli.version && <span className="text-[11.5px] text-ink-3">{p.cli.version}</span>}
+              {!isApi && p.cli.version && <span className="text-[11.5px] text-ink-3">{p.cli.version}</span>}
+              {isApi && <span className="text-[11.5px] text-ink-3">API key · no CLI needed</span>}
               {p.role_label && <span className="text-[11.5px] text-ink-3">· {p.role_label}</span>}
               {!p.runnable && (
                 <span className="text-[11.5px] text-ink-3">· detection only — agents can’t use this yet</span>
@@ -182,13 +196,22 @@ export function AiProvidersSection() {
             </div>
 
             <div className="mt-2 space-y-1">
-              <Cmd
-                label={p.cli.installed ? 'Install / update' : 'Not in the container — install with'}
-                cmd={p.cli.install_hint}
-                tone={p.cli.installed ? 'muted' : 'warn'}
-              />
+              {/* An HTTP provider has nothing to install and nothing to log into.
+                  Showing an install hint and a login command for it sent people
+                  to a terminal to fix something the key field already solves. */}
+              {!isApi && (
+                <Cmd
+                  label={p.cli.installed ? 'Install / update' : 'Not in the container — install with'}
+                  cmd={p.cli.install_hint}
+                  tone={p.cli.installed ? 'muted' : 'warn'}
+                />
+              )}
               {p.accounts.length === 0 && (
-                <p className="text-[11px] text-ink-3">Add an account below to get its log-in command.</p>
+                <p className="text-[11px] text-ink-3">
+                  {isApi
+                    ? `Add an account below, then paste a key. ${p.key_hint}`
+                    : 'Add an account below to get its log-in command.'}
+                </p>
               )}
             </div>
 
@@ -237,10 +260,29 @@ export function AiProvidersSection() {
                       </div>
                     </div>
 
-                    {/* Always shown. Gating this on cli.installed hid the log-in
-                        command exactly when detection was wrong or the CLI had been
-                        wiped by an update — leaving no way forward. */}
-                    {a.login_command && (
+                    {/* An HTTP provider links with a key and nothing else, so the
+                        key field is the account's primary action rather than an
+                        afterthought under a log-in command it does not have. */}
+                    {isApi && a.accepts_key && (
+                      <div className="mt-1.5">
+                        <KeyField
+                          account={a}
+                          primary
+                          draft={keyDraft[a.id] ?? ''}
+                          setDraft={(v) => setKeyDraft((d) => ({ ...d, [a.id]: v }))}
+                          onSave={(k) =>
+                            act(`/api/v1/providers/${p.id}/accounts/${a.id}/token`, 'Key saved.', {
+                              token: k,
+                            }).then(() => setKeyDraft((d) => ({ ...d, [a.id]: '' })))
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {/* Always shown for a CLI. Gating this on cli.installed hid the
+                        log-in command exactly when detection was wrong or the CLI had
+                        been wiped by an update — leaving no way forward. */}
+                    {!isApi && a.login_command && (
                       <div className="mt-1.5">
                         <Cmd
                           label={
@@ -254,36 +296,17 @@ export function AiProvidersSection() {
                           tone={a.authenticated ? 'muted' : 'accent'}
                         />
                         {a.accepts_key && (
-                          <div className="mt-1.5">
-                            <p className="text-[11.5px] text-ink-3">
-                              {a.auth_kind === 'api_key'
-                                ? 'An API key is stored for this account.'
-                                : `Or paste an API key — simplest for headless use. ${a.key_hint}`}
-                            </p>
-                            <div className="mt-1 flex items-center gap-2">
-                              <Input
-                                className="flex-1"
-                                type="password"
-                                placeholder={a.auth_kind === 'api_key' ? '•••••• stored — paste to replace' : 'API key'}
-                                value={keyDraft[a.id] ?? ''}
-                                onChange={(e) => setKeyDraft((v) => ({ ...v, [a.id]: e.target.value }))}
-                              />
-                              <Button
-                                variant="default"
-                                size="sm"
-                                disabled={!(keyDraft[a.id] || '').trim()}
-                                onClick={() =>
-                                  act(
-                                    `/api/v1/providers/${p.id}/accounts/${a.id}/token`,
-                                    'Key saved.',
-                                    { token: (keyDraft[a.id] || '').trim() },
-                                  ).then(() => setKeyDraft((v) => ({ ...v, [a.id]: '' })))
-                                }
-                              >
-                                Save key
-                              </Button>
-                            </div>
-                          </div>
+                          <KeyField
+                            account={a}
+                            primary={false}
+                            draft={keyDraft[a.id] ?? ''}
+                            setDraft={(v) => setKeyDraft((d) => ({ ...d, [a.id]: v }))}
+                            onSave={(k) =>
+                              act(`/api/v1/providers/${p.id}/accounts/${a.id}/token`, 'Key saved.', {
+                                token: k,
+                              }).then(() => setKeyDraft((d) => ({ ...d, [a.id]: '' })))
+                            }
+                          />
                         )}
                         {a.adoptable ? (
                           <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -360,7 +383,8 @@ export function AiProvidersSection() {
               </Button>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
     </Card>
   )

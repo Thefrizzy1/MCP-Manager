@@ -17,11 +17,15 @@ WORKDIR /app
 
 # System deps + Node.js + the provider CLIs the agent runner drives.
 #
-# All three CLIs are baked into the image on purpose. Installing one with
+# Both CLIs are baked into the image on purpose. Installing one with
 # `docker exec plutus-mcp npm install -g …` writes to the container's *writable
 # layer*, which `docker compose up -d` discards when it recreates the container
-# from a pulled image — so a hand-installed Codex or Gemini silently disappeared
-# on every update and the card went back to "CLI not installed".
+# from a pulled image — so a hand-installed Codex silently disappeared on every
+# update and the card went back to "CLI not installed".
+#
+# Gemini is not here: it is an HTTP provider now (core/ai_providers), driven by a
+# free-tier API key rather than a CLI login, so shipping @google/gemini-cli would
+# add weight to every pull for a binary nothing invokes.
 #
 # bubblewrap is Codex's sandbox prerequisite; without it Codex warns and falls
 # back to a bundled copy on every launch.
@@ -33,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bubblewrap \
  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
- && npm install -g @anthropic-ai/claude-code @openai/codex @google/gemini-cli \
+ && npm install -g @anthropic-ai/claude-code @openai/codex \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps

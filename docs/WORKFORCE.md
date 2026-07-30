@@ -38,6 +38,14 @@ account"). Concretely:
 Estimated: the largest single piece of backend work in the whole feature, and the
 one that makes everything after it possible.
 
+> **Status: still the blocker, but rooms no longer die on it.** Seats run in
+> order, and each one now *waits* for the runner slot instead of being refused by
+> it (`agent_runner.wait_for_slot`, used by `POST /api/v1/rooms/{id}/run`). Before
+> that, launching a room while the agent queue happened to be busy failed on the
+> first seat with `"An agent run is already in progress."` — which reads like a
+> broken room rather than a slot that was two seconds from free. Parallelism still
+> needs the per-account rework above; sequential-but-reliable is the interim.
+
 ---
 
 ## 1. What to borrow, and from whom
@@ -84,8 +92,10 @@ Rooms are stored like profiles and schedules already are — a JSON file under
         "goal": "Turn the brief into concrete tasks and review what comes back",
         "backstory": "You run a small research desk." },
       { "id": "res", "role": "researcher", "provider": "gemini", "account_id": "personal-…",
+        "model": "gemini-2.5-pro",
         "goal": "Gather sources and summarise findings" },
       { "id": "dev", "role": "developer",  "provider": "codex",  "account_id": "personal-…",
+        "model": "gpt-5.1-codex",
         "goal": "Turn accepted findings into working code" }
     ]
   }]
@@ -101,6 +111,8 @@ Notes on the shape:
   runtime, Gemini a research one" becomes real: the seat's role and the provider's
   `role` (already in `core/ai_providers.PROVIDERS`) should agree, and the UI should
   warn when they don't rather than forbid it.
+- **`model` is per seat**, and optional (empty = the account's own default). It has
+  to be: a room mixes providers, and `gpt-5.1-codex` means nothing to Gemini.
 - **`output`** reuses `agent_runner.resolve_library`, so room results land in the
   same Obsidian/filesystem library as playbooks.
 

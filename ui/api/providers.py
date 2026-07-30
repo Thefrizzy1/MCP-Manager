@@ -39,6 +39,23 @@ async def api_providers():
             "guided_login_available": provider_login.available()}
 
 
+@router.get("/api/v1/providers/{pid}/models")
+async def api_provider_models(pid: str, account_id: str = ""):
+    """The models this provider — and, where it can be asked, this *account* — offers.
+
+    The launch wizard used to hardcode Opus/Sonnet/Haiku, which are meaningless
+    to Codex and Gemini: picking a Codex account still offered you Claude models.
+    An HTTP provider can be asked what it actually serves, so Gemini's list is
+    live; a CLI's is the curated menu plus a free-text field, because CLIs gain
+    and lose model ids between releases.
+    """
+    _known(pid)
+    if account_id:
+        _known_account(pid, account_id)
+    return {"provider": pid,
+            **await asyncio.to_thread(ai_providers.list_models, ROOT, pid, account_id)}
+
+
 class AccountBody(BaseModel):
     label: str = Field(..., min_length=1, max_length=60)
 
@@ -119,6 +136,9 @@ async def api_login_start(pid: str, aid: str, use_token_flow: bool = True):
     """
     spec = _known(pid)
     _known_account(pid, aid)
+    if spec.get("kind") == ai_providers.KIND_API:
+        raise HTTPException(400, f"{spec['label']} authenticates with an API key, not a "
+                                 f"login. {spec.get('key_hint', '')}".strip())
     cmd = spec["token_cmd"] if (use_token_flow and spec.get("token_cmd")) else spec["login_cmd"]
     if not cmd:
         raise HTTPException(400, f"{spec['label']} has no supported login command yet")
@@ -172,6 +192,8 @@ async def api_save_token(pid: str, aid: str, body: TokenBody):
         ai_providers.save_token(ROOT, pid, aid, tok)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    # A new key can see a different model list — never serve the old one.
+    ai_providers.forget_models(pid)
     return {"ok": True, "env": spec["token_env"],
             "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
 
@@ -180,5 +202,6 @@ async def api_save_token(pid: str, aid: str, body: TokenBody):
 async def api_clear_token(pid: str, aid: str):
     _known_account(pid, aid)
     removed = ai_providers.clear_token(ROOT, pid, aid)
+    ai_providers.forget_models(pid)
     return {"ok": True, "removed": removed,
             "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}

@@ -20,11 +20,12 @@ from core import workforce as W
 def room(tmp_path):
     r = W.add_room(tmp_path, "Research room", mcp_services=["websearch", "nextcloud"])
     W.add_seat(tmp_path, r["id"], role="researcher", provider="gemini",
-               account_id="personal", goal="Find the facts")
+               account_id="personal", goal="Find the facts", model="gemini-2.5-pro")
     W.add_seat(tmp_path, r["id"], role="manager", provider="claude",
                account_id="work", goal="Check the research and direct the build")
     W.add_seat(tmp_path, r["id"], role="developer", provider="codex",
-               account_id="personal", goal="Write it into Nextcloud")
+               account_id="personal", goal="Write it into Nextcloud",
+               model="gpt-5.1-codex")
     return W.get_room(tmp_path, r["id"])
 
 
@@ -33,9 +34,10 @@ def _recording_runner(outputs=None):
     calls: list[dict] = []
     outs = list(outputs or [])
 
-    def run(root, prompt, *, label="", mcp_services=None, provider="", account_id=""):
+    def run(root, prompt, *, label="", mcp_services=None, provider="", account_id="",
+            model=""):
         calls.append({"prompt": prompt, "label": label, "mcp_services": mcp_services,
-                      "provider": provider, "account_id": account_id})
+                      "provider": provider, "account_id": account_id, "model": model})
         nxt = outs.pop(0) if outs else {}
         return {"id": f"run-{len(calls)}", "ok": nxt.get("ok", True),
                 "cost_usd": nxt.get("cost_usd", 0.1),
@@ -112,6 +114,14 @@ def test_each_seat_runs_on_its_own_provider_account(tmp_path, room):
     assert [(c["provider"], c["account_id"]) for c in calls] == [
         ("gemini", "personal"), ("claude", "work"), ("codex", "personal"),
     ]
+
+
+def test_each_seat_carries_its_own_model(tmp_path, room):
+    """A room mixes providers, so one shared model id cannot work: 'gpt-5.1-codex'
+    means nothing to Gemini and 'gemini-2.5-pro' means nothing to Codex."""
+    run, calls = _recording_runner()
+    W.run_room(tmp_path, room["id"], "Investigate X", run_agent=run)
+    assert [c["model"] for c in calls] == ["gemini-2.5-pro", "", "gpt-5.1-codex"]
 
 
 def test_a_seat_sees_what_came_before_it(tmp_path, room):

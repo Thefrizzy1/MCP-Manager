@@ -19,8 +19,10 @@ import datetime
 import glob
 import json
 import os
+import re
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -230,10 +232,16 @@ def _subprocess_env(root: Path | None = None, provider: str = "",
         try:
             # Ambient credentials out first, then the account's own in. Reversed,
             # this popped the account's stored API key back out again.
+            #
+            # *Every* provider's credential is stripped, not just this one's. The
+            # run that prompted this fix selected a Codex account and inherited a
+            # stale CLAUDE_CODE_OAUTH_TOKEN — harmless to Codex, but it meant the
+            # environment carried a credential belonging to a different identity,
+            # and any code path that reached for it got the wrong one.
             env.pop("ANTHROPIC_API_KEY", None)
-            tok_env = ai_providers.PROVIDERS.get(provider, {}).get("token_env")
-            if tok_env:
-                env.pop(tok_env, None)
+            for spec in ai_providers.PROVIDERS.values():
+                if spec.get("token_env"):
+                    env.pop(spec["token_env"], None)
             env.update(ai_providers.account_env(root, provider, account_id))
         except ValueError:
             pass
@@ -263,17 +271,50 @@ def runs_today(root: Path) -> int:
     return sum(1 for rid in _index(root) if str(rid).startswith(today))
 
 
-def cancel() -> dict:
-    """Kill the in-flight agent run, if any."""
+def busy() -> bool:
+    """True while a run holds the single execution slot."""
     with _LOCK:
-        proc = _current.get("proc")
-        if not (_current.get("running") and proc):
+        return bool(_current.get("running"))
+
+
+def wait_for_slot(timeout: float = 1800.0, poll: float = 1.0) -> bool:
+    """Block until no run is in flight. False if the wait timed out.
+
+    Rooms need this. A room's seats call run_agent directly, and run_agent
+    *refuses* — instantly, not queueing — while another run is active. So a room
+    launched while the agent queue happened to be busy died on its first seat with
+    "An agent run is already in progress", which reads like a bug in the room
+    rather than a slot that was two seconds from being free.
+    """
+    deadline = time.monotonic() + max(0.0, timeout)
+    while busy():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+    return True
+
+
+def cancel() -> dict:
+    """Kill the in-flight agent run, if any.
+
+    An HTTP-provider run has no process to kill — the request is already in
+    flight and blocking a worker thread. Flagging it still matters: the run is
+    recorded as cancelled and its answer discarded, and Stop reporting "no run in
+    progress" while one was plainly running would be worse than either.
+    """
+    with _LOCK:
+        if not _current.get("running"):
             return {"ok": False, "error": "No run in progress."}
+        proc = _current.get("proc")
         _current["cancelled"] = True
+    if not proc:
+        _emit("run cancelled by user — the provider request is already in flight, "
+              "so its answer will be discarded when it returns")
+        return {"ok": True, "killed": False}
     try:
         proc.kill()
         _emit("run cancelled by user")
-        return {"ok": True}
+        return {"ok": True, "killed": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
@@ -310,6 +351,49 @@ def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = Non
         cmd += ["--model", chosen_model]
     cmd += ["--", prompt]
     return cmd
+
+
+def build_provider_cmd(provider: str, prompt: str, *, model: str = "") -> list[str]:
+    """Argv for a non-Claude CLI provider, from that provider's own exec builder.
+
+    Claude keeps its own builder above because only Claude is driven in
+    ``stream-json`` mode with an MCP config attached. Everything else is a plain
+    text invocation, which is why one line is enough here.
+
+    This function existing at all is the fix for the live bug: ``run_agent`` used
+    to build a ``claude`` command no matter which account was selected. Choosing a
+    Codex account therefore ran Claude Code against a Codex config directory,
+    which of course failed — and failed as "401 Invalid bearer token", because
+    Claude fell back to whatever ambient token was lying around.
+    """
+    from core import ai_providers
+
+    spec = ai_providers.PROVIDERS.get(provider)
+    if not spec or not callable(spec.get("exec")):
+        raise ValueError(f"{provider!r} has no command builder")
+    cli = ai_providers.resolve_cli(spec["cli"]) or spec["cli"]
+    return [cli, *spec["exec"](prompt, model or "")]
+
+
+# Codex's `exec` prints a header (version, workdir, model, sandbox…) and a
+# trailing token count around the actual answer. Keeping the whole thing as the
+# run's result buries the answer in boilerplate, so pull out the last assistant
+# block when the markers are there — and fall back to the full output when they
+# are not, because the format is the vendor's to change.
+_CODEX_TURN = re.compile(r"^\[[^\]]+\]\s*codex\s*$", re.MULTILINE)
+_CODEX_TAIL = re.compile(r"^\[[^\]]+\]\s*tokens used:.*$", re.MULTILINE)
+
+
+def codex_answer(out: str) -> str:
+    text = out or ""
+    turns = list(_CODEX_TURN.finditer(text))
+    if not turns:
+        return text.strip()
+    tail = text[turns[-1].end():]
+    cut = _CODEX_TAIL.search(tail)
+    if cut:
+        tail = tail[:cut.start()]
+    return tail.strip() or text.strip()
 
 
 _MAX_ENTRY_CHARS = 6000
@@ -644,6 +728,318 @@ def status(root: Path) -> dict:
     }
 
 
+# ── execution strategies ─────────────────────────────────────────────────────
+#
+# One per runtime. Each fills the shared run record in place; run_agent owns the
+# lock, the record, the transcript sidecar and the error funnel, so the only thing
+# that varies between providers is how the work actually gets done.
+
+def _timeout_min(cfg: dict) -> int:
+    try:
+        return int(cfg.get("timeout_min", 20) or 20)
+    except (TypeError, ValueError):
+        return 20
+
+
+def _spawn(cmd: list[str], *, root: Path, cwd: str | None, env: dict) -> subprocess.Popen:
+    # stderr is merged into stdout on purpose. Keeping it on its own pipe and
+    # only draining it after proc.wait() deadlocks the moment the CLI writes
+    # more than the ~64 KB pipe buffer: the child blocks on the stderr write,
+    # stops producing stdout, and both sides wait until the timeout fires.
+    proc = subprocess.Popen(
+        cmd, cwd=cwd or str(root), env=env, text=True,
+        # No inherited stdin: a CLI that decides to read from it (Codex does,
+        # even with a positional prompt) would otherwise block forever waiting
+        # for input that is never coming.
+        stdin=subprocess.DEVNULL,
+        bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    with _LOCK:
+        _current["proc"] = proc
+    return proc
+
+
+def _arm_timeout(proc: subprocess.Popen, minutes: int) -> tuple[threading.Timer, threading.Event]:
+    # A bare proc.kill() as the timer target is indistinguishable from a crash
+    # downstream ("claude exited -9"), so record *why* we killed it.
+    fired = threading.Event()
+
+    def _on_timeout() -> None:
+        fired.set()
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    timer = threading.Timer(minutes * 60, _on_timeout)
+    timer.start()
+    return timer, fired
+
+
+def _account_credential(root: Path, provider: str, account_id: str) -> tuple[bool, str]:
+    """(has one, what to do about it) for a selected provider account."""
+    from core import ai_providers
+
+    try:
+        cred = ai_providers.credentials_file(root, provider, account_id)
+        key = ai_providers.stored_token(root, provider, account_id)
+        spec = ai_providers.PROVIDERS[provider]
+    except (ValueError, KeyError):
+        return False, f"unknown provider account {provider!r}/{account_id!r}"
+    if cred or key:
+        return True, ""
+    if spec.get("kind") == ai_providers.KIND_API:
+        return False, (f"No API key stored for this {spec['label']} account. "
+                       f"Settings → AI providers → paste a key. {spec.get('key_hint', '')}".strip())
+    cmd = ai_providers.login_command(root, provider, account_id)
+    return False, (f"This {spec['label']} account is not linked. Run:\n  {cmd}\n"
+                   "then press Test in Settings → AI providers.")
+
+
+def _execute_claude(root: Path, rec: dict, prompt: str, cfg: dict, *, label: str,
+                    cwd: str | None, mcp_config_path: str | None,
+                    disallowed_tools: list[str] | None, model: str | None,
+                    provider: str, account_id: str, cred_source: str,
+                    transcript: list[dict]) -> None:
+    """Claude Code in stream-json mode — the only runtime with MCP tools and cost."""
+    cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
+                          disallowed_tools=disallowed_tools, model=model)
+    # Spawn by absolute path. A bare "claude" is resolved from the child's PATH,
+    # which misses the auto-updated native install and fails with a bare
+    # FileNotFoundError even though the CLI is plainly installed.
+    from core.ai_providers import CLI_SEARCH_DIRS, resolve_cli
+    resolved = resolve_cli("claude")
+    if resolved:
+        cmd[0] = resolved
+    if not resolved:
+        looked = ", ".join(["$PATH", *CLI_SEARCH_DIRS])
+        raise FileNotFoundError(
+            "`claude` was not found. Looked in: " + looked +
+            ". If `docker exec -it plutus-mcp claude` works, the CLI has "
+            "auto-updated somewhere Plutus cannot see — run "
+            "`docker exec plutus-mcp sh -lc 'command -v claude'` and report the path."
+        )
+    if cred_source == "none":
+        # Fail before spending a run that can only come back 401.
+        raise RuntimeError(
+            "No Claude credentials. Either log the CLI in once — "
+            "`docker exec -it plutus-mcp claude` — or paste a session token "
+            "in Settings (Connect Claude account)."
+        )
+
+    proc = _spawn(cmd, root=root, cwd=cwd,
+                  env=_subprocess_env(root, provider, account_id))
+    minutes = _timeout_min(cfg)
+    timer, timed_out = _arm_timeout(proc, minutes)
+    max_cost = float(cfg.get("max_cost_usd", 99) or 99)
+    noise: list[str] = []          # non-JSON output, kept for error classification
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                noise.append(line)
+                del noise[:-40]
+                _emit(line[:160])
+                continue
+            if len(transcript) < _MAX_TRANSCRIPT_ENTRIES:
+                transcript.extend(transcript_entries(ev))
+            parsed = handle_event(ev, label)
+            if parsed["line"]:
+                for sub in parsed["line"].split("\n"):
+                    _emit(sub)
+            if parsed["result"]:
+                res = parsed["result"]
+                rec["cost_usd"] = res["cost_usd"] or 0.0
+                rec["turns"] = res["turns"]
+                rec["result"] = res["text"]
+                rec["ok"] = res["ok"]
+                # Enforce the budget *while* the run is live. Checking it after
+                # the loop (as this used to) only labelled the overspend after
+                # the money was gone — a guard that never guarded.
+                if rec["cost_usd"] > max_cost:
+                    rec["over_budget"] = True
+                    rec["ok"] = False
+                    _emit(f"! cost guard hit (${rec['cost_usd']} > ${max_cost}) — stopping run")
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    break
+        proc.wait()
+    finally:
+        timer.cancel()
+    # Keep the HEAD of the output, not the tail. CLI errors lead with the
+    # useful line ("Error: Invalid MCP configuration:") and trail off into
+    # echoed arguments, so tailing showed a slice of the prompt and hid the
+    # cause entirely.
+    _noise = "\n".join(noise).strip()
+    err = _noise[:400] + (" …" if len(_noise) > 400 else "")
+    if _current.get("cancelled"):
+        rec["cancelled"] = True
+        rec["error"] = "Cancelled by user."
+    elif rec["over_budget"]:
+        rec["error"] = (f"Stopped: cost reached ${rec['cost_usd']}, over the "
+                        f"${max_cost} cap (Settings → Agent → max cost).")
+        _emit(rec["error"])
+    elif timed_out.is_set():
+        rec["error"] = f"Timed out after {minutes} min (Settings → Agent → timeout)."
+        _emit(rec["error"])
+    elif proc.returncode not in (0, None) and not rec["result"]:
+        low = err.lower()
+        if "root" in low and "permission" in low:
+            rec["error"] = ("Claude Code refused to run as root. Plutus now sets IS_SANDBOX=1 "
+                            "for the container — rebuild the image so this fix is present, or run "
+                            "the container as a non-root user.")
+        elif "invalid bearer" in low or "401" in low:
+            # A real ~/.claude CLI login is now used automatically when present
+            # (it overrides any saved token). A 401 means there is no valid
+            # session at all — either no login and a bad/expired saved token.
+            if account_id:
+                rec["error"] = (
+                    f"Claude Code rejected this account's credentials (401). Re-link the "
+                    f"'{account_id}' account in Settings → AI providers (Logout, then run "
+                    "its link command again)."
+                )
+            elif cli_logged_in():
+                rec["error"] = (
+                    "Claude Code rejected the credentials (401). Your mounted ~/.claude login "
+                    "looks expired — re-run `docker exec -it plutus-mcp claude` to log in again."
+                )
+            else:
+                rec["error"] = (
+                    "Claude Code isn't authenticated (401). For a CLI *session* (your plan, no "
+                    "API key), log in once with `docker exec -it plutus-mcp claude` — that's used "
+                    "automatically. Or Settings → Connect Claude account to paste a fresh "
+                    "`claude setup-token` token."
+                )
+        elif ("not logged in" in low or "authenticat" in low or "unauthorized" in low
+              or "credit balance" in low or ("out of" in low and "usage" in low)):
+            rec["error"] = ("Claude Code isn't authenticated (or the plan is out of usage). "
+                            "Settings → Connect Claude account.")
+        else:
+            rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
+        _emit(rec["error"])
+
+
+def _execute_cli(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
+                 model: str, cfg: dict, cwd: str | None, transcript: list[dict]) -> None:
+    """A non-Claude CLI (Codex): its own non-interactive command, plain text out.
+
+    No stream-json, so there is no per-tool detail and no cost figure — the CLI
+    does not report one. Reporting $0 is honest here; inventing a number would
+    not be.
+    """
+    from core import ai_providers
+
+    spec = ai_providers.PROVIDERS[provider]
+    ok, why = _account_credential(root, provider, account_id)
+    if not ok:
+        raise RuntimeError(why)
+    if not ai_providers.resolve_cli(spec["cli"]):
+        raise FileNotFoundError(
+            f"`{spec['cli']}` was not found. Looked in: " +
+            ", ".join(["$PATH", *ai_providers.CLI_SEARCH_DIRS]) +
+            f". Install it with: {spec['install_hint']}"
+        )
+
+    cmd = build_provider_cmd(provider, prompt, model=model)
+    proc = _spawn(cmd, root=root, cwd=cwd,
+                  env=_subprocess_env(root, provider, account_id))
+    minutes = _timeout_min(cfg)
+    timer, timed_out = _arm_timeout(proc, minutes)
+    out: list[str] = []
+    try:
+        for line in proc.stdout:
+            line = line.rstrip()
+            out.append(line)
+            if line.strip():
+                _emit(line[:200])
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    blob = "\n".join(out).strip()
+    answer = codex_answer(blob) if provider == "codex" else blob
+    if answer:
+        transcript.append({"kind": "assistant", "text": _clip(answer)})
+        transcript.append({"kind": "final", "cost_usd": None, "turns": None,
+                           "text": _clip(answer)})
+    rec["result"] = answer[-3000:]
+
+    if _current.get("cancelled"):
+        rec["cancelled"] = True
+        rec["error"] = "Cancelled by user."
+    elif timed_out.is_set():
+        rec["error"] = f"Timed out after {minutes} min (Settings → Agent → timeout)."
+        _emit(rec["error"])
+    elif proc.returncode not in (0, None):
+        rec["error"] = _explain_cli_failure(spec, provider, account_id, proc.returncode, blob)
+        _emit(rec["error"])
+    elif not answer:
+        rec["error"] = f"{spec['label']} exited cleanly but produced no output."
+        _emit(rec["error"])
+    else:
+        rec["ok"] = True
+
+
+def _explain_cli_failure(spec: dict, provider: str, account_id: str,
+                         code: int | None, blob: str) -> str:
+    """A CLI's own words, translated into the action that fixes it.
+
+    "401 Invalid bearer token" is the specific string this exists for: it is what
+    the user saw for every failed run, and it told them to go looking for an API
+    key they had never configured.
+    """
+    low = blob.lower()
+    head = blob.strip()[:400]
+    if "invalid bearer" in low or "401" in low or "unauthorized" in low or "not logged in" in low:
+        return (f"{spec['label']} rejected this account's login (401). Re-link the "
+                f"'{account_id}' account in Settings → AI providers, then press Test.")
+    if "usage limit" in low or "rate limit" in low or "quota" in low or "429" in low:
+        return f"{spec['label']} is rate limited or out of quota right now."
+    if "skip-git-repo-check" in low or "trusted directory" in low:
+        return (f"{spec['label']} refused to run outside a git repository. This should "
+                "already be handled — rebuild the image so the fix is present.")
+    return f"{spec['cli']} exited {code}. {head}".strip()
+
+
+def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
+                 model: str, cfg: dict, transcript: list[dict]) -> None:
+    """An HTTP provider (Gemini): one call with the account's own key."""
+    from core import ai_providers
+
+    spec = ai_providers.PROVIDERS[provider]
+    ok, why = _account_credential(root, provider, account_id)
+    if not ok:
+        raise RuntimeError(why)
+
+    _emit(f"calling {spec['label']}…")
+    started = time.monotonic()
+    res = ai_providers.api_generate(root, provider, account_id, prompt,
+                                    model=model, timeout=_timeout_min(cfg) * 60)
+    _emit(f"{spec['label']} replied in {time.monotonic() - started:.1f}s")
+
+    if _current.get("cancelled"):
+        rec["cancelled"] = True
+        rec["error"] = "Cancelled by user."
+        return
+    rec["model"] = res.get("model") or model
+    if not res["ok"]:
+        rec["error"] = f"{spec['label']}: {res['error']}"
+        _emit(rec["error"])
+        return
+    text = res["text"]
+    transcript.append({"kind": "assistant", "text": _clip(text)})
+    transcript.append({"kind": "final", "cost_usd": None, "turns": 1, "text": _clip(text)})
+    rec["result"] = text[-3000:]
+    rec["turns"] = 1
+    rec["ok"] = True
+
+
 # ── the run ──────────────────────────────────────────────────────────────────
 def run_agent(
     root: Path,
@@ -659,7 +1055,19 @@ def run_agent(
     provider: str = "",
     account_id: str = "",
 ) -> dict:
-    """Run one headless Claude Code agent call. Blocking; call in a thread."""
+    """Run one headless agent call on the selected provider. Blocking; thread it.
+
+    Three runtimes, chosen by the provider of the selected account:
+
+    - **Claude Code** — ``stream-json`` with Plutus's MCP config attached. Full
+      transcript, live tool calls, real cost accounting.
+    - **another CLI** (Codex) — the provider's own non-interactive command, plain
+      text out. No MCP config: ``--mcp-config`` is Claude's flag, and the other
+      CLIs configure servers through their own files.
+    - **an HTTP provider** (Gemini) — a single API call with the account's key.
+
+    With no account selected this is the legacy Claude path, unchanged.
+    """
     with _LOCK:
         if _current["running"]:
             return {"ok": False, "error": "An agent run is already in progress."}
@@ -668,7 +1076,18 @@ def run_agent(
                         proc=None, cancelled=False)
         LIVE.update(id=rid, lines=[], done=False)
 
+    from core import ai_providers
+
     cfg = load_agent_config(root)
+    prov = (provider or "").strip()
+    aid = (account_id or "").strip()
+    # An account is what selects a runtime; a provider id with no account is not
+    # enough to point at a credential, so it falls back to the legacy path.
+    spec = ai_providers.PROVIDERS.get(prov) if (prov and aid) else None
+    runtime = ("claude" if spec is None or prov == "claude"
+               else ("api" if spec.get("kind") == ai_providers.KIND_API else "cli"))
+    chosen_model = (model if model is not None else cfg.get("model")) or ""
+
     rec = {
         # Store the prompt at the API's own cap, not a display-sized slice — a
         # truncated prompt cannot be re-run faithfully.
@@ -678,176 +1097,51 @@ def run_agent(
         "mcp_services": mcp_services,
         # Which provider account executed it — so a failure can be traced to the
         # right login, and "Run again" reuses the same one.
-        "provider": provider or "", "account_id": account_id or "",
+        "provider": prov, "account_id": aid, "model": chosen_model,
         "started": _now().isoformat(), "finished": None,
         "ok": False, "cost_usd": 0.0, "turns": None, "result": "",
         "over_budget": False, "cancelled": False, "error": None, "log": [],
     }
     _emit(f"agent '{label}' starting")
+    if spec is not None:
+        _emit(f"runtime: {spec['label']}" + (f" · model {chosen_model}" if chosen_model else ""))
 
     # Say which credential this run uses. Without this line an auth failure was
     # indistinguishable from a bad token, a stale mounted login, or no login at
     # all — every case surfaced as the same opaque "401 Invalid bearer token".
-    if provider and account_id:
-        cred_source, cred_why = "account", f"{provider} account '{account_id}'"
+    if spec is not None:
+        cred_source, cred_why = "account", f"{prov} account '{aid}'"
     else:
         cred_source, cred_why = legacy_credential_source()
     _emit(f"auth: {cred_why}")
     rec["auth_source"] = cred_source
 
+    # Plutus's own MCP tools are wired through Claude's --mcp-config, so they only
+    # reach the Claude runtime. Say that out loud rather than letting an agent
+    # quietly come back empty-handed from a task that needed a tool.
     mcp_config_path = None
     if cfg.get("give_plutus_tools", True):
-        try:
-            mcp_config_path = write_plutus_mcp_config(root, mcp_url=mcp_url, token=bearer_token)
-        except Exception as e:
-            _emit(f"warn: could not write MCP config ({e})")
-
-    cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
-                          disallowed_tools=disallowed_tools, model=model)
-    # Spawn by absolute path. A bare "claude" is resolved from the child's PATH,
-    # which misses the auto-updated native install and fails with a bare
-    # FileNotFoundError even though the CLI is plainly installed.
-    from core.ai_providers import CLI_SEARCH_DIRS, resolve_cli
-    resolved = resolve_cli("claude")
-    if resolved:
-        cmd[0] = resolved
-
-    try:
-        if not resolved:
-            looked = ", ".join(["$PATH", *CLI_SEARCH_DIRS])
-            raise FileNotFoundError(
-                "`claude` was not found. Looked in: " + looked +
-                ". If `docker exec -it plutus-mcp claude` works, the CLI has "
-                "auto-updated somewhere Plutus cannot see — run "
-                "`docker exec plutus-mcp sh -lc 'command -v claude'` and report the path."
-            )
-        if cred_source == "none":
-            # Fail before spending a run that can only come back 401.
-            raise RuntimeError(
-                "No Claude credentials. Either log the CLI in once — "
-                "`docker exec -it plutus-mcp claude` — or paste a session token "
-                "in Settings (Connect Claude account)."
-            )
-        # stderr is merged into stdout on purpose. Keeping it on its own pipe and
-        # only draining it after proc.wait() deadlocks the moment `claude` writes
-        # more than the ~64 KB pipe buffer: the child blocks on the stderr write,
-        # stops producing stdout, and both sides wait until the timeout fires.
-        proc = subprocess.Popen(
-            cmd, cwd=cwd or str(root),
-            env=_subprocess_env(root, provider, account_id), text=True,
-            # No inherited stdin: a CLI that decides to read from it (Codex does,
-            # even with a positional prompt) would otherwise block forever waiting
-            # for input that is never coming.
-            stdin=subprocess.DEVNULL,
-            bufsize=1, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
-        with _LOCK:
-            _current["proc"] = proc
-
-        try:
-            timeout_min = int(cfg.get("timeout_min", 20) or 20)
-        except (TypeError, ValueError):
-            timeout_min = 20
-        # A bare proc.kill() as the timer target is indistinguishable from a crash
-        # downstream ("claude exited -9"), so record *why* we killed it.
-        timed_out = threading.Event()
-
-        def _on_timeout() -> None:
-            timed_out.set()
+        if runtime == "claude":
             try:
-                proc.kill()
-            except Exception:
-                pass
+                mcp_config_path = write_plutus_mcp_config(root, mcp_url=mcp_url, token=bearer_token)
+            except Exception as e:
+                _emit(f"warn: could not write MCP config ({e})")
+        else:
+            _emit(f"note: Plutus MCP tools are not wired into {spec['label']} runs — "
+                  "this agent works from the prompt alone")
 
-        timer = threading.Timer(timeout_min * 60, _on_timeout)
-        timer.start()
-        max_cost = float(cfg.get("max_cost_usd", 99) or 99)
-        noise: list[str] = []          # non-JSON output, kept for error classification
-        transcript: list[dict] = []    # full detail, persisted beside the run
-        try:
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    ev = json.loads(line)
-                except json.JSONDecodeError:
-                    noise.append(line)
-                    del noise[:-40]
-                    _emit(line[:160])
-                    continue
-                if len(transcript) < _MAX_TRANSCRIPT_ENTRIES:
-                    transcript.extend(transcript_entries(ev))
-                parsed = handle_event(ev, label)
-                if parsed["line"]:
-                    for sub in parsed["line"].split("\n"):
-                        _emit(sub)
-                if parsed["result"]:
-                    res = parsed["result"]
-                    rec["cost_usd"] = res["cost_usd"] or 0.0
-                    rec["turns"] = res["turns"]
-                    rec["result"] = res["text"]
-                    rec["ok"] = res["ok"]
-                    # Enforce the budget *while* the run is live. Checking it after
-                    # the loop (as this used to) only labelled the overspend after
-                    # the money was gone — a guard that never guarded.
-                    if rec["cost_usd"] > max_cost:
-                        rec["over_budget"] = True
-                        rec["ok"] = False
-                        _emit(f"! cost guard hit (${rec['cost_usd']} > ${max_cost}) — stopping run")
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        break
-            proc.wait()
-        finally:
-            timer.cancel()
-        # Keep the HEAD of the output, not the tail. CLI errors lead with the
-        # useful line ("Error: Invalid MCP configuration:") and trail off into
-        # echoed arguments, so tailing showed a slice of the prompt and hid the
-        # cause entirely.
-        _noise = "\n".join(noise).strip()
-        err = _noise[:400] + (" …" if len(_noise) > 400 else "")
-        if _current.get("cancelled"):
-            rec["cancelled"] = True
-            rec["error"] = "Cancelled by user."
-        elif rec["over_budget"]:
-            rec["error"] = (f"Stopped: cost reached ${rec['cost_usd']}, over the "
-                            f"${max_cost} cap (Settings → Agent → max cost).")
-            _emit(rec["error"])
-        elif timed_out.is_set():
-            rec["error"] = f"Timed out after {timeout_min} min (Settings → Agent → timeout)."
-            _emit(rec["error"])
-        elif proc.returncode not in (0, None) and not rec["result"]:
-            low = err.lower()
-            if "root" in low and "permission" in low:
-                rec["error"] = ("Claude Code refused to run as root. Plutus now sets IS_SANDBOX=1 "
-                                "for the container — rebuild the image so this fix is present, or run "
-                                "the container as a non-root user.")
-            elif "invalid bearer" in low or "401" in low:
-                # A real ~/.claude CLI login is now used automatically when present
-                # (it overrides any saved token). A 401 means there is no valid
-                # session at all — either no login and a bad/expired saved token.
-                if cli_logged_in():
-                    rec["error"] = (
-                        "Claude Code rejected the credentials (401). Your mounted ~/.claude login "
-                        "looks expired — re-run `docker exec -it plutus-mcp claude` to log in again."
-                    )
-                else:
-                    rec["error"] = (
-                        "Claude Code isn't authenticated (401). For a CLI *session* (your plan, no "
-                        "API key), log in once with `docker exec -it plutus-mcp claude` — that's used "
-                        "automatically. Or Settings → Connect Claude account to paste a fresh "
-                        "`claude setup-token` token."
-                    )
-            elif ("not logged in" in low or "authenticat" in low or "unauthorized" in low
-                  or "credit balance" in low or ("out of" in low and "usage" in low)):
-                rec["error"] = ("Claude Code isn't authenticated (or the plan is out of usage). "
-                                "Settings → Connect Claude account.")
-            else:
-                rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
-            _emit(rec["error"])
+    transcript: list[dict] = []    # full detail, persisted beside the run
+    try:
+        if runtime == "api":
+            _execute_api(root, rec, prompt, prov, aid, chosen_model, cfg, transcript)
+        elif runtime == "cli":
+            _execute_cli(root, rec, prompt, prov, aid, chosen_model, cfg, cwd, transcript)
+        else:
+            _execute_claude(root, rec, prompt, cfg, label=label, cwd=cwd,
+                            mcp_config_path=mcp_config_path,
+                            disallowed_tools=disallowed_tools, model=model,
+                            provider=prov, account_id=aid,
+                            cred_source=cred_source, transcript=transcript)
     except FileNotFoundError as e:
         # Keep the resolver's detail (where it looked) rather than replacing it
         # with a generic "install it" line for a CLI that is already installed.

@@ -14,7 +14,9 @@ import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
+import { ModelPicker } from '@/components/agents/ModelPicker'
 import { RunTranscriptModal } from '@/components/agents/RunTranscriptModal'
+import { linkedAccounts as toLinked, splitAccount, useProviders } from '@/lib/providers'
 
 interface AgentStatus {
   auth?: { mode?: string }
@@ -24,6 +26,7 @@ interface AgentStatus {
   max_runs_per_day?: number
   queue_depth?: number
   total_cost_usd?: number
+  linked_accounts?: number
 }
 interface Run {
   id?: string
@@ -42,6 +45,7 @@ interface RunPrefill {
   mcp_services: string[] | null
   provider: string
   account_id: string
+  model?: string
 }
 interface Schedule {
   id: string
@@ -123,6 +127,11 @@ export function Agents() {
   const used = s?.runs_today ?? 0
   const mode = s?.auth?.mode ?? 'none'
   const onPlan = mode === 'session_token' || mode === 'subscription'
+  // auth.mode only knows about Claude. An install whose only linked account is
+  // Codex or Gemini can run agents perfectly well and used to be met by a red
+  // "no provider connected" banner regardless.
+  const linkedCount = s?.linked_accounts ?? 0
+  const canRun = onPlan || mode === 'api_key' || linkedCount > 0
 
   // Open the wizard prefilled from a past run, so the prompt, connections or
   // schedule can be adjusted before spending another run.
@@ -175,21 +184,30 @@ export function Agents() {
             <Stat label="Queued" value={s?.queue_depth ?? 0} tone={(s?.queue_depth ?? 0) > 0 ? 'warn' : 'muted'} />
             <Stat label="Cost (all-time)" value={`$${Math.round((s?.total_cost_usd ?? 0) * 100) / 100}`} />
             <Stat
-              label="Provider"
-              value={onPlan ? 'Plan' : mode === 'api_key' ? 'API' : 'Off'}
-              hint={onPlan ? 'connected' : mode === 'api_key' ? 'API billing' : 'connect in Settings'}
-              tone={onPlan ? 'ok' : mode === 'api_key' ? 'warn' : 'danger'}
+              label="Accounts"
+              value={linkedCount > 0 ? linkedCount : onPlan ? 'Plan' : mode === 'api_key' ? 'API' : 'Off'}
+              hint={
+                linkedCount > 0
+                  ? `${linkedCount === 1 ? 'account' : 'accounts'} linked`
+                  : onPlan
+                    ? 'connected'
+                    : mode === 'api_key'
+                      ? 'API billing'
+                      : 'connect in Settings'
+              }
+              tone={canRun ? 'ok' : 'danger'}
               onClick={() => navigate('settings')}
             />
           </div>
 
-          {status.isSuccess && mode === 'none' && (
+          {status.isSuccess && !canRun && (
             <div className="flex flex-wrap items-center gap-3 rounded-[var(--radius-md)] border border-danger/30 bg-danger/5 px-4 py-3">
               <Bot size={16} className="text-danger" />
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-medium text-ink">No Claude provider connected</p>
+                <p className="text-[13px] font-medium text-ink">No AI provider connected</p>
                 <p className="text-[12px] text-ink-3">
-                  Agents can’t run until you connect Claude Code. Paste a <code className="font-mono">claude setup-token</code> in Settings.
+                  Agents can’t run until one account is linked — a Claude Code or Codex login, or a
+                  free Gemini API key.
                 </p>
               </div>
               <Button variant="primary" size="sm" onClick={() => navigate('settings')}>
@@ -376,7 +394,7 @@ function LaunchWizard({
   onScheduled: () => void
 }) {
   const [name, setName] = useState(initial?.label ?? '')
-  const [model, setModel] = useState('')
+  const [model, setModel] = useState(initial?.model ?? '')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
   const [sched, setSched] = useState('now')
   const [time, setTime] = useState('07:00')
@@ -385,34 +403,13 @@ function LaunchWizard({
   const [account, setAccount] = useState(
     initial?.provider && initial?.account_id ? `${initial.provider}/${initial.account_id}` : '',
   )
-  // Only accounts with a completed CLI login can actually run anything, so
-  // unlinked ones are not offered.
-  const providersQ = useQuery({
-    queryKey: ['ai-providers'],
-    queryFn: () =>
-      api.get<{
-        providers: {
-          id: string
-          label: string
-          runnable: boolean
-          role_label: string
-          accounts: { id: string; label: string; authenticated: boolean }[]
-        }[]
-      }>('/api/v1/providers'),
-  })
-  const linkedAccounts = (providersQ.data?.providers ?? [])
-    .filter((p) => p.runnable)
-    .flatMap((p) =>
-      p.accounts
-        .filter((a) => a.authenticated)
-        .map((a) => ({
-          provider: p.id,
-          providerLabel: p.label,
-          role: p.role_label,
-          id: a.id,
-          label: a.label,
-        })),
-    )
+  const providersQ = useProviders()
+  const linkedAccounts = toLinked(providersQ.data?.providers)
+  // Which runtime this launch will use — the model menu follows it. With no
+  // account picked that is the legacy single login, which is Claude.
+  const { provider, accountId } = splitAccount(account)
+  const providerLabel =
+    (providersQ.data?.providers ?? []).find((p) => p.id === provider)?.label ?? provider
   // Access level and timeout are no longer per-launch choices — they come from
   // Settings → Agent (tool_permission / timeout_min). The connection picker is
   // the single control over what an agent may touch.
@@ -455,8 +452,11 @@ function LaunchWizard({
       const mcpServices = Object.entries(selected)
         .filter(([, v]) => v)
         .map(([k]) => k)
-      const [provider = '', accountId = ''] = account ? account.split('/') : []
-      await api.post('/api/v1/agent/config', { model: model.trim() })
+      // The account is only sent when one was actually picked; "" keeps the
+      // legacy single-login path. The model rides along *with the run* — it used
+      // to be POSTed into the global agent config, so one Opus launch quietly
+      // pinned Opus on every later run, including ones on other providers.
+      const picked = account ? { provider, account_id: accountId } : { provider: '', account_id: '' }
       const cronExpr = cronFrom(sched, time, dow, cron)
       if (cronExpr) {
         await api.post('/api/v1/schedules', {
@@ -465,7 +465,7 @@ function LaunchWizard({
           cron: cronExpr,
           timezone: 'Europe/Berlin',
           enabled: true,
-          payload: { prompt: prompt.trim(), mcp_services: mcpServices, provider, account_id: accountId },
+          payload: { prompt: prompt.trim(), mcp_services: mcpServices, ...picked, model: model.trim() },
         })
         onScheduled()
       } else {
@@ -473,8 +473,8 @@ function LaunchWizard({
           prompt: prompt.trim(),
           label: name || 'agent',
           mcp_services: mcpServices,
-          provider,
-          account_id: accountId,
+          ...picked,
+          model: model.trim(),
         })
         onLaunched()
       }
@@ -492,21 +492,34 @@ function LaunchWizard({
           <Field label="Name">
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning research" />
           </Field>
-          <Field label="Model">
-            <Select value={model} onChange={(e) => setModel(e.target.value)}>
-              <option value="">Default (recommended)</option>
-              <option value="opus">Opus — most capable</option>
-              <option value="sonnet">Sonnet — balanced</option>
-              <option value="haiku">Haiku — fastest</option>
-            </Select>
+          {/* Same field, same place — only the options change, and they now
+              follow the selected account's provider instead of always listing
+              Claude's models. */}
+          <Field label="Model" hint={`Offered by ${providerLabel}`}>
+            <ModelPicker
+              key={`${provider}/${accountId}`}
+              provider={provider}
+              accountId={accountId}
+              value={model}
+              onChange={setModel}
+            />
           </Field>
         </div>
         {linkedAccounts.length > 0 && (
           <Field
             label="Account"
-            hint="Which authenticated CLI login runs this agent. Codex is a coding runtime, Gemini a research one — pick to match the task. Manage accounts in Settings → AI providers."
+            hint="Which linked account runs this agent. Codex is a coding runtime, Gemini a research one — pick to match the task. Manage accounts in Settings → AI providers."
           >
-            <Select value={account} onChange={(e) => setAccount(e.target.value)}>
+            <Select
+              value={account}
+              onChange={(e) => {
+                setAccount(e.target.value)
+                // A model id belongs to one provider: keeping 'opus' selected
+                // while switching to Codex would send Codex a model it has never
+                // heard of.
+                setModel('')
+              }}
+            >
               <option value="">Default login</option>
               {linkedAccounts.map((a) => (
                 <option key={`${a.provider}/${a.id}`} value={`${a.provider}/${a.id}`}>

@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import shutil
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from core import agent_login, agent_runner, agent_tasks, schedule_store
+from core import agent_login, agent_runner, agent_tasks, ai_providers, schedule_store
 from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
@@ -31,9 +30,17 @@ async def api_v1_agent_status():
     st = agent_runner.status(ROOT)
     acfg = agent_runner.load_agent_config(ROOT)
     st["config"] = acfg
-    st["claude_available"] = shutil.which("claude") is not None
+    # resolve_cli, not shutil.which: Claude Code auto-updates into ~/.local/bin,
+    # which the container's PATH does not carry.
+    st["claude_available"] = ai_providers.resolve_cli("claude") is not None
     st["scheduler_available"] = agent_scheduler.available
     st["auth"] = agent_runner.auth_info()
+    # auth_info() only knows about Claude. An install whose only linked account is
+    # Codex or Gemini is perfectly able to run agents, and used to be greeted by a
+    # red "No Claude provider connected" banner saying otherwise.
+    st["linked_accounts"] = sum(
+        1 for p in ai_providers.all_status(ROOT) for a in p["accounts"] if a["authenticated"]
+    )
     st["queue_depth"] = _agent_queue.qsize()
     st["runs_today"] = agent_runner.runs_today(ROOT)
     st["max_runs_per_day"] = acfg.get("max_runs_per_day", 20)
@@ -160,6 +167,10 @@ class AgentRunBody(BaseModel):
     # login (mounted ~/.claude, else a saved token).
     provider: str = ""
     account_id: str = ""
+    # Per run, not per install. The wizard used to POST the picked model into the
+    # *global* agent config, so choosing Opus once made every later run — on every
+    # provider — ask for a model its CLI had never heard of.
+    model: str = Field(default="", max_length=80)
 
 
 @router.post("/api/v1/agent/run")
@@ -167,7 +178,8 @@ async def api_v1_agent_run(body: AgentRunBody):
     extra = _agent_service_disallow(body.mcp_services)
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
                         extra_disallowed=extra, mcp_services=body.mcp_services,
-                        provider=body.provider, account_id=body.account_id)
+                        provider=body.provider, account_id=body.account_id,
+                        model=body.model or None)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}
@@ -220,6 +232,7 @@ async def api_v1_agent_run_detail(rid: str):
         "mcp_services": rec.get("mcp_services"),
         "provider": rec.get("provider") or "",
         "account_id": rec.get("account_id") or "",
+        "model": rec.get("model") or "",
         "started": rec.get("started"),
         "ok": rec.get("ok"),
     }

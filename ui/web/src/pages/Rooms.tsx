@@ -13,6 +13,8 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
+import { ModelPicker } from '@/components/agents/ModelPicker'
+import { linkedAccounts as toLinked, useProviders } from '@/lib/providers'
 
 interface Seat {
   id: string
@@ -21,6 +23,7 @@ interface Seat {
   provider: string
   account_id: string
   goal: string
+  model?: string
 }
 interface Room {
   id: string
@@ -59,13 +62,7 @@ interface RoomsResp {
   live: Live
   runs: RoomRun[]
 }
-interface LinkedAccount {
-  provider: string
-  providerLabel: string
-  role: string
-  id: string
-  label: string
-}
+type LinkedAccount = ReturnType<typeof toLinked>[number]
 
 const ROLE_HINT: Record<string, string> = {
   manager: 'reviews the work handed to it and directs the next person',
@@ -86,19 +83,7 @@ export function Rooms() {
     queryKey: ['agent-conns'],
     queryFn: () => api.get<{ services?: Service[] }>('/api/v1/dashboard?sections=services'),
   })
-  const providers = useQuery({
-    queryKey: ['ai-providers'],
-    queryFn: () =>
-      api.get<{
-        providers: {
-          id: string
-          label: string
-          runnable: boolean
-          role_label: string
-          accounts: { id: string; label: string; authenticated: boolean }[]
-        }[]
-      }>('/api/v1/providers'),
-  })
+  const providers = useProviders()
 
   const [newRoom, setNewRoom] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -106,13 +91,10 @@ export function Rooms() {
   const [dragSeat, setDragSeat] = useState<string | null>(null)
   const [busy, setBusy] = useState('')
 
-  const linked: LinkedAccount[] = (providers.data?.providers ?? [])
-    .filter((p) => p.runnable)
-    .flatMap((p) =>
-      p.accounts
-        .filter((a) => a.authenticated)
-        .map((a) => ({ provider: p.id, providerLabel: p.label, role: p.role_label, id: a.id, label: a.label })),
-    )
+  const linked = toLinked(providers.data?.providers)
+  const accountLabel = (seat: Seat) =>
+    linked.find((a) => a.provider === seat.provider && a.id === seat.account_id)?.label ||
+    seat.account_id
 
   const list = rooms.data?.rooms ?? []
   const live = rooms.data?.live
@@ -353,7 +335,9 @@ export function Rooms() {
                                       </option>
                                     ))}
                                   </Select>
-                                  <span className="text-[11.5px] text-ink-3">{s.provider}</span>
+                                  <span className="text-[11.5px] text-ink-3">
+                                    {s.provider} · {accountLabel(s)}
+                                  </span>
                                   {isLive && <span className="text-[11px] text-accent">working…</span>}
                                   <Button
                                     variant="ghost"
@@ -383,6 +367,23 @@ export function Rooms() {
                                     )
                                   }
                                 />
+                                {/* Per seat, because a room mixes providers and a
+                                    model id only means something to one of them. */}
+                                <div className="mt-1 max-w-[240px]">
+                                  <ModelPicker
+                                    provider={s.provider}
+                                    accountId={s.account_id}
+                                    value={s.model ?? ''}
+                                    onChange={(m) =>
+                                      call(
+                                        () =>
+                                          api.post(`/api/v1/rooms/${open.id}/seats/${s.id}`, { model: m }),
+                                        `seat-${s.id}`,
+                                      )
+                                    }
+                                    className="h-6 text-[12px]"
+                                  />
+                                </div>
                               </div>
                             </li>
                           )

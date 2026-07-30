@@ -125,7 +125,7 @@ def delete_room(root: Path, room_id: str) -> bool:
 # ── seats ────────────────────────────────────────────────────────────────────
 
 def add_seat(root: Path, room_id: str, *, role: str, provider: str, account_id: str,
-             goal: str = "", label: str = "") -> dict:
+             goal: str = "", label: str = "", model: str = "") -> dict:
     role = (role or DEFAULT_ROLE).strip().lower()
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r}; expected one of {', '.join(ROLES)}")
@@ -137,6 +137,9 @@ def add_seat(root: Path, room_id: str, *, role: str, provider: str, account_id: 
         "label": (label or role.title())[:40],
         "provider": provider,
         "account_id": account_id,
+        # Per seat, because a room mixes providers: the researcher's model id is
+        # meaningless to the developer's CLI. Empty = the account's own default.
+        "model": (model or "").strip()[:80],
         "goal": (goal or "").strip()[:500],
     }
     with _LOCK:
@@ -194,7 +197,7 @@ def update_seat(root: Path, room_id: str, seat_id: str, changes: dict) -> dict:
             if role not in ROLES:
                 raise ValueError(f"unknown role {role!r}")
             seat["role"] = role
-        for key in ("label", "goal", "provider", "account_id"):
+        for key in ("label", "goal", "provider", "account_id", "model"):
             if key in changes and changes[key] is not None:
                 seat[key] = changes[key]
         save_rooms(root, rooms)
@@ -314,6 +317,7 @@ def run_room(root: Path, room_id: str, brief: str, *,
                 label=f"{room.get('label', 'room')} · {seat.get('label') or seat['role']}",
                 mcp_services=room.get("mcp_services"),
                 provider=seat.get("provider", ""), account_id=seat.get("account_id", ""),
+                model=seat.get("model") or "",
             )
             step = {
                 "seat_id": seat["id"], "role": seat["role"],

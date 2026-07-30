@@ -83,6 +83,47 @@ nothing else breaks.
 
 ---
 
+## 2b. Other providers (Codex, Gemini)
+
+Everything above is the **Claude** runtime, which is still the default and the
+only one wired to Plutus's MCP tools. Settings → **AI providers** adds accounts on
+two more, and the launch wizard's **Account** picker chooses which one executes a
+run (`core/ai_providers.py`).
+
+| Provider | Kind | Credential | Plutus MCP tools |
+|---|---|---|---|
+| Claude Code | CLI (`claude -p`) | login in the account's `CLAUDE_CONFIG_DIR`, or a `setup-token` | yes |
+| Codex | CLI (`codex exec`) | login in the account's `CODEX_HOME` | no |
+| Gemini | HTTP API | free key from <https://aistudio.google.com/apikey> | no (Google Search grounding instead) |
+
+The runtime follows the **account**, not a setting: pick a Codex account and
+`codex exec` is what runs. Getting that wrong was a real bug — the runner built a
+`claude` command whatever you picked, so a Codex run was Claude Code pointed at a
+Codex config directory, and it failed as `401 Invalid bearer token`.
+
+**Gemini needs no CLI and no login.** Add an account, paste an AI Studio key, done.
+It used to drive `@google/gemini-cli`, which has no config-dir override — it always
+reads `~/.gemini` — so a second account meant logging in, "adopting" the credential
+file, logging out and logging in again as the other identity. The key does the same
+job in one paste, isolates accounts by construction, and is why the image no longer
+ships that CLI.
+
+**Models are per provider and per run.** The wizard's Model menu is populated from
+whichever account you picked — Claude's Opus/Sonnet/Haiku, Codex's GPT ids, and for
+Gemini the list its API actually reports for your key. Any menu also accepts a typed
+id, because vendors add and drop models between releases. The choice rides with the
+run; it is no longer written into `data/agent_config.json`, where one Opus launch
+used to pin Opus on every later run including ones on other providers.
+
+**What "no MCP tools" means.** `--mcp-config` is Claude Code's flag; the other
+runtimes configure servers through their own files, which Plutus does not write. A
+Codex or Gemini agent therefore works from its prompt alone, and the run log says so
+rather than leaving you to guess why it never called a tool. Gemini requests Google
+Search grounding so a research seat can still look things up, and retries without it
+if the model or tier rejects the tool.
+
+---
+
 ## 3. Configuration
 
 `data/agent_config.json` (editable via `POST /api/v1/agent/config`):

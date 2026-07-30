@@ -82,6 +82,7 @@ class SeatBody(BaseModel):
     account_id: str = Field(..., min_length=1)
     goal: str = ""
     label: str = ""
+    model: str = Field(default="", max_length=80)
 
 
 @router.post("/api/v1/rooms/{room_id}/seats")
@@ -89,7 +90,8 @@ async def api_add_seat(room_id: str, body: SeatBody):
     _room_or_404(room_id)
     try:
         seat = workforce.add_seat(ROOT, room_id, role=body.role, provider=body.provider,
-                                  account_id=body.account_id, goal=body.goal, label=body.label)
+                                  account_id=body.account_id, goal=body.goal,
+                                  label=body.label, model=body.model)
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "seat": seat, "room": workforce.get_room(ROOT, room_id)}
@@ -101,6 +103,7 @@ class SeatPatch(BaseModel):
     goal: str | None = None
     provider: str | None = None
     account_id: str | None = None
+    model: str | None = None
 
 
 @router.post("/api/v1/rooms/{room_id}/seats/{seat_id}")
@@ -148,18 +151,29 @@ async def api_run_room(room_id: str, body: RunBody):
     to start while another run is in flight, so the room's seats serialise against
     single-agent launches without either side knowing about the other.
     """
-    _room_or_404(room_id)
+    room = _room_or_404(room_id)
     if workforce.LIVE.get("running"):
         raise HTTPException(409, "a room is already running")
+    if not (room.get("seats") or []):
+        raise HTTPException(400, "this room has no agents in it yet — drag one in first")
 
     acfg = agent_runner.load_agent_config(ROOT)
     cap = float(acfg.get("max_cost_usd", 2.0) or 2.0) * 4  # a room is several runs
+    slot_wait = max(60, agent_runner._timeout_min(acfg) * 60 + 120)
 
     def _work():
         with _room_lock:
             url, token = _agent_mcp_target()
 
             def _run(root, prompt, **kw):
+                # "Refuses" is not "queues": run_agent returns an error the
+                # instant another run holds the slot, so a room launched while
+                # the agent queue was busy used to fail on its first seat. Wait
+                # the slot out — up to one full run's timeout, since that is the
+                # longest the thing ahead of us can legitimately take.
+                if not agent_runner.wait_for_slot(slot_wait):
+                    return {"ok": False, "cost_usd": 0.0, "result": "",
+                            "error": "another agent run held the runner for too long"}
                 return agent_runner.run_agent(root, prompt, mcp_url=url, bearer_token=token, **kw)
 
             try:

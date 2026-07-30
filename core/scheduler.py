@@ -95,7 +95,11 @@ class PlutusScheduler:
                                     mcp_services=payload.get("mcp_services"),
                                     profile=payload.get("profile"),
                                     provider=payload.get("provider") or "",
-                                    account_id=payload.get("account_id") or "")
+                                    account_id=payload.get("account_id") or "",
+                                    # Scheduled on one provider's model; without
+                                    # this the run silently fell back to whatever
+                                    # the global config last held.
+                                    model=payload.get("model") or None)
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:

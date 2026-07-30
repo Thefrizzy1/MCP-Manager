@@ -61,11 +61,9 @@ services:
       # Codex writes $CODEX_HOME/auth.json; per-account logins land under ./data
       # instead, but this keeps a plain `docker exec -it plutus-mcp codex` login.
       - ~/.codex:/root/.codex
-      # Gemini CLI has NO config-dir override — it always reads ~/.gemini — so
-      # without this mount a Gemini login is lost on every update. Adopting the
-      # login into an account (Settings → AI providers) also persists it, since
-      # account directories live under ./data.
-      - ~/.gemini:/root/.gemini
+      # Gemini needs no mount: it is an HTTP provider driven by a free-tier API
+      # key (https://aistudio.google.com/apikey), and the key is stored per
+      # account under ./data, which is already persisted above.
 
       # ── Optional: expose host folders to the filesystem tools ──────────────
       # Mount any host path you want the filesystem tools to reach, then add
