@@ -69,6 +69,23 @@ async def api_logout_account(pid: str, aid: str):
             "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
 
 
+@router.post("/api/v1/providers/{pid}/accounts/{aid}/adopt")
+async def api_adopt_login(pid: str, aid: str):
+    """Claim the CLI's current login for this account.
+
+    Needed because not every CLI can be pointed at a per-account directory —
+    Gemini reads ~/.gemini and offers no override. For those, you log in as one
+    identity, adopt it here, log out of the CLI, log in as the next, and adopt that
+    into another account.
+    """
+    _known_account(pid, aid)
+    res = await asyncio.to_thread(ai_providers.adopt_login, ROOT, pid, aid)
+    if not res["ok"]:
+        raise HTTPException(400, res["error"])
+    return {"ok": True, "copied": res["copied"], "from": res["from"],
+            "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
+
+
 @router.post("/api/v1/providers/{pid}/accounts/{aid}/test")
 async def api_test_account(pid: str, aid: str, with_mcp: bool = False):
     """Real capability test: executes a prompt through the CLI, optionally with

@@ -15,6 +15,9 @@ interface Account {
   config_dir: string
   login_command: string
   role_label: string
+  isolated: boolean
+  adoptable: boolean
+  adoptable_from: string
 }
 interface Provider {
   id: string
@@ -25,6 +28,7 @@ interface Provider {
   cli: { installed: boolean; path: string; version: string; install_hint: string }
   accounts: Account[]
   role_label: string
+  isolated: boolean
 }
 interface Check {
   name: string
@@ -34,6 +38,7 @@ interface Check {
 
 const STATE_TEXT: Record<string, string> = {
   connected: 'Connected',
+  adoptable: 'Login found — adopt it',
   login_required: 'Login required',
   no_accounts: 'No accounts',
   cli_missing: 'CLI not installed',
@@ -175,10 +180,38 @@ export function AiProvidersSection() {
 
                     {!a.authenticated && p.cli.installed && (
                       <div className="mt-1.5">
-                        <p className="text-[11.5px] text-ink-3">Link this account by running:</p>
+                        <p className="text-[11.5px] text-ink-3">
+                          {a.isolated
+                            ? 'Link this account by running:'
+                            : `${p.label} has no per-account config directory, so log in once and then adopt it:`}
+                        </p>
                         <code className="mt-1 block overflow-x-auto whitespace-pre rounded bg-surface px-2 py-1 text-[11px] text-ink-2">
                           {a.login_command}
                         </code>
+                        {a.adoptable ? (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            <span className="text-[11.5px] text-ok">
+                              Login found in {a.adoptable_from}
+                            </span>
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              disabled={busy === `adopt-${a.id}`}
+                              onClick={() =>
+                                act(`/api/v1/providers/${p.id}/accounts/${a.id}/adopt`, 'Login adopted.')
+                              }
+                            >
+                              Adopt login
+                            </Button>
+                          </div>
+                        ) : (
+                          !a.isolated && (
+                            <p className="mt-1 text-[11px] text-ink-3">
+                              After logging in, come back and press Adopt login. For a second account, log out of
+                              the CLI, log in as the other identity, then adopt into that account.
+                            </p>
+                          )
+                        )}
                       </div>
                     )}
 

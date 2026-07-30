@@ -88,6 +88,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "install_hint": "docker exec plutus-mcp npm install -g @anthropic-ai/claude-code",
         # Env var that relocates the CLI's whole config/credential directory.
         "config_dir_env": "CLAUDE_CONFIG_DIR",
+        "default_home": "~/.claude",
         # Files that prove a completed login inside a config directory.
         "credential_files": (".credentials.json", "credentials.json"),
         # Interactive login command (run once per account); `setup-token` prints a
@@ -104,7 +105,10 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "Codex",
         "cli": "codex",
         "install_hint": "docker exec plutus-mcp npm install -g @openai/codex",
+        # Real and documented: Codex reads $CODEX_HOME/config.toml and writes
+        # $CODEX_HOME/auth.json, defaulting to ~/.codex.
         "config_dir_env": "CODEX_HOME",
+        "default_home": "~/.codex",
         "credential_files": ("auth.json", ".credentials.json"),
         # `codex` on its own opens the interactive TUI and completes the browser
         # sign-in from there; `codex login` also exists but the plain command is
@@ -121,7 +125,14 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "label": "Gemini CLI",
         "cli": "gemini",
         "install_hint": "docker exec plutus-mcp npm install -g @google/gemini-cli",
-        "config_dir_env": "GEMINI_CONFIG_DIR",
+        # Gemini CLI has NO config-dir override: it reads ~/.gemini and that is
+        # that. Handing the user `-e GEMINI_CONFIG_DIR=…` (which this once did) is
+        # worse than handing them nothing — the CLI ignores it, the login lands in
+        # ~/.gemini, and the account stays "not linked" with no clue why. Accounts
+        # for such providers are linked by adopting the login instead; see
+        # adopt_login().
+        "config_dir_env": None,
+        "default_home": "~/.gemini",
         "credential_files": ("oauth_creds.json", "google_accounts.json", ".credentials.json"),
         "login_cmd": ("gemini",),
         "token_cmd": None,
@@ -319,18 +330,76 @@ def credentials_file(root: Path, provider: str, account_id: str) -> Path | None:
     return None
 
 
+def default_home(provider: str) -> Path:
+    """Where the CLI keeps its config when nothing redirects it."""
+    return Path(os.path.expanduser(_spec(provider)["default_home"]))
+
+
+def supports_isolation(provider: str) -> bool:
+    """True when the CLI can be pointed at a per-account directory."""
+    return bool(_spec(provider).get("config_dir_env"))
+
+
 def account_env(root: Path, provider: str, account_id: str,
                 *, token: str = "") -> dict[str, str]:
     """Environment fragment that points the CLI at this account.
 
     Returned as a fragment (not a full env) so callers stay explicit about what
-    they are overriding.
+    they are overriding. Empty of a config dir when the CLI has no override — we
+    must not set a variable it ignores and then behave as though it took effect.
     """
     spec = _spec(provider)
-    env = {spec["config_dir_env"]: str(account_dir(root, provider, account_id))}
+    env: dict[str, str] = {}
+    if spec.get("config_dir_env"):
+        env[spec["config_dir_env"]] = str(account_dir(root, provider, account_id))
     if token and spec.get("token_env"):
         env[spec["token_env"]] = token
     return env
+
+
+def shared_credentials_file(provider: str) -> Path | None:
+    """A login sitting in the CLI's default home, not yet claimed by an account."""
+    spec = _spec(provider)
+    home = default_home(provider)
+    for name in spec["credential_files"]:
+        f = home / name
+        if f.is_file():
+            return f
+    return None
+
+
+def adopt_login(root: Path, provider: str, account_id: str) -> dict:
+    """Copy the CLI's current login out of its default home into this account.
+
+    This is how multi-account works for a CLI with no config-dir override: log in
+    as one identity, adopt it here, log out of the CLI, log in as the next, adopt
+    that into another account. Each account then holds its own credential copy.
+    """
+    import shutil as _shutil
+
+    spec = _spec(provider)
+    home = default_home(provider)
+    dest = account_dir(root, provider, account_id)
+    dest.mkdir(parents=True, exist_ok=True)
+
+    copied: list[str] = []
+    for name in spec["credential_files"]:
+        src = home / name
+        if src.is_file():
+            try:
+                _shutil.copy2(src, dest / name)
+                copied.append(name)
+            except OSError as e:
+                return {"ok": False, "copied": copied, "error": f"could not copy {name}: {e}"}
+    if not copied:
+        return {
+            "ok": False, "copied": [],
+            "error": (f"No login found in {home}. Run the link command first. Note that "
+                      "some CLIs store credentials in the OS keyring rather than a file, "
+                      "in which case there is nothing for Plutus to adopt and the account "
+                      "shares the CLI's single login."),
+        }
+    return {"ok": True, "copied": copied, "from": str(home)}
 
 
 def login_command(root: Path, provider: str, account_id: str) -> str:
@@ -339,9 +408,16 @@ def login_command(root: Path, provider: str, account_id: str) -> str:
     Per-account and per-provider on purpose: the UI used to hardcode the Claude
     form, so a Codex account was told to run `CLAUDE_CONFIG_DIR=… plutus-mcp
     claude` — the wrong env var and the wrong binary.
+
+    When the CLI has no config-dir override the command carries no env var at all.
+    Passing one the CLI silently ignores is actively misleading: the login appears
+    to succeed, lands in the default home, and the account still reads "not
+    linked".
     """
     spec = _spec(provider)
     cmd = " ".join(spec["login_cmd"])
+    if not spec.get("config_dir_env"):
+        return f"docker exec -it plutus-mcp {cmd}"
     d = account_dir(root, provider, account_id)
     return f"docker exec -it -e {spec['config_dir_env']}={d} plutus-mcp {cmd}"
 
@@ -352,6 +428,9 @@ def account_status(root: Path, provider: str, account: dict) -> dict:
     aid = account.get("id", "")
     cred = credentials_file(root, provider, aid)
     d = account_dir(root, provider, aid)
+    # A login the CLI left in its default home: not owned by this account yet, but
+    # visible, so the UI can offer to adopt it instead of reporting a dead end.
+    pending = None if cred else shared_credentials_file(provider)
     return {
         **account,
         "provider": provider,
@@ -359,10 +438,13 @@ def account_status(root: Path, provider: str, account: dict) -> dict:
         "role": spec.get("role", ROLE_GENERAL),
         "role_label": ROLE_LABEL.get(spec.get("role", ROLE_GENERAL), ""),
         "config_dir": str(d),
+        "isolated": supports_isolation(provider),
         "authenticated": cred is not None,
         "credentials_path": str(cred) if cred else "",
         "linked_at": int(cred.stat().st_mtime) if cred else None,
-        "state": "connected" if cred else "login_required",
+        "state": "connected" if cred else ("adoptable" if pending else "login_required"),
+        "adoptable": pending is not None,
+        "adoptable_from": str(default_home(provider)) if pending else "",
         "login_command": login_command(root, provider, aid),
     }
 
@@ -378,11 +460,14 @@ def provider_status(root: Path, provider: str) -> dict:
         state = "no_accounts"
     elif any(a["authenticated"] for a in accounts):
         state = "connected"
+    elif any(a["adoptable"] for a in accounts):
+        state = "adoptable"
     else:
         state = "login_required"
     return {
         "id": provider,
         "label": spec["label"],
+        "isolated": supports_isolation(provider),
         "runnable": bool(spec.get("runnable")),
         "role": spec.get("role", ROLE_GENERAL),
         "role_label": ROLE_LABEL.get(spec.get("role", ROLE_GENERAL), ""),
@@ -434,10 +519,15 @@ def capability_test(root: Path, provider: str, account_id: str, *,
         return {"ok": False, "checks": checks}
 
     cred = credentials_file(root, provider, account_id)
-    checks.append(_check("Session credentials present", cred is not None,
-                         str(cred) if cred else "no login found for this account"))
     if cred is None:
+        pending = shared_credentials_file(provider)
+        detail = (f"a login exists in {default_home(provider)} but is not claimed by "
+                  "this account yet — use Adopt login") if pending else \
+                 (f"no login found for this account. Run the link command, then "
+                  f"Adopt login if the CLI wrote to {default_home(provider)}.")
+        checks.append(_check("Session credentials present", False, detail))
         return {"ok": False, "checks": checks}
+    checks.append(_check("Session credentials present", True, str(cred)))
 
     env = {**os.environ, **account_env(root, provider, account_id), "IS_SANDBOX": "1"}
     env.pop("ANTHROPIC_API_KEY", None)      # the account's own login is authoritative

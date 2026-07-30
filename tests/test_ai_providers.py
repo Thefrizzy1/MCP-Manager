@@ -13,6 +13,20 @@ import pytest
 from core import ai_providers as AP
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cli_homes(tmp_path_factory, monkeypatch):
+    """Point every provider's default home at an empty temp dir.
+
+    account_status() now looks for an unclaimed login in the CLI's default home so
+    it can offer to adopt it. Left unstubbed that reads the *developer's* real
+    ~/.claude, so tests asserting "not linked" pass or fail depending on whether the
+    machine happens to be logged in — the same divergence that broke CI twice.
+    Tests that exercise adoption override this with their own directory.
+    """
+    base = tmp_path_factory.mktemp("cli-homes")
+    monkeypatch.setattr(AP, "default_home", lambda provider: base / provider)
+
+
 # ── accounts ─────────────────────────────────────────────────────────────────
 
 def test_accounts_are_isolated_by_config_dir(tmp_path):
@@ -126,11 +140,87 @@ def test_login_command_is_per_provider(tmp_path):
     assert "CODEX_HOME=" in x and x.endswith("plutus-mcp codex")
     assert "CLAUDE" not in x and " claude" not in x
 
+    # Gemini has no config-dir override, so its command carries no env var at all.
     g = AP.login_command(tmp_path, "gemini", gemini["id"])
-    assert "GEMINI_CONFIG_DIR=" in g and g.endswith("plutus-mcp gemini")
+    assert g == "docker exec -it plutus-mcp gemini"
 
     # Each account's own directory, so two accounts never share a login.
     assert AP.account_dir(tmp_path, "codex", codex["id"]).name in x
+
+
+def test_a_provider_without_an_override_gets_no_env_var(tmp_path):
+    """GEMINI_CONFIG_DIR does not exist. Handing the user an env var the CLI
+    ignores is worse than none: the login appears to work, lands in ~/.gemini, and
+    the account still reads "not linked" with nothing explaining why."""
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+
+    assert AP.supports_isolation("gemini") is False
+    assert AP.account_env(tmp_path, "gemini", acct["id"]) == {}
+
+    cmd = AP.login_command(tmp_path, "gemini", acct["id"])
+    assert cmd == "docker exec -it plutus-mcp gemini"
+    assert "CONFIG_DIR" not in cmd and "-e " not in cmd
+
+
+def test_providers_with_a_real_override_still_isolate(tmp_path):
+    """CODEX_HOME and CLAUDE_CONFIG_DIR are documented and do work."""
+    for pid, var in (("claude", "CLAUDE_CONFIG_DIR"), ("codex", "CODEX_HOME")):
+        acct = AP.add_account(tmp_path, pid, "Personal")
+        assert AP.supports_isolation(pid) is True
+        assert AP.account_env(tmp_path, pid, acct["id"])[var] == \
+            str(AP.account_dir(tmp_path, pid, acct["id"]))
+        assert f"-e {var}=" in AP.login_command(tmp_path, pid, acct["id"])
+
+
+def test_a_login_in_the_default_home_is_offered_for_adoption(tmp_path, monkeypatch):
+    home = tmp_path / "home" / ".gemini"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(AP, "default_home", lambda p: home)
+
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    st = AP.account_status(tmp_path, "gemini", acct)
+    assert st["adoptable"] is False and st["state"] == "login_required"
+
+    (home / "oauth_creds.json").write_text("{}", encoding="utf-8")
+    st = AP.account_status(tmp_path, "gemini", acct)
+    assert st["adoptable"] is True
+    assert st["state"] == "adoptable"
+    assert st["authenticated"] is False, "an unclaimed login is not this account's yet"
+
+
+def test_adopting_a_login_claims_it_for_the_account(tmp_path, monkeypatch):
+    home = tmp_path / "home" / ".gemini"
+    home.mkdir(parents=True)
+    (home / "oauth_creds.json").write_text('{"token":"a"}', encoding="utf-8")
+    monkeypatch.setattr(AP, "default_home", lambda p: home)
+
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    res = AP.adopt_login(tmp_path, "gemini", acct["id"])
+    assert res["ok"] is True and "oauth_creds.json" in res["copied"]
+
+    st = AP.account_status(tmp_path, "gemini", acct)
+    assert st["authenticated"] is True and st["state"] == "connected"
+
+    # A second identity: log in again, adopt into a different account. Each keeps
+    # its own copy, which is what makes multi-account work without an override.
+    (home / "oauth_creds.json").write_text('{"token":"b"}', encoding="utf-8")
+    other = AP.add_account(tmp_path, "gemini", "Work")
+    AP.adopt_login(tmp_path, "gemini", other["id"])
+
+    first = (AP.account_dir(tmp_path, "gemini", acct["id"]) / "oauth_creds.json").read_text()
+    second = (AP.account_dir(tmp_path, "gemini", other["id"]) / "oauth_creds.json").read_text()
+    assert first == '{"token":"a"}' and second == '{"token":"b"}'
+
+
+def test_adopting_with_no_login_explains_the_keyring_case(tmp_path, monkeypatch):
+    home = tmp_path / "home" / ".gemini"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(AP, "default_home", lambda p: home)
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+
+    res = AP.adopt_login(tmp_path, "gemini", acct["id"])
+    assert res["ok"] is False
+    assert "keyring" in res["error"], "the keyring case has to be named, not guessed at"
 
 
 def test_account_status_carries_its_own_login_command(tmp_path):
