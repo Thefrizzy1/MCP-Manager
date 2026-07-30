@@ -1151,8 +1151,8 @@ def _explain_cli_failure(spec: dict, provider: str, account_id: str,
 MAX_TOOL_TURNS = 12
 
 
-def _plutus_declarations(mcp_url: str, token: str,
-                         disallowed: list[str] | None) -> tuple[list[dict], object]:
+def _plutus_declarations(mcp_url: str, token: str, disallowed: list[str] | None,
+                         dialect: str = "gemini") -> tuple[list[dict], object]:
     """(function declarations, live MCP client) for a run that gets Plutus tools.
 
     The MCP list comes from a real ``tools/list`` against Plutus's own endpoint,
@@ -1169,7 +1169,8 @@ def _plutus_declarations(mcp_url: str, token: str,
     from core.mcp_client import McpHttpClient
 
     builtin = agent_tools.library_tools_for(disallowed)
-    builtin_decls, _ = agent_tools.gemini_declarations(builtin, None, limit=len(builtin) or 1)
+    builtin_decls, _ = agent_tools.tool_declarations(
+        builtin, None, limit=len(builtin) or 1, dialect=dialect)
 
     if not mcp_url:
         _emit(f"tools: {len(builtin_decls)} built-in library tools (Plutus MCP not attached)")
@@ -1186,7 +1187,8 @@ def _plutus_declarations(mcp_url: str, token: str,
 
     # The cap counts the built-ins, which must never be the ones dropped.
     room = max(1, agent_tools.MAX_DECLARATIONS - len(builtin_decls))
-    decls, dropped = agent_tools.gemini_declarations(tools, disallowed, limit=room)
+    decls, dropped = agent_tools.tool_declarations(tools, disallowed, limit=room,
+                                                   dialect=dialect)
     if dropped:
         _emit(f"note: {dropped} MCP tools left out (cap {agent_tools.MAX_DECLARATIONS}) — "
               "narrow the connections for this run to choose which")
@@ -1214,8 +1216,13 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
     if not ok:
         raise RuntimeError(why)
 
-    decls, client = _plutus_declarations(mcp_url, bearer_token, disallowed)
-    contents: list[dict] = [{"role": "user", "parts": [{"text": prompt}]}]
+    dialect = ai_providers.api_dialect(provider).name
+    decls, client = _plutus_declarations(mcp_url, bearer_token, disallowed, dialect)
+    if decls and ai_providers.model_capabilities(
+            root, provider, account_id, model).get("tools") is False:
+        _emit(f"note: {model} does not support tool calling — this run has no tools. "
+              "Pick a model tagged 'tools' to give it any.")
+    contents: list[dict] = [ai_providers.api_user_message(provider, prompt)]
     deadline = time.monotonic() + _timeout_min(cfg) * 60
     turns = 0
     try:
@@ -1253,8 +1260,9 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                 return
 
             # The model's own message has to go back verbatim, or the API rejects
-            # the function responses as unsolicited.
-            contents.append({"role": "model", "parts": res["parts"]})
+            # the tool responses as unsolicited. Opaque here on purpose: its shape
+            # is the dialect's business, not the loop's.
+            contents.append(res["raw_message"])
             replies = []
             for call in res["calls"]:
                 name = str(call.get("name") or "")
@@ -1274,17 +1282,14 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                         out = client.call_tool(name, args)
                     except Exception as e:
                         out = {"text": f"tool call failed: {e}", "is_error": True}
-                transcript.append({"kind": "tool_result", "id": "",
+                transcript.append({"kind": "tool_result", "id": call.get("id") or "",
                                    "is_error": out["is_error"],
                                    "text": _clip(out["text"])})
-                replies.append({"functionResponse": {
-                    "name": name,
-                    # A tool's own error is data the model should see and work
-                    # around, not a transport failure — so it rides in the same
-                    # response envelope.
-                    "response": {"error" if out["is_error"] else "result": out["text"]},
-                }})
-            contents.append({"role": "user", "parts": replies})
+                # The id matters for an OpenAI-compatible provider, which rejects
+                # a result that does not name the call it answers.
+                replies.append({"id": call.get("id") or "", "name": name,
+                                "text": out["text"], "is_error": out["is_error"]})
+            contents.extend(ai_providers.api_tool_results_message(provider, replies))
 
         rec["turns"] = turns
         rec["error"] = (f"Stopped after {MAX_TOOL_TURNS} tool rounds without a final "

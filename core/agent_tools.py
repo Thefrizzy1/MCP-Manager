@@ -156,12 +156,18 @@ def allowed_tool_names(all_names: list[str], disallowed: list[str] | None) -> li
     return [n for n in all_names if n not in denied]
 
 
-def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> dict:
-    """One JSON Schema into Gemini's OpenAPI subset.
+def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0, *,
+                     nullable: bool = True) -> dict:
+    """One JSON Schema into a provider's accepted subset.
 
-    ``$ref`` is resolved against ``$defs`` because Gemini has no notion of it,
-    and every Plutus tool wraps its arguments in a ``$ref``-ed model — so without
-    this, no tool would be callable at all.
+    ``$ref`` is resolved against ``$defs`` because neither provider has a notion
+    of it, and every Plutus tool wraps its arguments in a ``$ref``-ed model — so
+    without this, no tool would be callable at all.
+
+    ``nullable`` picks the dialect: Gemini uses OpenAPI's ``nullable: true``,
+    while an OpenAI-compatible endpoint expects plain JSON Schema and can reject
+    the unknown keyword. An optional field is simply absent from ``required``
+    either way, so dropping it loses nothing.
     """
     if not isinstance(schema, dict):
         return {"type": "string"}
@@ -177,19 +183,19 @@ def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> d
         if not isinstance(target, dict):
             return {"type": "object"}
         merged = {**target, **{k: v for k, v in schema.items() if k != "$ref"}}
-        return to_gemini_schema(merged, defs, depth + 1)
+        return to_gemini_schema(merged, defs, depth + 1, nullable=nullable)
 
     # Optionals arrive as anyOf[X, null]. Gemini expresses that as nullable on X.
     branches = schema.get("anyOf") or schema.get("oneOf")
     if isinstance(branches, list) and branches:
         real = [b for b in branches
                 if not (isinstance(b, dict) and b.get("type") == "null")]
-        nullable = len(real) != len(branches)
-        picked = to_gemini_schema(real[0], defs, depth + 1) if real else {"type": "string"}
+        is_null = len(real) != len(branches)
+        picked = to_gemini_schema(real[0], defs, depth + 1, nullable=nullable) if real else {"type": "string"}
         for k in _KEEP:
             if k in schema and k not in picked:
                 picked[k] = schema[k]
-        if nullable:
+        if is_null and nullable:
             picked["nullable"] = True
         return picked
 
@@ -197,7 +203,7 @@ def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> d
     t = schema.get("type")
     if isinstance(t, list):                 # ["string", "null"]
         real = [x for x in t if x != "null"]
-        if "null" in t:
+        if "null" in t and nullable:
             out["nullable"] = True
         t = real[0] if real else "string"
     if isinstance(t, str) and t in _TYPES and t != "null":
@@ -216,7 +222,7 @@ def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> d
     props = schema.get("properties")
     if isinstance(props, dict):
         out["type"] = "object"
-        out["properties"] = {k: to_gemini_schema(v, defs, depth + 1)
+        out["properties"] = {k: to_gemini_schema(v, defs, depth + 1, nullable=nullable)
                              for k, v in props.items() if isinstance(k, str)}
         req = [r for r in (schema.get("required") or []) if isinstance(r, str)]
         if req:
@@ -225,7 +231,7 @@ def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> d
     items = schema.get("items")
     if isinstance(items, dict):
         out["type"] = "array"
-        out["items"] = to_gemini_schema(items, defs, depth + 1)
+        out["items"] = to_gemini_schema(items, defs, depth + 1, nullable=nullable)
 
     if "enum" in out and "type" not in out:
         out["type"] = "string"
@@ -241,22 +247,31 @@ def to_gemini_schema(schema: Any, defs: dict | None = None, depth: int = 0) -> d
     return out
 
 
-def gemini_declarations(tools: list[dict], disallowed: list[str] | None = None,
-                        *, limit: int = MAX_DECLARATIONS) -> tuple[list[dict], int]:
-    """(function declarations, how many were dropped by the cap).
+def tool_declarations(tools: list[dict], disallowed: list[str] | None = None, *,
+                      limit: int = MAX_DECLARATIONS,
+                      dialect: str = "gemini") -> tuple[list[dict], int]:
+    """(function declarations in ``dialect``'s shape, how many the cap dropped).
 
-    ``tools`` is an MCP ``tools/list`` payload, so what a Gemini run can reach is
-    by construction the same surface Claude reaches — no second registry to drift.
+    ``tools`` is an MCP ``tools/list`` payload, so what an HTTP provider can reach
+    is by construction the same surface Claude reaches — no second registry to
+    drift out of step.
     """
+    from core.api_dialects import dialect_for
+
+    d = dialect_for(dialect)
     allowed = set(allowed_tool_names([t.get("name", "") for t in tools], disallowed))
     picked = sorted((t for t in tools if t.get("name") in allowed),
                     key=lambda t: t.get("name", ""))
     dropped = max(0, len(picked) - limit)
-    decls = []
-    for t in picked[:limit]:
-        decls.append({
-            "name": t["name"],
-            "description": (t.get("description") or t["name"])[:1024],
-            "parameters": to_gemini_schema(t.get("inputSchema") or {}),
-        })
+    decls = [
+        d.declaration(t, to_gemini_schema(t.get("inputSchema") or {},
+                                          nullable=(d.name == "gemini")))
+        for t in picked[:limit]
+    ]
     return decls, dropped
+
+
+def gemini_declarations(tools: list[dict], disallowed: list[str] | None = None,
+                        *, limit: int = MAX_DECLARATIONS) -> tuple[list[dict], int]:
+    """Gemini-shaped declarations. Kept as the name the Gemini tests pin."""
+    return tool_declarations(tools, disallowed, limit=limit, dialect="gemini")

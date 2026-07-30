@@ -28,12 +28,20 @@ export function ModelPicker({
   className?: string
 }) {
   const q = useProviderModels(provider, accountId)
-  const models = q.data?.models ?? []
+  const all = q.data?.models ?? []
   const [typing, setTyping] = useState(false)
+  const [freeOnly, setFreeOnly] = useState(false)
   // A value that is not in the menu (a past run's model, or one typed earlier)
   // has to keep showing as custom, or reopening the form would silently reset it.
-  const unknown = Boolean(value) && models.length > 0 && !models.some((m) => m.id === value)
+  const unknown = Boolean(value) && all.length > 0 && !all.some((m) => m.id === value)
   const custom = typing || unknown
+
+  // OpenRouter lists several hundred models. "Which of these costs nothing" is
+  // the question that actually gets asked, so it gets a switch rather than a
+  // scroll — but only where there is a mix worth filtering.
+  const hasFree = all.some((m) => m.free)
+  const hasPaid = all.some((m) => m.id && !m.free)
+  const models = freeOnly ? all.filter((m) => !m.id || m.free) : all
 
   return (
     <div className="space-y-1.5">
@@ -57,6 +65,16 @@ export function ModelPicker({
         ))}
         <option value={CUSTOM}>Other — type a model id…</option>
       </Select>
+      {hasFree && hasPaid && (
+        <label className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
+          <input
+            type="checkbox"
+            checked={freeOnly}
+            onChange={(e) => setFreeOnly(e.target.checked)}
+          />
+          Free models only ({all.filter((m) => m.free).length})
+        </label>
+      )}
       {custom && (
         <Input
           autoFocus
@@ -67,7 +85,9 @@ export function ModelPicker({
         />
       )}
       {q.data?.source === 'live' && (
-        <p className="text-[11px] text-ink-3">Listed live from your account.</p>
+        <p className="text-[11px] text-ink-3">
+          {all.length - 1} models listed live from your account.
+        </p>
       )}
     </div>
   )

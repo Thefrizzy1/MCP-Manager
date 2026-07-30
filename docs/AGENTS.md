@@ -94,6 +94,7 @@ chooses which one executes a run (`core/ai_providers.py`).
 | Claude Code | CLI (`claude -p`) | login in the account's `CLAUDE_CONFIG_DIR`, or a `setup-token` | `--mcp-config` |
 | Codex | CLI (`codex exec`) | login in the account's `CODEX_HOME` | stdio bridge in `config.toml` |
 | Gemini | HTTP API | free key from <https://aistudio.google.com/apikey> | function calling |
+| OpenRouter | HTTP API | key from <https://openrouter.ai/keys> | function calling |
 
 The runtime follows the **account**, not a setting: pick a Codex account and
 `codex exec` is what runs. Getting that wrong was a real bug — the runner built a
@@ -181,6 +182,41 @@ missing, restricted, or the whole MCP endpoint unreachable, and the agent can
 still produce output — that case is covered by a test that points the bridge at a
 dead port and writes a file anyway. The connection ACL can still deny them
 explicitly; an operator who does that means it.
+
+### OpenRouter
+
+One key, ~360 models, and an OpenAI-compatible endpoint. Two things about it are
+not like Gemini:
+
+- **The catalog is fetched, never listed in source.** Models appear and disappear
+  weekly, so `list_models` reads
+  `openrouter.ai/api/v1/models` and keeps what it finds — free ones first, each
+  labelled with what it can do (`free, tools, reasoning, vision`). Only
+  `openrouter/free` is pinned, because it is the reason most people connect.
+- **Models differ in what they support.** Plenty cannot take tools at all, and
+  sending declarations to one is an error rather than a graceful ignore. So the
+  catalog's per-model capabilities decide what each request carries: tools are
+  omitted for a model that lacks them (the run log says so), and `reasoning` is
+  only requested where it is advertised. A slug that is not in the catalog — a
+  brand-new model — keeps everything, because assuming the worst about an
+  unlisted model would make it unusable.
+
+`openrouter/free` is the default for a new account, so an unattended agent does
+not start spending because nobody picked a model. It supports tools and
+reasoning, so a free-tier agent still gets Plutus's full tool surface.
+
+`OPENROUTER_APP_NAME` and `OPENROUTER_APP_URL` (see `.env.example`) become the
+`X-Title` and `HTTP-Referer` headers, which is how requests are identified on your
+OpenRouter activity page. There is no icon setting: OpenRouter renders the favicon
+of whatever the referrer points at, so that URL *is* the icon.
+
+The wire format lives in `core/api_dialects.py`, not in the agent loop — Gemini's
+`contents`/`parts`/`functionCall` and OpenAI's `messages`/`tool_calls` are two
+spellings of the same conversation. The loop appends whatever a turn hands back
+and asks the dialect to build the tool reply, so it never learns which provider it
+is talking to. That matters most at the joins the two disagree about: OpenAI
+rejects a tool result whose `tool_call_id` names no call it made, and Gemini
+rejects function responses that do not follow the model's own message.
 
 **Models rot; ids are not pinned.** Google retires a model id for *new* keys
 ("This model models/gemini-2.5-flash is no longer available to new users") while

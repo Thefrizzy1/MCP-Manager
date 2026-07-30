@@ -206,7 +206,7 @@ def test_the_chosen_model_reaches_the_api(tmp_path, spawns, monkeypatch):
     aid = _linked_gemini(tmp_path)
     urls: list[str] = []
 
-    def fake(method, url, key, *, payload=None, timeout=60):
+    def fake(method, url, key, *, payload=None, timeout=60, headers=None):
         urls.append(url)
         return {"code": 200, "error": "",
                 "json": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}
@@ -413,7 +413,7 @@ def _turns(*responses):
     seq = list(responses)
 
     def fake(root, provider, account_id, *, contents, declarations=None, model="",
-             timeout=120, search=False):
+             timeout=120, search=False, extras=None):
         got = seq.pop(0)
         got.setdefault("ok", True)
         got.setdefault("parts", [])
@@ -422,6 +422,7 @@ def _turns(*responses):
         got.setdefault("error", "")
         got.setdefault("model", model or "gemini-2.5-flash")
         got.setdefault("finish", "STOP")
+        got.setdefault("raw_message", {"role": "model", "parts": got["parts"]})
         got["_contents"] = [dict(c) for c in contents]
         got["_declarations"] = declarations
         return got
@@ -436,7 +437,7 @@ def test_gemini_is_offered_the_same_tools_claude_gets(tmp_path, spawns, fake_mcp
     def fake(root, provider, account_id, *, contents, declarations=None, **kw):
         seen["declarations"] = declarations
         return {"ok": True, "parts": [], "text": "done", "calls": [], "error": "",
-                "model": "gemini-2.5-flash", "finish": "STOP"}
+                "raw_message": {}, "model": "gemini-2.5-flash", "finish": "STOP"}
 
     monkeypatch.setattr(AP, "api_turn", fake)
     aid = _linked_gemini(tmp_path)
@@ -510,7 +511,7 @@ def test_the_connection_acl_reaches_gemini(tmp_path, spawns, fake_mcp, monkeypat
     def fake(root, provider, account_id, *, contents, declarations=None, **kw):
         seen["names"] = [d["name"] for d in declarations or []]
         return {"ok": True, "parts": [], "text": "ok", "calls": [], "error": "",
-                "model": "m", "finish": "STOP"}
+                "raw_message": {}, "model": "m", "finish": "STOP"}
 
     monkeypatch.setattr(AP, "api_turn", fake)
     aid = _linked_gemini(tmp_path)
@@ -526,7 +527,8 @@ def test_a_runaway_tool_loop_is_stopped(tmp_path, spawns, fake_mcp, monkeypatch,
                                         with_tools):
     def fake(root, provider, account_id, *, contents, declarations=None, **kw):
         return {"ok": True, "text": "", "error": "", "model": "m", "finish": "STOP",
-                "calls": [{"name": "sonarr_queue", "args": {}}],
+                "calls": [{"id": "c1", "name": "sonarr_queue", "args": {}}],
+                "raw_message": {},
                 "parts": [{"functionCall": {"name": "sonarr_queue", "args": {}}}]}
 
     monkeypatch.setattr(AP, "api_turn", fake)
@@ -550,7 +552,7 @@ def test_an_unreachable_mcp_endpoint_degrades_instead_of_failing(tmp_path, spawn
     monkeypatch.setattr("core.mcp_client.McpHttpClient", Dead)
     monkeypatch.setattr(AP, "api_turn", lambda *a, **kw: {
         "ok": True, "parts": [], "text": "answered anyway", "calls": [], "error": "",
-        "model": "m", "finish": "STOP"})
+        "raw_message": {}, "model": "m", "finish": "STOP"})
     aid = _linked_gemini(tmp_path)
 
     rec = AR.run_agent(tmp_path, "hi", label="x", provider="gemini", account_id=aid,
@@ -576,7 +578,7 @@ def test_the_library_tools_are_offered_even_when_mcp_is_unreachable(tmp_path, sp
     def fake(root, provider, account_id, *, contents, declarations=None, **kw):
         seen["names"] = [d["name"] for d in declarations or []]
         return {"ok": True, "parts": [], "text": "ok", "calls": [], "error": "",
-                "model": "m", "finish": "STOP"}
+                "raw_message": {}, "model": "m", "finish": "STOP"}
 
     monkeypatch.setattr(AP, "api_turn", fake)
     aid = _linked_gemini(tmp_path)
@@ -622,7 +624,7 @@ def test_the_builtin_tools_are_never_the_ones_the_cap_drops(tmp_path, spawns, fa
     def fake(root, provider, account_id, *, contents, declarations=None, **kw):
         seen["names"] = [d["name"] for d in declarations or []]
         return {"ok": True, "parts": [], "text": "ok", "calls": [], "error": "",
-                "model": "m", "finish": "STOP"}
+                "raw_message": {}, "model": "m", "finish": "STOP"}
 
     monkeypatch.setattr(AP, "api_turn", fake)
     aid = _linked_gemini(tmp_path)

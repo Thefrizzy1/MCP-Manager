@@ -411,11 +411,12 @@ def _fake_http(monkeypatch, handler):
     """Stub the single network seam in ai_providers."""
     calls: list[dict] = []
 
-    def fake(method, url, key, *, payload=None, timeout=60):
+    def fake(method, url, key, *, payload=None, timeout=60, headers=None):
         # A copy: the retry path mutates the body it was handed, and recording the
         # live object would make every recorded call look like the last one.
         import copy
         calls.append({"method": method, "url": url, "key": key,
+                      "headers": dict(headers or {}),
                       "payload": copy.deepcopy(payload)})
         return handler(method, url, key, payload)
 
@@ -564,9 +565,10 @@ def test_the_model_is_resolved_against_what_the_account_can_actually_reach(tmp_p
         {"name": "models/gemini-9.9-flash", "supportedGenerationMethods": ["generateContent"]},
     ]}))
 
-    # No preference matches exactly, so the "gemini-" prefix picks the first
-    # listed rather than a model this account has never heard of.
-    assert AP.resolve_model(tmp_path, "gemini", acct["id"]) == "gemini-9.9-pro"
+    # No preference matches exactly, so it falls to the first of the account's
+    # own models — the menu is sorted (free first, then by id), so the choice is
+    # deterministic rather than dependent on the API's ordering that day.
+    assert AP.resolve_model(tmp_path, "gemini", acct["id"]) == "gemini-9.9-flash"
     # An explicit choice is always honoured.
     assert AP.resolve_model(tmp_path, "gemini", acct["id"], "gemini-9.9-flash") == "gemini-9.9-flash"
     AP.forget_models()

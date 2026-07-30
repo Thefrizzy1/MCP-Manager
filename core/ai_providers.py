@@ -88,6 +88,11 @@ def _codex_exec(prompt: str, model: str) -> list[str]:
     return args + [prompt]
 
 
+# OpenRouter's automatic free-model router. Not a model — a slug that resolves to
+# a suitable free model per request — so it is never filtered out as "unlisted"
+# and never has its tools stripped for want of catalog metadata.
+FREE_ROUTER = "openrouter/free"
+
 # Model menus.
 #
 # These are *suggestions*, not a whitelist: every picker also accepts a typed
@@ -125,6 +130,13 @@ MODELS: dict[str, tuple[tuple[str, str], ...]] = {
         ("gemini-pro-latest", "Gemini Pro — most capable"),
         ("gemini-flash-lite-latest", "Gemini Flash-Lite — cheapest"),
     ),
+    # Offline fallback only. OpenRouter's real menu is fetched (list_models) —
+    # several hundred models that change weekly, so anything pinned here is a
+    # starting point, not a list to maintain.
+    "openrouter": (
+        ("", "Account default"),
+        (FREE_ROUTER, "Free router — picks a suitable free model"),
+    ),
 }
 
 # When nothing is chosen, prefer a cheap fast model, and prefer it by *prefix* so
@@ -132,6 +144,9 @@ MODELS: dict[str, tuple[tuple[str, str], ...]] = {
 # real model list wins.
 MODEL_PREFERENCE: dict[str, tuple[str, ...]] = {
     "gemini": ("gemini-flash-latest", "gemini-2.5-flash", "gemini-flash", "gemini-"),
+    # Free by default: an unattended agent should not start spending because
+    # nobody picked a model.
+    "openrouter": (FREE_ROUTER,),
 }
 
 
@@ -199,6 +214,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "token_env": "GEMINI_API_KEY",
         "key_hint": "Free key from https://aistudio.google.com/apikey",
         "api_base": "https://generativelanguage.googleapis.com/v1beta",
+        "dialect": "gemini",
         "exec": None,
         # Deliberately not a pinned id: see MODEL_PREFERENCE. A hardcoded model
         # here is what produced "This model is no longer available to new users"
@@ -206,6 +222,50 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "test_model": None,
         "default_model": "gemini-flash-latest",
         "role": ROLE_RESEARCH,
+        "runnable": True,
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        # One key, several hundred models, an OpenAI-compatible endpoint, and a
+        # free tier that is a *router* rather than a model: "openrouter/free"
+        # picks a suitable free model per request. That is why the catalog is
+        # fetched rather than listed here — new models appear weekly and pinning
+        # any of them in source would rot the way Gemini's did.
+        "kind": KIND_API,
+        "cli": "",
+        "install_hint": "",
+        "config_dir_env": None,
+        "default_home": "",
+        "credential_files": (),
+        "login_cmd": None,
+        "token_cmd": None,
+        "token_env": "OPENROUTER_API_KEY",
+        "key_hint": "Key from https://openrouter.ai/keys",
+        "api_base": "https://openrouter.ai/api/v1",
+        "dialect": "openai",
+        "exec": None,
+        "test_model": None,
+        "default_model": FREE_ROUTER,
+        # Always offered, whether or not the catalog call succeeds — the router
+        # is the reason most people connect OpenRouter at all.
+        "pinned_models": (
+            (FREE_ROUTER, "Free router — picks a suitable free model"),
+        ),
+        # Sent when the chosen model advertises reasoning support. "high" would
+        # spend the run's budget on thinking; the point here is that reasoning
+        # models work at all, not that they are pushed to their limit.
+        "reasoning_default": {"effort": "medium"},
+        # OpenRouter serves plenty of models that cannot take tools at all, so the
+        # catalog's per-model capabilities decide what each request may carry.
+        "capability_gated": True,
+        # OpenRouter attributes usage to whoever calls. The icon is not a header:
+        # it renders the favicon of whatever HTTP-Referer points at.
+        "identity_headers": {
+            "X-Title": ("OPENROUTER_APP_NAME", "Plutus MCP Manager"),
+            "HTTP-Referer": ("OPENROUTER_APP_URL",
+                             "https://github.com/Thefrizzy1/MCP-Manager"),
+        },
+        "role": ROLE_GENERAL,
         "runnable": True,
     },
 }
@@ -694,14 +754,18 @@ def all_status(root: Path) -> list[dict]:
 # what makes them the seam tests stub.
 
 def _http(method: str, url: str, key: str, *, payload: dict | None = None,
-          timeout: int = 60) -> dict:
-    """{"code", "json", "error"} — never raises, so callers stay linear."""
+          timeout: int = 60, headers: dict[str, str] | None = None) -> dict:
+    """{"code", "json", "error"} — never raises, so callers stay linear.
+
+    ``headers`` carries the provider's auth and identification; ``key`` is kept
+    as a positional for the Gemini default so existing callers read unchanged.
+    """
     import httpx
 
+    hdrs = {"Content-Type": "application/json"}
+    hdrs.update(headers if headers is not None else {"x-goog-api-key": key})
     try:
-        r = httpx.request(method, url, json=payload, timeout=timeout,
-                          headers={"x-goog-api-key": key,
-                                   "Content-Type": "application/json"})
+        r = httpx.request(method, url, json=payload, timeout=timeout, headers=hdrs)
     except Exception as e:                       # network, DNS, TLS, timeout
         return {"code": 0, "json": {}, "error": str(e)}
     try:
@@ -714,66 +778,93 @@ def _http(method: str, url: str, key: str, *, payload: dict | None = None,
     return {"code": r.status_code, "json": body, "error": err}
 
 
+def api_dialect(provider: str):
+    from core.api_dialects import dialect_for
+
+    return dialect_for(_spec(provider).get("dialect", "gemini"))
+
+
+def api_user_message(provider: str, text: str) -> dict:
+    return api_dialect(provider).user_message(text)
+
+
+def api_tool_results_message(provider: str, results: list[dict]) -> list[dict]:
+    """Messages carrying tool output back. ``results``: {id, name, text, is_error}."""
+    return api_dialect(provider).tool_results_message(results)
+
+
+def api_headers(root: Path, provider: str, key: str) -> dict[str, str]:
+    """Auth plus whatever else the provider wants to know about the caller."""
+    spec = _spec(provider)
+    headers = dict(api_dialect(provider).auth_headers(key))
+    headers.update(_identity_headers(spec))
+    return headers
+
+
 def api_turn(root: Path, provider: str, account_id: str, *, contents: list[dict],
              declarations: list[dict] | None = None, model: str = "",
-             timeout: int = 120, search: bool = False) -> dict:
+             timeout: int = 120, search: bool = False, extras: dict | None = None) -> dict:
     """One turn of a conversation with an HTTP provider.
 
-    {"ok", "parts", "text", "calls", "error", "model", "finish"} — ``parts`` is
-    the model's raw content, kept so the caller can append it to ``contents``
-    verbatim, which the API requires for a multi-turn tool exchange.
+    {"ok", "text", "calls", "raw_message", "error", "model", "finish"}.
 
-    ``declarations`` and ``search`` are mutually exclusive by Gemini's own rules:
-    a request may carry function declarations *or* a built-in tool like
-    google_search, not both. Declarations win when present — Plutus's own tools
-    include web search, so nothing is actually lost.
+    ``raw_message`` is the model's own message, which has to go back into the
+    history verbatim before any tool result — both dialects reject a tool reply
+    that does not follow the call that asked for it. The caller appends it
+    without reading it, which is what keeps the agent loop provider-agnostic.
+
+    Tools are omitted when the *chosen model* cannot use them: OpenRouter serves
+    plenty of models with no tool support, and sending declarations to one is a
+    hard 404/400 rather than a graceful ignore.
     """
     spec = _spec(provider)
+    empty = {"ok": False, "text": "", "calls": [], "raw_message": {},
+             "parts": [], "model": "", "finish": ""}
     if spec.get("kind") != KIND_API:
-        return {"ok": False, "parts": [], "text": "", "calls": [],
-                "error": f"{spec['label']} is not an HTTP provider", "model": "", "finish": ""}
+        return {**empty, "error": f"{spec['label']} is not an HTTP provider"}
     key = stored_token(root, provider, account_id)
     if not key:
-        return {"ok": False, "parts": [], "text": "", "calls": [], "error":
-                f"no API key stored for this account. {spec.get('key_hint', '')}".strip(),
-                "model": "", "finish": ""}
+        return {**empty, "error":
+                f"no API key stored for this account. {spec.get('key_hint', '')}".strip()}
 
     chosen = resolve_model(root, provider, account_id, (model or "").strip())
     if not chosen:
-        return {"ok": False, "parts": [], "text": "", "calls": [],
-                "error": "no model selected", "model": "", "finish": ""}
+        return {**empty, "error": "no model selected"}
 
-    url = f"{spec['api_base']}/models/{chosen}:generateContent"
-    body: dict[str, Any] = {"contents": contents}
-    if declarations:
-        body["tools"] = [{"functionDeclarations": declarations}]
-    elif search:
-        body["tools"] = [{"google_search": {}}]
+    d = api_dialect(provider)
+    caps = model_capabilities(root, provider, account_id, chosen)
+    if declarations and caps.get("tools") is False:
+        declarations = None            # the runner already logged the downgrade
+    opts = dict(extras or {})
+    if search:
+        opts["search"] = True
+    if caps.get("reasoning") and spec.get("reasoning_default"):
+        opts.setdefault("reasoning", spec["reasoning_default"])
 
-    res = _http("POST", url, key, payload=body, timeout=timeout)
-    if res["error"] and "tools" in body and _rejects_the_search_tool(res["error"]):
-        # Grounding is a degradation when unavailable, not a failure. Function
-        # declarations are not: dropping those would silently strip the agent's
-        # tools, so only the built-in retry is worth making.
-        if not declarations:
-            body.pop("tools", None)
-            res = _http("POST", url, key, payload=body, timeout=timeout)
+    url = d.chat_url(spec["api_base"], chosen)
+    body = d.build(contents=contents, model=chosen, declarations=declarations, extras=opts)
+    headers = api_headers(root, provider, key)
+
+    res = _http("POST", url, key, payload=body, timeout=timeout, headers=headers)
+    if res["error"] and "tools" in body and not declarations \
+            and _rejects_the_search_tool(res["error"]):
+        # A built-in tool (Gemini's grounding) is a degradation when unavailable,
+        # not a failure. Function declarations are not: dropping those would
+        # silently strip the agent's tools, so only the built-in retry is made.
+        body.pop("tools", None)
+        res = _http("POST", url, key, payload=body, timeout=timeout, headers=headers)
     if res["error"]:
-        return {"ok": False, "parts": [], "text": "", "calls": [],
-                "error": _explain_api(res), "model": chosen, "finish": ""}
+        return {**empty, "error": _explain_api(res), "model": chosen}
 
-    cand = (res["json"].get("candidates") or [{}])[0]
-    parts = ((cand.get("content") or {}).get("parts")) or []
-    calls = [p["functionCall"] for p in parts
-             if isinstance(p, dict) and isinstance(p.get("functionCall"), dict)]
-    text = "\n".join(p["text"] for p in parts
-                     if isinstance(p, dict) and isinstance(p.get("text"), str)).strip()
-    if not text and not calls:
-        return {"ok": False, "parts": parts, "text": "", "calls": [],
-                "error": _empty_reason(res["json"]), "model": chosen,
-                "finish": cand.get("finishReason") or ""}
-    return {"ok": True, "parts": parts, "text": text, "calls": calls, "error": "",
-            "model": chosen, "finish": cand.get("finishReason") or ""}
+    parsed = d.parse(res["json"])
+    if not parsed["text"] and not parsed["calls"]:
+        return {**empty, "error": d.empty_reason(res["json"]), "model": chosen,
+                "raw_message": parsed["raw_message"], "finish": parsed["finish"]}
+    return {"ok": True, "text": parsed["text"], "calls": parsed["calls"],
+            "raw_message": parsed["raw_message"], "error": "", "model": chosen,
+            "finish": parsed["finish"],
+            # Gemini's own shape, for anything still reading parts directly.
+            "parts": (parsed["raw_message"] or {}).get("parts", [])}
 
 
 def api_generate(root: Path, provider: str, account_id: str, prompt: str, *,
@@ -832,6 +923,9 @@ def _explain_api(res: dict) -> str:
 # call — but not on every keystroke.
 _MODELS_TTL = 300.0
 _models_cache: dict[str, tuple[float, list[dict]]] = {}
+# {account_key: {model_id: capabilities}} — filled by the same fetch, so asking
+# what a model supports never costs a second round trip.
+_caps_cache: dict[str, dict[str, dict]] = {}
 
 
 def list_models(root: Path, provider: str, account_id: str = "") -> dict:
@@ -857,23 +951,98 @@ def list_models(root: Path, provider: str, account_id: str = "") -> dict:
     if hit and hit[0] > time.time():
         return {"models": list(hit[1]), "source": "live", "allow_custom": True}
 
-    res = _http("GET", f"{spec['api_base']}/models?pageSize=200", key, timeout=20)
+    d = api_dialect(provider)
+    res = _http("GET", d.models_url(spec["api_base"]), key, timeout=30,
+                headers=api_headers(root, provider, key))
     if res["error"]:
         return {"models": static, "source": "static", "allow_custom": True,
                 "error": _explain_api(res)}
 
-    live: list[dict] = [{"id": "", "label": "Account default"}]
-    for m in res["json"].get("models") or []:
-        if "generateContent" not in (m.get("supportedGenerationMethods") or []):
-            continue          # embedding/token-count models cannot answer a prompt
-        mid = str(m.get("name") or "").split("models/")[-1]
-        if not mid:
-            continue
-        live.append({"id": mid, "label": m.get("displayName") or mid})
-    if len(live) == 1:                       # nothing usable came back
+    catalog = d.parse_models(res["json"])
+    if not catalog:                          # nothing usable came back
         return {"models": static, "source": "static", "allow_custom": True}
+
+    # Free first, then everything else, each alphabetical. A catalog of a few
+    # hundred models is unusable as one flat list, and "which of these costs
+    # nothing" is the question that actually gets asked.
+    catalog.sort(key=lambda m: (not m.get("free"), m["id"]))
+    by_id = {m["id"]: m for m in catalog}
+    live: list[dict] = [{"id": "", "label": "Account default"}]
+    seen = {""}
+    # Pinned entries keep their own wording and their place at the top, but take
+    # the catalog's facts where it has any — the router is free and does support
+    # tools, and the menu should say so rather than leave it unlabelled.
+    for mid, label in spec.get("pinned_models", ()):
+        if mid in seen:
+            continue
+        known = by_id.get(mid) or {}
+        live.append({"id": mid, "label": label, "pinned": True,
+                     "free": bool(known.get("free", True)),
+                     "capabilities": known.get("capabilities") or {}})
+        seen.add(mid)
+    for m in catalog:
+        if m["id"] in seen:
+            continue
+        seen.add(m["id"])
+        caps = m.get("capabilities") or {}
+        tags = []
+        if m.get("free"):
+            tags.append("free")
+        if caps.get("tools"):
+            tags.append("tools")
+        if caps.get("reasoning"):
+            tags.append("reasoning")
+        if caps.get("vision"):
+            tags.append("vision")
+        live.append({"id": m["id"],
+                     "label": m["label"] + (f" · {', '.join(tags)}" if tags else ""),
+                     "free": bool(m.get("free")), "capabilities": caps})
+
     _models_cache[ck] = (time.time() + _MODELS_TTL, list(live))
+    _caps_cache[ck] = {m["id"]: (m.get("capabilities") or {}) for m in catalog}
     return {"models": live, "source": "live", "allow_custom": True}
+
+
+def model_capabilities(root: Path, provider: str, account_id: str, model: str) -> dict:
+    """What the chosen model can do, from the live catalog.
+
+    Empty when unknown, which callers read as "assume it works" — an unlisted
+    model (a brand-new slug, or the free router) must stay usable rather than
+    being quietly stripped of its tools.
+
+    Only consulted for providers that actually serve models of differing ability.
+    Every Gemini model takes function declarations, so looking it up there would
+    buy nothing and cost a catalog request per run.
+    """
+    if not model or not _spec(provider).get("capability_gated"):
+        return {}
+    ck = f"{provider}/{account_id}"
+    if ck not in _caps_cache:
+        list_models(root, provider, account_id)      # populates the cache
+    return dict(_caps_cache.get(ck, {}).get(model) or {})
+
+
+def _identity_headers(spec: dict) -> dict[str, str]:
+    """Who is calling. OpenRouter shows this on the account's activity page.
+
+    The app *icon* is not a header: OpenRouter renders the favicon of whatever
+    ``HTTP-Referer`` points at, so the referrer URL is the icon setting.
+    """
+    names = spec.get("identity_headers") or {}
+    if not names:
+        return {}
+    from core.env_store import read_env
+
+    try:
+        env = read_env()
+    except Exception:
+        env = {}
+    out: dict[str, str] = {}
+    for header, (env_key, default) in names.items():
+        value = (env.get(env_key) or os.environ.get(env_key) or default or "").strip()
+        if value:
+            out[header] = value
+    return out
 
 
 def resolve_model(root: Path, provider: str, account_id: str, requested: str = "") -> str:
@@ -905,9 +1074,11 @@ def resolve_model(root: Path, provider: str, account_id: str, requested: str = "
 def forget_models(provider: str | None = None) -> None:
     if provider is None:
         _models_cache.clear()
-    else:
-        for k in [k for k in _models_cache if k.startswith(f"{provider}/")]:
-            _models_cache.pop(k, None)
+        _caps_cache.clear()
+        return
+    for cache in (_models_cache, _caps_cache):
+        for k in [k for k in cache if k.startswith(f"{provider}/")]:
+            cache.pop(k, None)
 
 
 # ── real capability tests ────────────────────────────────────────────────────

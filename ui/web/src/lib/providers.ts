@@ -4,6 +4,14 @@ import { api } from './api'
 export interface ProviderModel {
   id: string
   label: string
+  free?: boolean
+  pinned?: boolean
+  capabilities?: {
+    tools?: boolean
+    reasoning?: boolean
+    vision?: boolean
+    structured_outputs?: boolean
+  }
 }
 
 export interface ProviderAccount {
