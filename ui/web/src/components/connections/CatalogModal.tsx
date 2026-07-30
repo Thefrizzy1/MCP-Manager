@@ -1,5 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
 import { Modal } from '@/components/ui/Modal'
 import { ServiceLogo } from '@/components/ui/ServiceLogo'
+import { api } from '@/lib/api'
 
 // Homelab-focused starting points. Picking one pre-fills the Add form — you
 // still supply the URL and key. Ids match brand logos where we have them.
@@ -62,14 +64,31 @@ const CATALOG: { group: string; items: { id: string; name: string }[] }[] = [
   },
 ]
 
+const _norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
 export function CatalogModal({ onClose, onPick }: { onClose: () => void; onPick: (name: string) => void }) {
+  // Hide catalog entries that are already real connections (e.g. Uptime Kuma,
+  // or GitHub/GitLab once integrated) — the catalog is only for things you
+  // don't have yet.
+  const { data } = useQuery({
+    queryKey: ['services-for-catalog'],
+    queryFn: () => api.get<{ services: { id: string; label: string }[] }>('/api/v1/dashboard?sections=services'),
+  })
+  const have = new Set((data?.services ?? []).flatMap((s) => [_norm(s.id), _norm(s.label)]))
+  const groups = CATALOG.map((cat) => ({
+    ...cat,
+    items: cat.items.filter((it) => !have.has(_norm(it.id)) && !have.has(_norm(it.name))),
+  })).filter((cat) => cat.items.length > 0)
+
   return (
     <Modal open onClose={onClose} title="Service catalog" width={640}>
       <p className="mb-3 text-[12.5px] text-ink-3">
-        Pick a service to pre-fill a custom connection — you supply its URL and API key.
+        Pick a service to pre-fill a custom connection — you supply its URL and API key. Services you already have are
+        hidden.
       </p>
       <div className="space-y-4">
-        {CATALOG.map((cat) => (
+        {groups.length === 0 && <p className="text-[12.5px] text-ink-3">Everything here is already connected.</p>}
+        {groups.map((cat) => (
           <div key={cat.group}>
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-3">{cat.group}</div>
             <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">

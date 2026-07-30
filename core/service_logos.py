@@ -62,6 +62,16 @@ CLEARBIT_DOMAIN_BY_ID: dict[str, str] = {
     "matrix_synapse": "matrix.org",
     "ghost": "ghost.org",
     "wikijs": "js.wiki",
+    # Public / dev services. Without an entry here a card falls all the way through
+    # to the Google-favicon guess, which for these renders nothing usable — so
+    # GitHub, GitLab and Hugging Face showed no logo at all.
+    "github": "github.com",
+    "gitlab": "gitlab.com",
+    "huggingface": "huggingface.co",
+    "youtube": "youtube.com",
+    "fal": "fal.ai",
+    "currency": "ecb.europa.eu",
+    "weather": "wttr.in",
 }
 
 # Simple Icons slug (jsDelivr) — fallback when raster/CDN logos fail
@@ -103,6 +113,13 @@ SIMPLE_ICON_SLUG_BY_ID: dict[str, str] = {
     "pihole": "pi-hole",
     "minio": "minio",
     "ghost": "ghost",
+    # Simple Icons carries clean monochrome marks for all of these; they are the
+    # reliable fallback when Clearbit has no raster logo.
+    "github": "github",
+    "gitlab": "gitlab",
+    "huggingface": "huggingface",
+    "youtube": "youtube",
+    "currency": "eurostat",
 }
 
 

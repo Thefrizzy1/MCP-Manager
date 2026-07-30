@@ -174,6 +174,9 @@ class Config(BaseModel):
     # YouTube Data API v3 (same Google Cloud key type; separate key recommended)
     youtube_api_key: str = _get("YOUTUBE_API_KEY")
     hf_token: str = _get("HF_TOKEN")
+    github_token: str = _get("GITHUB_TOKEN")
+    gitlab_url: str = _get("GITLAB_URL", "https://gitlab.com")
+    gitlab_token: str = _get("GITLAB_TOKEN")
 
     # Dashboard extras (bookmark integrations)
     audiobookshelf_url: str = _get("AUDIOBOOKSHELF_URL")

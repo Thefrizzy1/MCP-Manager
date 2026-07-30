@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Check, X, Loader2 } from 'lucide-react'
+import { Check, X, Loader2, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
@@ -44,6 +44,7 @@ export function AiProvidersSection() {
   })
   const [newLabel, setNewLabel] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState('')
+  const [adding, setAdding] = useState('')
   const [checks, setChecks] = useState<Record<string, Check[]>>({})
 
   async function addAccount(pid: string) {
@@ -53,6 +54,7 @@ export function AiProvidersSection() {
     try {
       await api.post(`/api/v1/providers/${pid}/accounts`, { label })
       setNewLabel((v) => ({ ...v, [pid]: '' }))
+      setAdding('')
       refetch()
     } catch (e) {
       toast.error(String(e))
@@ -198,17 +200,31 @@ export function AiProvidersSection() {
               })}
             </div>
 
-            <div className="mt-2 flex items-center gap-2">
-              <Input
-                className="max-w-[220px]"
-                value={newLabel[p.id] ?? ''}
-                placeholder="Account name, e.g. Personal Pro"
-                onChange={(e) => setNewLabel((v) => ({ ...v, [p.id]: e.target.value }))}
-              />
-              <Button variant="default" size="sm" disabled={busy === p.id} onClick={() => addAccount(p.id)}>
-                Add account
+            {adding === p.id ? (
+              <div className="mt-2 flex items-center gap-2">
+                <Input
+                  autoFocus
+                  className="max-w-[240px]"
+                  value={newLabel[p.id] ?? ''}
+                  placeholder="Account name, e.g. Personal Pro"
+                  onChange={(e) => setNewLabel((v) => ({ ...v, [p.id]: e.target.value }))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') addAccount(p.id)
+                    if (e.key === 'Escape') setAdding('')
+                  }}
+                />
+                <Button variant="primary" size="sm" disabled={busy === p.id} onClick={() => addAccount(p.id)}>
+                  Add
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setAdding('')}>
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button variant="ghost" size="sm" className="mt-2" onClick={() => setAdding(p.id)}>
+                <Plus size={13} className="mr-1" /> Add {p.label} account
               </Button>
-            </div>
+            )}
           </div>
         ))}
       </div>
