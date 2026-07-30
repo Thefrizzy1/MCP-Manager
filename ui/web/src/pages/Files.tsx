@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { File, Folder, Database, ChevronUp } from 'lucide-react'
+import { File, Folder, Database, ChevronUp, Download } from 'lucide-react'
 import { api } from '@/lib/api'
 import { fmtSize, fmtTime } from '@/lib/format'
 import { PageHead, PageBody } from '@/components/PageHead'
@@ -58,10 +58,14 @@ export function Files() {
   }
 
   const items = data?.items ?? []
+  const folderZip = (p: string) => `/api/v1/files/download-folder?path=${encodeURIComponent(p)}`
 
   return (
     <>
-      <PageHead title="Files" subtitle="Internal research storage the agents write to, plus mounted shares" />
+      <PageHead
+        title="Files"
+        subtitle="The research library your agents write into, plus mounted shares"
+      />
       <PageBody>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" onClick={() => setPath('')}>
@@ -72,6 +76,15 @@ export function Files() {
             <Button variant="ghost" size="sm" onClick={() => setPath(data.parent!)}>
               <ChevronUp size={14} /> Up
             </Button>
+          )}
+          {/* A whole researched structure — notes, subfolders, a dashboard — is
+              not something you get out one file at a time. */}
+          {data?.path && (
+            <a className="ml-auto" href={folderZip(data.path)}>
+              <Button variant="default" size="sm">
+                <Download size={13} /> Download this folder
+              </Button>
+            </a>
           )}
         </div>
 
@@ -113,21 +126,31 @@ export function Files() {
                       <td className="px-3 py-2.5 text-[12px] text-ink-3">{it.type === 'dir' ? '—' : fmtSize(it.size)}</td>
                       <td className="px-3 py-2.5 text-[12px] text-ink-3">{fmtTime(it.mtime)}</td>
                       <td className="px-3 py-2.5">
-                        {it.type === 'file' && (
-                          <div className="flex items-center justify-end gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => open(it)}>
-                              Preview
-                            </Button>
-                            <a href={`/api/v1/files/download?path=${encodeURIComponent(it.path)}`}>
-                              <Button variant="ghost" size="sm">
-                                Download
+                        <div className="flex items-center justify-end gap-1">
+                          {it.type === 'file' ? (
+                            <>
+                              <Button variant="ghost" size="sm" onClick={() => open(it)}>
+                                Preview
                               </Button>
-                            </a>
-                            <Button variant="danger" size="sm" onClick={() => del(it)}>
-                              Delete
-                            </Button>
-                          </div>
-                        )}
+                              <a href={`/api/v1/files/download?path=${encodeURIComponent(it.path)}`}>
+                                <Button variant="ghost" size="sm">
+                                  <Download size={13} /> Download
+                                </Button>
+                              </a>
+                              <Button variant="danger" size="sm" onClick={() => del(it)}>
+                                Delete
+                              </Button>
+                            </>
+                          ) : (
+                            it.exists !== false && (
+                              <a href={folderZip(it.path)}>
+                                <Button variant="ghost" size="sm" title="Download as a zip">
+                                  <Download size={13} /> Zip
+                                </Button>
+                              </a>
+                            )
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )

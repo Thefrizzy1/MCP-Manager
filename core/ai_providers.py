@@ -114,12 +114,24 @@ MODELS: dict[str, tuple[tuple[str, str], ...]] = {
         ("gpt-5", "GPT-5"),
         ("o3", "o3 — reasoning"),
     ),
+    # Aliases, not pinned versions. Google retires a specific id like
+    # "gemini-2.5-flash" for new keys — "This model is no longer available to new
+    # users" — while the -latest aliases keep resolving, which is exactly what a
+    # fallback list is for. The live list (list_models) is still preferred; this
+    # is only what we offer when the API cannot be asked.
     "gemini": (
         ("", "Account default"),
-        ("gemini-2.5-flash", "Gemini 2.5 Flash — fast, free tier"),
-        ("gemini-2.5-pro", "Gemini 2.5 Pro — most capable"),
-        ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite — cheapest"),
+        ("gemini-flash-latest", "Gemini Flash — fast, free tier"),
+        ("gemini-pro-latest", "Gemini Pro — most capable"),
+        ("gemini-flash-lite-latest", "Gemini Flash-Lite — cheapest"),
     ),
+}
+
+# When nothing is chosen, prefer a cheap fast model, and prefer it by *prefix* so
+# a version bump does not need a code change. First match against the account's
+# real model list wins.
+MODEL_PREFERENCE: dict[str, tuple[str, ...]] = {
+    "gemini": ("gemini-flash-latest", "gemini-2.5-flash", "gemini-flash", "gemini-"),
 }
 
 
@@ -188,8 +200,11 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "key_hint": "Free key from https://aistudio.google.com/apikey",
         "api_base": "https://generativelanguage.googleapis.com/v1beta",
         "exec": None,
-        "test_model": "gemini-2.5-flash",
-        "default_model": "gemini-2.5-flash",
+        # Deliberately not a pinned id: see MODEL_PREFERENCE. A hardcoded model
+        # here is what produced "This model is no longer available to new users"
+        # on a freshly created key.
+        "test_model": None,
+        "default_model": "gemini-flash-latest",
         "role": ROLE_RESEARCH,
         "runnable": True,
     },
@@ -723,7 +738,7 @@ def api_turn(root: Path, provider: str, account_id: str, *, contents: list[dict]
                 f"no API key stored for this account. {spec.get('key_hint', '')}".strip(),
                 "model": "", "finish": ""}
 
-    chosen = (model or spec.get("default_model") or "").strip()
+    chosen = resolve_model(root, provider, account_id, (model or "").strip())
     if not chosen:
         return {"ok": False, "parts": [], "text": "", "calls": [],
                 "error": "no model selected", "model": "", "finish": ""}
@@ -859,6 +874,32 @@ def list_models(root: Path, provider: str, account_id: str = "") -> dict:
         return {"models": static, "source": "static", "allow_custom": True}
     _models_cache[ck] = (time.time() + _MODELS_TTL, list(live))
     return {"models": live, "source": "live", "allow_custom": True}
+
+
+def resolve_model(root: Path, provider: str, account_id: str, requested: str = "") -> str:
+    """The model id to actually send, for an account that chose none.
+
+    Asks the account what it can reach and picks the first preferred match, so a
+    retired model is replaced by whatever succeeded it instead of failing the
+    call. The hardcoded alternative is what produced
+
+        This model models/gemini-2.5-flash is no longer available to new users.
+
+    on a freshly issued key — the id was fine when it was written and rotted
+    underneath us. Falls back to the static default when the list cannot be
+    fetched, which is still better than nothing but can rot the same way.
+    """
+    spec = _spec(provider)
+    if requested:
+        return requested
+    available = [m["id"] for m in list_models(root, provider, account_id)["models"] if m["id"]]
+    if available:
+        for want in MODEL_PREFERENCE.get(provider, ()):
+            for mid in available:
+                if mid == want or mid.startswith(want):
+                    return mid
+        return available[0]
+    return spec.get("default_model", "") or ""
 
 
 def forget_models(provider: str | None = None) -> None:
@@ -1006,9 +1047,11 @@ def _api_capability_test(root: Path, provider: str, account_id: str, spec: dict,
         return {"ok": False, "checks": checks}
 
     sentinel = "PLUTUS_OK"
+    # No pinned test model: ask the key what it can reach. Testing a hardcoded id
+    # reported the *model* as broken when the key was fine.
     res = api_generate(root, provider, account_id,
                        f"Reply with exactly this word and nothing else: {sentinel}",
-                       model=spec.get("test_model", "") if model is None else (model or ""),
+                       model=(model or "") if model is not None else "",
                        timeout=timeout)
     got = sentinel in (res["text"] or "")
     checks.append(_check("Can execute prompt", got,

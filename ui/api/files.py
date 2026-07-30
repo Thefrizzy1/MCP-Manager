@@ -1,14 +1,16 @@
 """File-manager surface: browse/read/download/delete inside the allowed roots."""
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from core import agent_runner
+from core import library
 from config import cfg
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
@@ -22,13 +24,14 @@ def _fs_roots() -> list[str]:
 
 def _internal_roots() -> list[str]:
     """Internal app storage the agents write to (the research library).
-    Kept browsable from the Files page so generated notes are one click away."""
-    try:
-        acfg = agent_runner.load_agent_config(ROOT)
-        lib = str(acfg.get("fs_library_path") or "/data/library").rstrip("/")
-    except Exception:
-        lib = "/data/library"
-    return [lib] if lib else []
+
+    Always the app's own ``data/library``, created on demand — not the configured
+    ``fs_library_path``, which defaulted to the host path ``/data/library`` that
+    exists on nobody's install. The Files page therefore showed a "Research
+    library" root that was permanently missing, while agents were refused write
+    access to it by the filesystem allowlist. See core/library.py.
+    """
+    return [str(library.ensure_library(ROOT))]
 
 
 def _all_roots() -> list[str]:
@@ -105,6 +108,55 @@ async def api_v1_files_download(request: Request):
     if not os.path.isfile(ap):
         raise HTTPException(404, "Not a file")
     return FileResponse(ap, filename=os.path.basename(ap))
+
+
+# Agents are asked to build *structures* — a folder of notes, an HTML dashboard
+# and its assets. Downloading that a file at a time is not a way to get it out,
+# so a directory comes down as one zip.
+_MAX_ZIP_FILES = 5000
+_MAX_ZIP_BYTES = 512 * 1024 * 1024
+
+
+@router.get("/api/v1/files/download-folder")
+async def api_v1_files_download_folder(request: Request):
+    """Zip a directory and stream it. Symlinks are skipped, not followed."""
+    from core.path_guard import is_within_any
+    roots = _all_roots()
+    path = (request.query_params.get("path") or "").strip()
+    if not is_within_any(path, roots):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    ap = os.path.realpath(path)
+    if not os.path.isdir(ap):
+        raise HTTPException(400, "Not a directory")
+
+    buf = io.BytesIO()
+    total = count = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for folder, dirs, names in os.walk(ap, followlinks=False):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(folder, d))]
+            for name in names:
+                fp = os.path.join(folder, name)
+                # A symlink inside an allowed root can still point outside it.
+                if os.path.islink(fp) or not is_within_any(fp, roots):
+                    continue
+                try:
+                    size = os.path.getsize(fp)
+                except OSError:
+                    continue
+                count += 1
+                total += size
+                if count > _MAX_ZIP_FILES or total > _MAX_ZIP_BYTES:
+                    raise HTTPException(
+                        413, "That folder is too large to zip — download a subfolder.")
+                try:
+                    z.write(fp, os.path.relpath(fp, ap))
+                except OSError:
+                    continue
+    buf.seek(0)
+    name = os.path.basename(ap.rstrip("/\\")) or "library"
+    return StreamingResponse(
+        buf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
 
 
 class FilePathBody(BaseModel):

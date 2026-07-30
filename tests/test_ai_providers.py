@@ -440,14 +440,16 @@ def test_an_api_provider_needs_only_a_key(tmp_path, monkeypatch):
     assert [c["name"] for c in checks] == ["API key stored"]
     assert "aistudio" in checks[0]["detail"]
 
+    AP.forget_models()
     AP.save_token(tmp_path, "gemini", acct["id"], "AIza-fake")
     calls = _fake_http(monkeypatch, lambda *a: _text("PLUTUS_OK"))
     res = AP.capability_test(tmp_path, "gemini", acct["id"])
 
     assert res["ok"] is True
     assert [c["name"] for c in res["checks"]] == ["API key stored", "Can execute prompt"]
-    assert calls[0]["key"] == "AIza-fake"
-    assert "generateContent" in calls[0]["url"]
+    assert all(c["key"] == "AIza-fake" for c in calls)
+    assert any("generateContent" in c["url"] for c in calls)
+    AP.forget_models()
 
 
 def test_generation_asks_for_search_grounding_but_survives_without_it(tmp_path, monkeypatch):
@@ -537,7 +539,59 @@ def test_a_failed_listing_falls_back_to_the_static_menu(tmp_path, monkeypatch):
 
     res = AP.list_models(tmp_path, "gemini", acct["id"])
     assert res["source"] == "static"
-    assert any(m["id"] == "gemini-2.5-flash" for m in res["models"])
+    assert any(m["id"] == "gemini-flash-latest" for m in res["models"])
+    AP.forget_models()
+
+
+# ── models rot; ids must not be pinned ───────────────────────────────────────
+
+def test_no_shipped_gemini_model_is_a_pinned_version():
+    """Google retires a specific id for new keys — "This model
+    models/gemini-2.5-flash is no longer available to new users" — while the
+    -latest aliases keep resolving. A fallback list that rots is not a fallback."""
+    ids = [m for m, _ in AP.MODELS["gemini"] if m]
+    assert ids and all(m.endswith("-latest") for m in ids), ids
+    assert AP.PROVIDERS["gemini"]["default_model"].endswith("-latest")
+    assert AP.PROVIDERS["gemini"]["test_model"] is None, "the test must not pin a model"
+
+
+def test_the_model_is_resolved_against_what_the_account_can_actually_reach(tmp_path, monkeypatch):
+    AP.forget_models()
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "k")
+    _fake_http(monkeypatch, lambda *a: _ok({"models": [
+        {"name": "models/gemini-9.9-pro", "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/gemini-9.9-flash", "supportedGenerationMethods": ["generateContent"]},
+    ]}))
+
+    # No preference matches exactly, so the "gemini-" prefix picks the first
+    # listed rather than a model this account has never heard of.
+    assert AP.resolve_model(tmp_path, "gemini", acct["id"]) == "gemini-9.9-pro"
+    # An explicit choice is always honoured.
+    assert AP.resolve_model(tmp_path, "gemini", acct["id"], "gemini-9.9-flash") == "gemini-9.9-flash"
+    AP.forget_models()
+
+
+def test_a_retired_default_is_replaced_by_a_live_one(tmp_path, monkeypatch):
+    """The reported failure, end to end: the account cannot reach the id we would
+    have hardcoded, and the call must still go to a model that exists."""
+    AP.forget_models()
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "k")
+    urls: list[str] = []
+
+    def handler(method, url, key, payload):
+        urls.append(url)
+        if url.endswith("/models?pageSize=200"):
+            return _ok({"models": [{"name": "models/gemini-flash-latest",
+                                    "supportedGenerationMethods": ["generateContent"]}]})
+        return _text("PLUTUS_OK")
+
+    _fake_http(monkeypatch, handler)
+    res = AP.api_generate(tmp_path, "gemini", acct["id"], "hi")
+
+    assert res["ok"] is True and res["model"] == "gemini-flash-latest"
+    assert not any("gemini-2.5-flash" in u for u in urls), "the retired id must not be sent"
     AP.forget_models()
 
 

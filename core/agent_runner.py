@@ -64,7 +64,11 @@ DEFAULT_AGENT_CONFIG = {
     # Where playbooks read/write their knowledge library:
     "output_mode": "obsidian",        # "obsidian" | "filesystem"
     "obsidian_folder": "research",     # vault-relative folder when output_mode=obsidian
-    "fs_library_path": "/data/library",  # host-mounted path when output_mode=filesystem
+    # "" = the app's own research library (core/library.py). It used to default to
+    # the host path /data/library, which exists on nobody's install and was not in
+    # FILESYSTEM_ALLOWED_PATHS either — so "write this up" was refused by the
+    # product's own default directory.
+    "fs_library_path": "",
     # Optional ntfy notification after each run:
     "notify_enabled": False,
     "notify_on": "all",               # "all" | "error"
@@ -74,11 +78,14 @@ DEFAULT_AGENT_CONFIG = {
 def resolve_library(cfg: dict) -> tuple[str, str]:
     """Return ({{LIBRARY}} folder, {{OUTPUT_HINT}}) for the configured destination."""
     if cfg.get("output_mode") == "filesystem":
-        lib = (cfg.get("fs_library_path") or "/data/library").rstrip("/")
+        from core.library import ensure_library
+
+        lib = (cfg.get("fs_library_path") or "").rstrip("/") or str(ensure_library())
         hint = (
             "Persist notes as Markdown files under this path using the filesystem tools "
-            "(fs_write_file, fs_read_file, fs_list_directory, fs_search_files). The path "
-            "must be inside FILESYSTEM_ALLOWED_PATHS."
+            "(fs_write_file, fs_read_file, fs_list_directory, fs_search_files). Create "
+            "subfolders freely — this is the app's own research library, it is always "
+            "writable, and everything in it appears in the Files page ready to download."
         )
     else:
         lib = (cfg.get("obsidian_folder") or "research").strip("/")

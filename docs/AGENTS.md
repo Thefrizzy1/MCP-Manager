@@ -148,6 +148,31 @@ so an agent's abilities do not depend on which account happens to run it.
   own web-search tools are in the set. A run with tools switched off still gets
   grounding.
 
+### Where the work lands: the research library
+
+`data/library` inside the app — created on demand, on the volume that is already
+persisted, browsable in **Files**, and downloadable (a file, or a whole folder as
+one zip).
+
+It is writable by the filesystem tools *without* being added to
+`FILESYSTEM_ALLOWED_PATHS`. That allowlist gates access to the **host**, and this
+is app storage, not the host — confinement is still the same boundary-aware check,
+it just has one more root. Before this, the only writable paths were the operator's
+own mounts, and the configured library default was the host path `/data/library`
+that exists on nobody's install, so an agent asked to write something up answered —
+truthfully — that it had no way to create a file.
+
+So an agent can be told to research a topic and build a structure: subfolders,
+Markdown notes, an HTML dashboard. `fs_write_file` creates parent directories, so
+it only needs the path.
+
+**Models rot; ids are not pinned.** Google retires a model id for *new* keys
+("This model models/gemini-2.5-flash is no longer available to new users") while
+the account that has always used it keeps working. So Gemini's model is resolved
+against the account's own live list (`ai_providers.resolve_model`) rather than a
+constant, the shipped fallbacks are `-latest` aliases, and Settings → Test no
+longer names a fixed model — it asks the key what it can reach.
+
 **Scope still comes from the connection picker.** Claude gets `--disallowedTools`;
 `codex exec` has no equivalent, so the bridge enforces it — denied tools are
 removed from `tools/list` and refused on `tools/call`, which is stricter than a CLI

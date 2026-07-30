@@ -403,12 +403,29 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     # check goes inside that body too — is_within_any() calls realpath(), which is
     # itself a syscall that can block on a dead mount.
 
+    def _allowed_roots() -> list[str]:
+        """Host paths the operator allowed, plus the app's own research library.
+
+        The library is app storage on the persisted data volume, not part of the
+        host — and the allowlist exists to gate the host. Without it here, an
+        agent asked to write a note is refused by its own product's default
+        directory, which is what happened: FILESYSTEM_ALLOWED_PATHS is a list of
+        NAS shares on a real install and empty on a fresh one, so "write this up"
+        came back "not in allowed directories" with nowhere to suggest instead.
+
+        Confinement is unchanged — is_within_any still boundary-checks every
+        path, so this adds exactly one directory and no way out of it.
+        """
+        from core.library import library_roots
+
+        return list(cfg.filesystem_allowed_paths) + library_roots()
+
     def _check_path(path: str) -> bool:
         """Check if path is within an allowed directory (boundary-aware)."""
-        return is_within_any(path, cfg.filesystem_allowed_paths)
+        return is_within_any(path, _allowed_roots())
 
     def _denied(path: str) -> str:
-        allowed = ", ".join(cfg.filesystem_allowed_paths) or "(none configured)"
+        allowed = ", ".join(_allowed_roots()) or "(none configured)"
         return f"Error: Path '{path}' is not in allowed directories: {allowed}"
 
     class FsListInput(BaseModel):
