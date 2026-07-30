@@ -15,6 +15,72 @@ from mcp.server.fastmcp import FastMCP
 from config import cfg
 from client import TIMEOUT, _handle_error, fmt_size
 
+# WebDAV/CalDAV namespace URIs. Match on these, never on prefixes: Nextcloud
+# (sabre/dav) declares CalDAV as `cal:`, so a regex looking for `<c:calendar>`
+# matched nothing and calendar discovery reported "no calendars found" on a server
+# that plainly had them. Prefixes are the server's choice; URIs are fixed.
+DAV_NS = "DAV:"
+CALDAV_NS = "urn:ietf:params:xml:ns:caldav"
+
+
+def parse_dav_multistatus(xml_text: str) -> list[dict]:
+    """Parse a WebDAV multistatus body into one dict per <response>.
+
+    Namespace-aware, so it works whatever prefixes the server picked. Returns
+    ``[]`` for unparseable input rather than raising — a malformed body should
+    degrade to "nothing found", not a traceback in a tool result.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+
+    out: list[dict] = []
+    for resp in root.iter(f"{{{DAV_NS}}}response"):
+        href_el = resp.find(f"{{{DAV_NS}}}href")
+        href = (href_el.text or "").strip() if href_el is not None else ""
+        if not href:
+            continue
+        entry: dict = {"href": href, "displayname": "", "is_calendar": False,
+                       "is_collection": False, "comps": [], "contentlength": None}
+        for dn in resp.iter(f"{{{DAV_NS}}}displayname"):
+            entry["displayname"] = (dn.text or "").strip()
+            break
+        for rt in resp.iter(f"{{{DAV_NS}}}resourcetype"):
+            for child in rt:
+                if child.tag == f"{{{CALDAV_NS}}}calendar":
+                    entry["is_calendar"] = True
+                elif child.tag == f"{{{DAV_NS}}}collection":
+                    entry["is_collection"] = True
+        for comp in resp.iter(f"{{{CALDAV_NS}}}comp"):
+            name = (comp.get("name") or "").strip().upper()
+            if name:
+                entry["comps"].append(name)
+        for cl in resp.iter(f"{{{DAV_NS}}}getcontentlength"):
+            try:
+                entry["contentlength"] = int((cl.text or "").strip())
+            except (TypeError, ValueError):
+                pass
+            break
+        out.append(entry)
+    return out
+
+
+def caldav_utc(dt: datetime) -> str:
+    """A CalDAV time-range stamp in real UTC.
+
+    The `Z` suffix means UTC, so formatting a Berlin-local time with it claimed a
+    time two hours off in summer. A newly created event five minutes out then fell
+    *before* the queried window and could not be found — which is exactly how the
+    add-event round trip failed its verify step while the event demonstrably
+    existed.
+    """
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo("Europe/Berlin"))
+    return dt.astimezone(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
+
 
 def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     from core.profiles import tool_filter
@@ -186,6 +252,71 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
     # ─── CALENDARS ────────────────────────────────────────────────────────────
 
+    def _calendars_from_multistatus(xml_text: str) -> list[tuple[str, str, list[str]]]:
+        """[(slug, display name, supported components)] from a PROPFIND body."""
+        from urllib.parse import unquote, urlparse
+
+        home = urlparse(_caldav("")).path.rstrip("/")
+        out: list[tuple[str, str, list[str]]] = []
+        for e in parse_dav_multistatus(xml_text):
+            path = urlparse(e["href"]).path.rstrip("/")
+            if path == home:                 # the calendar home itself
+                continue
+            if not e["is_calendar"]:         # skips notifications, schedule inbox/outbox
+                continue
+            slug = unquote(path.split("/")[-1])
+            if not slug:
+                continue
+            out.append((slug, e["displayname"] or slug, e["comps"]))
+        out.sort(key=lambda c: c[1].lower())
+        return out
+
+    _CAL_PROPFIND = b"""<?xml version="1.0"?>
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:displayname/>
+    <d:resourcetype/>
+    <c:supported-calendar-component-set/>
+  </d:prop>
+</d:propfind>"""
+
+    async def _discover_calendars() -> list[tuple[str, str, list[str]]]:
+        """Calendar list straight from the server, or [] if it cannot be read."""
+        try:
+            async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+                r = await client.request("PROPFIND", _caldav(), auth=_auth(),
+                                         headers={"Depth": "1", "Content-Type": "application/xml"},
+                                         content=_CAL_PROPFIND)
+                r.raise_for_status()
+            return _calendars_from_multistatus(r.text)
+        except Exception:
+            return []
+
+    async def _resolve_task_calendar(requested: str) -> tuple[str, str]:
+        """(slug, note) for a tasks call.
+
+        Nextcloud has no calendar called "tasks" — VTODOs live in a normal calendar
+        that advertises VTODO support (often "Personal"). Defaulting to the literal
+        slug "tasks" therefore 404'd on every stock install, which is what broke
+        both task tools. Resolve a real VTODO-capable calendar instead, and only
+        fall back to the caller's value if discovery turns up nothing.
+        """
+        wanted = (requested or "").strip()
+        cals = await _discover_calendars()
+        if not cals:
+            return wanted or "personal", ""
+        slugs = {c[0] for c in cals}
+        if wanted and wanted in slugs:
+            return wanted, ""
+        todo = [c for c in cals if "VTODO" in c[2]]
+        pick = (todo or cals)[0]
+        note = ""
+        if wanted and wanted not in slugs:
+            note = (f"_'{wanted}' is not a calendar on this server — used "
+                    f"`{pick[0]}` instead. Available: "
+                    + ", ".join(f"`{c[0]}`" for c in cals) + "._\n\n")
+        return pick[0], note
+
     @mcp.tool(name="nextcloud_list_calendars", annotations={"readOnlyHint": True})
     async def nextcloud_list_calendars() -> str:
         """List all Nextcloud calendars with their slugs for use in other tools.
@@ -209,49 +340,7 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                     headers={"Depth": "1", "Content-Type": "application/xml"}, content=body)
                 r.raise_for_status()
 
-            # Parse the multistatus response per <d:response> block so href/displayname
-            # stay aligned even when the server omits properties for some collections.
-            # Namespace prefixes vary across servers (d:, D:), so match both.
-            ns_d = r"(?:d|D)"
-            ns_c = r"(?:c|C)"
-            # Strip the calendar-home prefix (e.g. /remote.php/dav/calendars/<user>/)
-            # so we can detect the root collection vs calendar children robustly.
-            home_path = _caldav("").rstrip("/")
-            # Only need the path portion to compare with hrefs in the response.
-            try:
-                from urllib.parse import urlparse
-                home_path_only = urlparse(home_path).path.rstrip("/")
-            except Exception:
-                home_path_only = home_path.rstrip("/")
-
-            response_re = re.compile(
-                rf"<{ns_d}:response\b[^>]*>(.*?)</{ns_d}:response>", re.DOTALL
-            )
-            href_re = re.compile(rf"<{ns_d}:href>([^<]+)</{ns_d}:href>")
-            name_re = re.compile(rf"<{ns_d}:displayname>([^<]*)</{ns_d}:displayname>")
-            comp_re = re.compile(rf'<{ns_c}:comp\b[^/>]*\bname="([^"]+)"')
-            is_calendar_re = re.compile(rf"<{ns_c}:calendar\b")
-
-            calendars: list[tuple[str, str, list[str]]] = []  # (slug, displayname, comps)
-            for block in response_re.findall(r.text):
-                href_m = href_re.search(block)
-                if not href_m:
-                    continue
-                href_path = href_m.group(1).strip()
-                # Skip the calendar home itself.
-                if href_path.rstrip("/") == home_path_only:
-                    continue
-                # Only keep <c:calendar/> resourcetypes (skips notifications, schedule-inbox, etc.)
-                if not is_calendar_re.search(block):
-                    continue
-                slug = href_path.rstrip("/").split("/")[-1]
-                if not slug:
-                    continue
-                name_m = name_re.search(block)
-                display = (name_m.group(1).strip() if name_m else "") or slug
-                comps = [c.upper() for c in comp_re.findall(block)]
-                calendars.append((slug, display, comps))
-
+            calendars = _calendars_from_multistatus(r.text)
             if not calendars:
                 return "No Nextcloud calendars found for this user."
 
@@ -293,8 +382,11 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         try:
             now = _now_berlin()
             end = now + timedelta(days=params.days_ahead)
-            start_str = now.strftime("%Y%m%dT%H%M%SZ")
-            end_str = end.strftime("%Y%m%dT%H%M%SZ")
+            # Convert to real UTC: the Z suffix asserts UTC, so stamping a
+            # Berlin-local wall time with it shifted the whole window by the
+            # offset (two hours in summer) and hid events that had just been created.
+            start_str = caldav_utc(now)
+            end_str = caldav_utc(end)
 
             body = f"""<?xml version="1.0"?>
 <c:calendar-query xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:d="DAV:">
@@ -446,28 +538,31 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
     class NcTasksInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-        list_name: str = Field(default="tasks", description="Task list calendar slug")
+        list_name: str = Field(
+            default="",
+            description="Calendar slug holding the tasks. Blank = auto-pick a "
+                        "VTODO-capable calendar (see nextcloud_list_calendars).")
         include_completed: bool = Field(default=False, description="Include completed tasks")
 
     @mcp.tool(name="nextcloud_get_tasks", annotations={"readOnlyHint": True})
     async def nextcloud_get_tasks(params: NcTasksInput) -> str:
         """Get tasks from Nextcloud Tasks app via CalDAV (VTODO).
 
-        `list_name` must match a calendar slug from nextcloud_list_calendars.
-        Calendars are tagged with which components they support (events / tasks).
+        Leave `list_name` blank to use whichever calendar supports tasks; pass a
+        slug from nextcloud_list_calendars to target a specific one.
         """
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
+            slug, note = await _resolve_task_calendar(params.list_name)
             body = b"""<?xml version="1.0"?><c:calendar-query xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:d="DAV:"><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name="VCALENDAR"><c:comp-filter name="VTODO"/></c:comp-filter></c:filter></c:calendar-query>"""
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                r = await client.request("REPORT", _caldav(params.list_name + "/"), auth=_auth(),
+                r = await client.request("REPORT", _caldav(slug + "/"), auth=_auth(),
                     headers={"Depth": "1", "Content-Type": "application/xml"}, content=body)
                 if r.status_code == 404:
-                    return (
-                        f"Error: Calendar slug '{params.list_name}' does not exist. "
-                        "Run `nextcloud_list_calendars` to see your real slugs and pick one tagged 'tasks' or 'events + tasks'."
-                    )
+                    cals = await _discover_calendars()
+                    have = ", ".join(f"`{c[0]}`" for c in cals) or "(none discoverable)"
+                    return (f"Error: calendar '{slug}' does not exist. Available: {have}.")
                 r.raise_for_status()
 
             cal_data = re.findall(r"<cal:calendar-data[^>]*>(.*?)</cal:calendar-data>", r.text, re.DOTALL)
@@ -482,9 +577,9 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 all_tasks = [t for t in all_tasks if t.get("status", "").upper() != "COMPLETED"]
 
             if not all_tasks:
-                return f"No tasks found in '{params.list_name}'."
+                return f"{note}No tasks found in '{slug}'."
 
-            result = f"## Nextcloud Tasks: {params.list_name} ({len(all_tasks)} tasks)\n\n"
+            result = f"{note}## Nextcloud Tasks: {slug} ({len(all_tasks)} tasks)\n\n"
             for task in all_tasks:
                 done = "☑" if task.get("status", "").upper() == "COMPLETED" else "☐"
                 result += f"{done} **{task.get('summary', 'Untitled')}**\n"
@@ -505,7 +600,10 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     class NcAddTaskInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         title: str = Field(..., description="Task title", min_length=1, max_length=500)
-        list_name: str = Field(default="tasks", description="Task list calendar slug")
+        list_name: str = Field(
+            default="",
+            description="Calendar slug to add it to. Blank = auto-pick a "
+                        "VTODO-capable calendar (see nextcloud_list_calendars).")
         due_date: Optional[str] = Field(default=None, description="Due date YYYY-MM-DD")
         priority: str = Field(default="normal", description="Priority: 'high', 'normal', 'low'")
         description: Optional[str] = Field(default=None, description="Task notes")
@@ -516,6 +614,10 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
+            # "tasks" is not a calendar on a stock Nextcloud — VTODOs live in a
+            # normal calendar that advertises VTODO support, so the old default
+            # PUT 404'd every time ("Nextcloud Tasks resource not found").
+            slug, note = await _resolve_task_calendar(params.list_name)
             uid = str(uuid.uuid4())
             now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
             prio_map = {"high": "1", "normal": "5", "low": "9"}
@@ -537,12 +639,16 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 r = await client.put(
-                    _caldav(f"{params.list_name}/{uid}.ics"), auth=_auth(),
+                    _caldav(f"{slug}/{uid}.ics"), auth=_auth(),
                     headers={"Content-Type": "text/calendar; charset=utf-8"},
                     content=ical.encode()
                 )
+                if r.status_code == 404:
+                    cals = await _discover_calendars()
+                    have = ", ".join(f"`{c[0]}`" for c in cals) or "(none discoverable)"
+                    return f"Error: calendar '{slug}' does not exist. Available: {have}."
                 r.raise_for_status()
-            return f"✓ Task '{params.title}' added to {params.list_name}. UID: `{uid}`"
+            return f"{note}✓ Task '{params.title}' added to {slug}. UID: `{uid}`"
         except Exception as e:
             return _handle_error(e, "Nextcloud Tasks")
 
