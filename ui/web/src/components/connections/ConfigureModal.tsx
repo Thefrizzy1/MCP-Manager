@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
 import { SshManager } from './SshManager'
 import { FilesystemManager } from './FilesystemManager'
+import { PublicApisManager } from './PublicApisManager'
 
 interface ConfigField {
   key: string
@@ -83,7 +84,7 @@ export function ConfigureModal({
   }
 
   const manager = data?.manager
-  const isManaged = manager === 'ssh' || manager === 'filesystem'
+  const isManaged = manager === 'ssh' || manager === 'filesystem' || manager === 'public_apis'
 
   return (
     <Modal
@@ -118,6 +119,8 @@ export function ConfigureModal({
         <SshManager />
       ) : manager === 'filesystem' ? (
         <FilesystemManager />
+      ) : manager === 'public_apis' ? (
+        <PublicApisManager />
       ) : !data?.fields?.length ? (
         <p className="text-[13px] text-ink-3">
           This service works out of the box — there's nothing to configure. Use <strong>Test</strong> to check it's

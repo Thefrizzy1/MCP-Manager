@@ -77,7 +77,10 @@ async def api_v1_service_config(sid: str):
     env = read_env()
     # Services whose real config is structured (not flat env keys) get a
     # dedicated manager UI: SSH hosts, SMB shares + allowed filesystem paths.
-    manager = {"ssh": "ssh", "filesystem": "filesystem"}.get(sid, "")
+    # Services whose real config is structured (not flat env keys) get a dedicated
+    # manager UI. public_apis has no keys at all — its "config" is which of the ~58
+    # free APIs stay in the served MCP manifest.
+    manager = svc.get("manager") or {"ssh": "ssh", "filesystem": "filesystem"}.get(sid, "")
     return {
         "id": sid,
         "label": svc["label"],

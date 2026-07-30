@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,10 +27,14 @@ def exposure_path(root: Path) -> Path:
     return root / "data" / EXPOSURE_FILE
 
 
+_TOOL_NAME_OK = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+
+
 def load_exposure(root: Path) -> dict[str, Any]:
     p = exposure_path(root)
     valid = set(TOOL_CATEGORIES)
     disabled: list[str] = []
+    tools: list[str] = []
     if p.is_file():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
@@ -39,27 +44,62 @@ def load_exposure(root: Path) -> dict[str, Any]:
                     for x in (data.get("disabled_categories") or [])
                     if str(x).strip().lower() in valid
                 ]
+                tools = [
+                    str(x).strip()
+                    for x in (data.get("disabled_tools") or [])
+                    if _TOOL_NAME_OK.fullmatch(str(x).strip())
+                ]
         except (json.JSONDecodeError, OSError):
             pass
-    return {"_v": _V, "disabled_categories": sorted(set(disabled))}
+    return {"_v": _V, "disabled_categories": sorted(set(disabled)),
+            "disabled_tools": sorted(set(tools))}
 
 
-def save_exposure(root: Path, disabled_categories: list[str]) -> dict[str, Any]:
+def save_exposure(root: Path, disabled_categories: list[str] | None = None, *,
+                  disabled_tools: list[str] | None = None) -> dict[str, Any]:
+    """Persist the exposure choice.
+
+    Either list may be omitted, in which case the stored value is kept — the
+    category slicer and the per-tool switches are edited from different screens,
+    so a save from one must not silently wipe the other.
+    """
+    current = load_exposure(root)
     valid = set(TOOL_CATEGORIES)
-    dc = sorted({str(x).strip().lower() for x in (disabled_categories or []) if str(x).strip().lower() in valid})
+    if disabled_categories is None:
+        dc = current["disabled_categories"]
+    else:
+        dc = sorted({str(x).strip().lower() for x in disabled_categories
+                     if str(x).strip().lower() in valid})
+    if disabled_tools is None:
+        dt = current["disabled_tools"]
+    else:
+        dt = sorted({str(x).strip() for x in disabled_tools
+                     if _TOOL_NAME_OK.fullmatch(str(x).strip())})
+
     p = exposure_path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"_v": _V, "disabled_categories": dc}, indent=2) + "\n", encoding="utf-8")
+    payload = {"_v": _V, "disabled_categories": dc, "disabled_tools": dt}
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, p)
-    return {"_v": _V, "disabled_categories": dc}
+    return payload
 
 
-def is_tool_exposed(name: str, disabled: set[str]) -> bool:
-    """A tool stays exposed unless *every* category it belongs to is disabled.
-    Always-exposed meta tools and uncategorised utilities never get sliced out."""
+def is_tool_exposed(name: str, disabled: set[str], disabled_tools: set[str] | None = None) -> bool:
+    """A tool stays exposed unless it is switched off individually, or *every*
+    category it belongs to is disabled.
+
+    An explicit per-tool switch wins over the category rules — including over
+    ALWAYS_EXPOSED's blanket exemption for uncategorised tools, which is what
+    makes the individual public-API toggles actually take effect (most pub_* tools
+    are uncategorised, so the category slicer alone can never remove them).
+    ALWAYS_EXPOSED meta tools stay exempt: turning off plutus_tool_slicer would
+    remove the only means of turning anything back on.
+    """
     if name in ALWAYS_EXPOSED:
         return True
+    if disabled_tools and name in disabled_tools:
+        return False
     cats = infer_tool_categories(name)
     if not cats:
         return True
@@ -69,10 +109,12 @@ def is_tool_exposed(name: str, disabled: set[str]) -> bool:
 def resolve_exposed(root: Path, all_names: list[str]) -> set[str] | None:
     """Allowed tool-name set for the served ``/mcp``, or None when nothing is
     disabled (so the caller can reuse the prebuilt full instance)."""
-    disabled = set(load_exposure(root)["disabled_categories"])
-    if not disabled:
+    ex = load_exposure(root)
+    disabled = set(ex["disabled_categories"])
+    disabled_tools = set(ex["disabled_tools"])
+    if not disabled and not disabled_tools:
         return None
-    return {n for n in all_names if is_tool_exposed(n, disabled)}
+    return {n for n in all_names if is_tool_exposed(n, disabled, disabled_tools)}
 
 
 def _tool_token_estimate(tool: Any) -> int:
@@ -96,10 +138,13 @@ def exposure_report(root: Path, tool_manager: Any) -> dict[str, Any]:
     """Everything the Dashboard optimisation panel needs: per-category tool/token
     counts, current disabled set, and the estimated token saving."""
     tools = list(tool_manager.list_tools())
-    disabled = set(load_exposure(root)["disabled_categories"])
+    ex = load_exposure(root)
+    disabled = set(ex["disabled_categories"])
+    disabled_tools = set(ex["disabled_tools"])
     per = {t.name: _tool_token_estimate(t) for t in tools}
     total_tokens = sum(per.values())
-    exposed = [t for t in tools if is_tool_exposed(t.name, disabled)]
+    # Count per-tool switches too, or the reported saving understates reality.
+    exposed = [t for t in tools if is_tool_exposed(t.name, disabled, disabled_tools)]
     exposed_tokens = sum(per[t.name] for t in exposed)
 
     categories = {}
@@ -114,6 +159,7 @@ def exposure_report(root: Path, tool_manager: Any) -> dict[str, Any]:
     return {
         "categories": categories,
         "disabled_categories": sorted(disabled),
+        "disabled_tools": sorted(disabled_tools),
         "total_tools": len(tools),
         "exposed_tools": len(exposed),
         "total_tokens_est": total_tokens,

@@ -125,5 +125,62 @@ async def get_exposure():
 
 @router.post("/api/v1/tools/exposure")
 async def set_exposure(body: ExposureBody):
+    # Only the categories — per-tool switches are edited elsewhere and must not be
+    # cleared by a save from this screen.
     tool_exposure.save_exposure(ROOT, body.disabled_categories)
     return {"ok": True, **tool_exposure.exposure_report(ROOT, tools.raw_manager)}
+
+
+# ── Public APIs: one card, individual switches ────────────────────────────────
+
+class PublicApisBody(BaseModel):
+    disabled_tools: list[str] = Field(default_factory=list)
+
+
+@router.get("/api/v1/public-apis")
+async def get_public_apis():
+    """The ~58 free public APIs grouped for display, with their on/off state."""
+    from tools.public_apis_bulk import public_api_groups, public_tool_names
+
+    disabled = set(tool_exposure.load_exposure(ROOT)["disabled_tools"])
+    known = set(public_tool_names())
+    labels = {t["name"]: t["label"] for t in _public_tool_rows()}
+    return {
+        "groups": [
+            {
+                **g,
+                "tools": [
+                    {"name": n, "label": labels.get(n, n), "enabled": n not in disabled}
+                    for n in g["tools"]
+                ],
+            }
+            for g in public_api_groups()
+        ],
+        "total": len(known),
+        "disabled": sorted(disabled & known),
+        "restart_note": "Changes apply after the MCP server restarts.",
+    }
+
+
+def _public_tool_rows() -> list[dict]:
+    from tools.public_apis_bulk import PUBLIC_SERVICES_DASHBOARD
+    return PUBLIC_SERVICES_DASHBOARD[0]["tools"]
+
+
+@router.post("/api/v1/public-apis")
+async def set_public_apis(body: PublicApisBody):
+    """Switch individual public APIs off. A disabled tool is not registered on the
+    served /mcp instance at all, so this shrinks the manifest rather than only
+    hiding a tile."""
+    from tools.public_apis_bulk import public_tool_names
+
+    known = set(public_tool_names())
+    unknown = [t for t in body.disabled_tools if t not in known]
+    if unknown:
+        raise HTTPException(400, f"not public API tools: {', '.join(sorted(unknown)[:5])}")
+
+    # Preserve per-tool switches for anything outside this card's scope.
+    keep = [t for t in tool_exposure.load_exposure(ROOT)["disabled_tools"] if t not in known]
+    saved = tool_exposure.save_exposure(ROOT, disabled_tools=keep + list(body.disabled_tools))
+    return {"ok": True, "disabled": sorted(set(saved["disabled_tools"]) & known),
+            "restart_note": "Changes apply after the MCP server restarts."}

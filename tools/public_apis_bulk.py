@@ -794,13 +794,60 @@ _PUBLIC_SERVICE_ROWS = [
     ("pub_catalog_misc", "Public · More free APIs", "utilities", "Curated from public-apis/public-apis (no keys): boredapi, nationalize, Cloudflare trace, shibe, BTC ticker, jokes, ipwho", [("pub_bored_activity", "Bored? activity idea", []), ("pub_nationalize_name", "Nationalize a name", [("name", "maria", "text")]), ("pub_cloudflare_trace", "Cloudflare edge trace", []), ("pub_shibe_image", "Random shibe image", []), ("pub_blockchain_btc_ticker", "BTC fiat ticker", []), ("pub_official_joke", "Random joke", []), ("pub_ipwho", "Your IP + geo (ipwho.is)", [])]),
 ]
 
-PUBLIC_SERVICES_DASHBOARD: list[dict] = [_public_service(row) for row in _PUBLIC_SERVICE_ROWS]
+def _consolidated_public_service() -> dict:
+    """All free public APIs as ONE dashboard card.
+
+    Nine near-identical "Public · …" cards crowded out the services that actually
+    need configuring, and none of them had anything to configure — they take no
+    keys. The groups survive as sub-headings inside this card's manager, where each
+    individual API can be switched off; a disabled one is dropped from the served
+    /mcp manifest (see core.tool_exposure), so turning things off genuinely shrinks
+    the tool count and the per-request token cost rather than just hiding a tile.
+    """
+    groups = []
+    tools: list[dict] = []
+    for sid, label, _tag, desc, rows in _PUBLIC_SERVICE_ROWS:
+        names = [r[0] for r in rows]
+        groups.append({"id": sid,
+                       "label": label.replace("Public · ", ""),
+                       "desc": desc,
+                       "tools": names})
+        tools.extend(_tool_row(*r) for r in rows)
+    return {
+        "id": "public_apis", "label": "Public APIs", "icon": "🌐",
+        "tag": "utilities", "section": "public",
+        "desc": f"{len(tools)} free APIs, no keys needed — switch individual ones off in Configure",
+        "config_keys": [], "health_url": None, "health_headers": lambda: {},
+        "configured_keys": (),
+        "tools": tools,
+        # Consumed by the Configure modal to render per-API switches.
+        "manager": "public_apis",
+        "groups": groups,
+    }
+
+
+PUBLIC_SERVICES_DASHBOARD: list[dict] = [_consolidated_public_service()]
+
+# The nine original groups, still used to build the catalog metadata and to give
+# the manager its sub-headings.
+PUBLIC_SERVICE_GROUPS: list[dict] = [_public_service(row) for row in _PUBLIC_SERVICE_ROWS]
 def _build_catalog() -> list[tuple[str, str, str]]:
+    # Built from the nine groups, not the consolidated card, so each tool keeps its
+    # own tag (finance, media, science, …) instead of collapsing to "utilities".
     rows: list[tuple[str, str, str]] = []
-    for svc in PUBLIC_SERVICES_DASHBOARD:
+    for svc in PUBLIC_SERVICE_GROUPS:
         for t in svc.get("tools", []):
             rows.append((t["name"], t["label"], svc.get("tag", "utilities")))
     return rows
+
+
+def public_api_groups() -> list[dict]:
+    """[{id, label, desc, tools:[name…]}] — the manager's sub-headings."""
+    return _consolidated_public_service()["groups"]
+
+
+def public_tool_names() -> list[str]:
+    return [t["name"] for t in _consolidated_public_service()["tools"]]
 
 
 PUBLIC_CATALOG_META: list[tuple[str, str, str]] = _build_catalog()
