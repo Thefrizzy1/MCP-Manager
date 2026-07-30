@@ -44,11 +44,44 @@ const STATE_TEXT: Record<string, string> = {
   cli_missing: 'CLI not installed',
 }
 
+
+/** A shell command the user is expected to run, with one-press copy. */
+function Cmd({ label, cmd, tone = 'muted' }: { label: string; cmd: string; tone?: 'muted' | 'warn' | 'accent' }) {
+  const [copied, setCopied] = useState(false)
+  if (!cmd) return null
+  const labelTone = tone === 'warn' ? 'text-danger' : tone === 'accent' ? 'text-accent' : 'text-ink-3'
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className={`text-[11.5px] ${labelTone}`}>{label}</span>
+        <button
+          className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-ink-3 hover:bg-surface-hover"
+          onClick={() => {
+            navigator.clipboard?.writeText(cmd)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+        >
+          {copied ? 'copied' : 'copy'}
+        </button>
+      </div>
+      <code className="mt-0.5 block overflow-x-auto whitespace-pre rounded bg-surface px-2 py-1 text-[11px] text-ink-2">
+        {cmd}
+      </code>
+    </div>
+  )
+}
+
 export function AiProvidersSection() {
   const toast = useToast()
   const { data, refetch } = useQuery({
     queryKey: ['ai-providers'],
     queryFn: () => api.get<{ providers: Provider[]; guided_login_available: boolean }>('/api/v1/providers'),
+    // A CLI installed or a login completed from a terminal has to show up without
+    // a page reload — the card used to sit on cached data saying "not installed"
+    // while Test reported the very same CLI as present.
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   })
   const [newLabel, setNewLabel] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState('')
@@ -93,6 +126,7 @@ export function AiProvidersSection() {
       )
       setChecks((c) => ({ ...c, [key]: r.checks }))
       if (r.ok) toast.success('All capability checks passed.')
+      refetch()
     } catch (e) {
       toast.error(String(e))
     } finally {
@@ -143,11 +177,16 @@ export function AiProvidersSection() {
               )}
             </div>
 
-            {!p.cli.installed && (
-              <p className="mt-2 text-[12px] text-ink-3">
-                Not found in the container. Install with <code className="text-ink-2">{p.cli.install_hint}</code>
-              </p>
-            )}
+            <div className="mt-2 space-y-1">
+              <Cmd
+                label={p.cli.installed ? 'Install / update' : 'Not in the container — install with'}
+                cmd={p.cli.install_hint}
+                tone={p.cli.installed ? 'muted' : 'warn'}
+              />
+              {p.accounts.length === 0 && (
+                <p className="text-[11px] text-ink-3">Add an account below to get its log-in command.</p>
+              )}
+            </div>
 
             <div className="mt-2 space-y-1.5">
               {p.accounts.map((a) => {
@@ -178,16 +217,19 @@ export function AiProvidersSection() {
                       </div>
                     </div>
 
-                    {!a.authenticated && p.cli.installed && (
+                    {p.cli.installed && (
                       <div className="mt-1.5">
-                        <p className="text-[11.5px] text-ink-3">
-                          {a.isolated
-                            ? 'Link this account by running:'
-                            : `${p.label} has no per-account config directory, so log in once and then adopt it:`}
-                        </p>
-                        <code className="mt-1 block overflow-x-auto whitespace-pre rounded bg-surface px-2 py-1 text-[11px] text-ink-2">
-                          {a.login_command}
-                        </code>
+                        <Cmd
+                          label={
+                            a.authenticated
+                              ? 'Log in again / switch identity'
+                              : a.isolated
+                                ? 'Link this account by running'
+                                : `${p.label} has no per-account config dir — log in once, then adopt`
+                          }
+                          cmd={a.login_command}
+                          tone={a.authenticated ? 'muted' : 'accent'}
+                        />
                         {a.adoptable ? (
                           <div className="mt-1.5 flex flex-wrap items-center gap-2">
                             <span className="text-[11.5px] text-ok">

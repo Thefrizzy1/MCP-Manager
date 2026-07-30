@@ -297,6 +297,58 @@ def test_mcp_check_is_only_claimed_for_claude(tmp_path, monkeypatch):
                                                   "Can execute prompt"]
 
 
+# ── the CLIs must survive a redeploy ─────────────────────────────────────────
+
+def test_every_provider_cli_is_baked_into_the_image():
+    """`docker exec plutus-mcp npm install -g …` writes to the container's
+    writable layer, which `docker compose up -d` discards when it recreates the
+    container from a pulled image. A hand-installed Codex or Gemini therefore
+    vanished on every update and the card reverted to "CLI not installed". The
+    only durable place is the image."""
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    install_line = next(ln for ln in dockerfile.splitlines()
+                        if "npm install -g" in ln and not ln.lstrip().startswith("#"))
+    for pkg in ("@anthropic-ai/claude-code", "@openai/codex", "@google/gemini-cli"):
+        assert pkg in install_line, f"{pkg} is not installed in the image"
+
+
+def test_compose_persists_every_provider_login():
+    """Gemini has no config-dir override, so it always writes ~/.gemini. Without a
+    mount that login dies with the container on the next update."""
+    from pathlib import Path
+
+    compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(encoding="utf-8")
+    for home in ("/root/.claude", "/root/.codex", "/root/.gemini"):
+        assert home in compose, f"{home} is not persisted across container recreation"
+
+
+def test_cli_detection_is_cached_but_can_be_forced(monkeypatch):
+    """The card polls, and `--version` shells out — so the probe is memoised. It
+    must still be forceable, or an install would take a TTL to appear."""
+    calls = {"n": 0}
+
+    def counting_resolve(name):
+        calls["n"] += 1
+        return None
+
+    AP.forget_cli_info()
+    monkeypatch.setattr(AP, "resolve_cli", counting_resolve)
+
+    AP.cli_info("claude")
+    AP.cli_info("claude")
+    assert calls["n"] == 1, "the second read should have come from the cache"
+
+    AP.cli_info("claude", fresh=True)
+    assert calls["n"] == 2
+
+    AP.forget_cli_info("claude")
+    AP.cli_info("claude")
+    assert calls["n"] == 3
+    AP.forget_cli_info()
+
+
 # ── CLI resolution ───────────────────────────────────────────────────────────
 
 def test_resolve_cli_finds_an_auto_updated_native_install(tmp_path, monkeypatch):

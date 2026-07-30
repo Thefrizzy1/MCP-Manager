@@ -304,19 +304,42 @@ def cli_search_path() -> str:
     return os.pathsep.join(parts)
 
 
-def cli_info(provider: str) -> dict:
+# `--version` shells out, so memoise briefly: the providers card polls to notice a
+# CLI installed from a terminal, and that must not mean three subprocesses every
+# few seconds. Short enough that an install shows up promptly.
+_CLI_INFO_TTL = 15.0
+_cli_info_cache: dict[str, tuple[float, dict]] = {}
+
+
+def forget_cli_info(provider: str | None = None) -> None:
+    """Drop the cached probe so the next read re-detects immediately."""
+    if provider is None:
+        _cli_info_cache.clear()
+    else:
+        _cli_info_cache.pop(provider, None)
+
+
+def cli_info(provider: str, *, fresh: bool = False) -> dict:
     """Whether the provider's CLI can be found, and its version."""
     spec = _spec(provider)
+    now = time.time()
+    if not fresh:
+        hit = _cli_info_cache.get(provider)
+        if hit and hit[0] > now:
+            return dict(hit[1])
+
     path = resolve_cli(spec["cli"])
     info = {"installed": bool(path), "path": path or "", "version": "",
             "install_hint": spec["install_hint"]}
     if not path:
+        _cli_info_cache[provider] = (now + _CLI_INFO_TTL, dict(info))
         return info
     try:
         r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=20)
         info["version"] = (r.stdout or r.stderr or "").strip().splitlines()[0][:80] if (r.stdout or r.stderr) else ""
     except (OSError, subprocess.SubprocessError):
         pass
+    _cli_info_cache[provider] = (now + _CLI_INFO_TTL, dict(info))
     return info
 
 

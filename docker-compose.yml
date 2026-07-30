@@ -53,9 +53,19 @@ services:
       # The host file must exist first (the quickstart's `cp .env.example .env`).
       - ./.env:/app/.env
 
-      # Claude Code login for the headless agent runner — survives restarts.
+      # Provider CLI logins for the headless agent runner — these survive
+      # `docker compose up -d`, which otherwise recreates the container and
+      # discards anything written outside a mount.
       # Log in once:  docker exec -it plutus-mcp claude   (follow the OAuth link)
       - ~/.claude:/root/.claude
+      # Codex writes $CODEX_HOME/auth.json; per-account logins land under ./data
+      # instead, but this keeps a plain `docker exec -it plutus-mcp codex` login.
+      - ~/.codex:/root/.codex
+      # Gemini CLI has NO config-dir override — it always reads ~/.gemini — so
+      # without this mount a Gemini login is lost on every update. Adopting the
+      # login into an account (Settings → AI providers) also persists it, since
+      # account directories live under ./data.
+      - ~/.gemini:/root/.gemini
 
       # ── Optional: expose host folders to the filesystem tools ──────────────
       # Mount any host path you want the filesystem tools to reach, then add
