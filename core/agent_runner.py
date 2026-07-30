@@ -213,6 +213,13 @@ def _subprocess_env(root: Path | None = None, provider: str = "",
     """
     env = dict(os.environ)
     env.setdefault("IS_SANDBOX", "1")
+    # Claude Code auto-updates into ~/.local/bin, which the container's ENV PATH
+    # does not include — so give children the widened search path too.
+    try:
+        from core.ai_providers import cli_search_path
+        env["PATH"] = cli_search_path()
+    except Exception:
+        pass
 
     # A named provider account is authoritative when one is selected: point the
     # CLI at that account's own config dir and strip every ambient credential, so
@@ -346,7 +353,8 @@ def build_text(root: Path, prompt: str, *, timeout_min: int = 3) -> dict:
         if _current.get("running"):
             return {"ok": False, "text": "", "error": "Agent is busy — try again when the current run finishes."}
     cfg = load_agent_config(root)
-    cmd = ["claude", "-p", "--output-format", "text"]
+    from core.ai_providers import resolve_cli
+    cmd = [resolve_cli("claude") or "claude", "-p", "--output-format", "text"]
     if cfg.get("skip_permissions", True):
         cmd.append("--dangerously-skip-permissions")
     if cfg.get("model"):
@@ -582,7 +590,23 @@ def run_agent(
 
     cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
                           disallowed_tools=disallowed_tools, model=model)
+    # Spawn by absolute path. A bare "claude" is resolved from the child's PATH,
+    # which misses the auto-updated native install and fails with a bare
+    # FileNotFoundError even though the CLI is plainly installed.
+    from core.ai_providers import CLI_SEARCH_DIRS, resolve_cli
+    resolved = resolve_cli("claude")
+    if resolved:
+        cmd[0] = resolved
+
     try:
+        if not resolved:
+            looked = ", ".join(["$PATH", *CLI_SEARCH_DIRS])
+            raise FileNotFoundError(
+                "`claude` was not found. Looked in: " + looked +
+                ". If `docker exec -it plutus-mcp claude` works, the CLI has "
+                "auto-updated somewhere Plutus cannot see — run "
+                "`docker exec plutus-mcp sh -lc 'command -v claude'` and report the path."
+            )
         if cred_source == "none":
             # Fail before spending a run that can only come back 401.
             raise RuntimeError(
@@ -703,8 +727,10 @@ def run_agent(
             else:
                 rec["error"] = f"claude exited {proc.returncode}. {err}".strip()
             _emit(rec["error"])
-    except FileNotFoundError:
-        rec["error"] = "`claude` not found. Install Claude Code in the container and log in (see docs/AGENTS.md)."
+    except FileNotFoundError as e:
+        # Keep the resolver's detail (where it looked) rather than replacing it
+        # with a generic "install it" line for a CLI that is already installed.
+        rec["error"] = str(e) or "`claude` not found — see docs/AGENTS.md."
         _emit(rec["error"])
     except Exception as e:
         rec["error"] = str(e)

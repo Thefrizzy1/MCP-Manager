@@ -185,10 +185,53 @@ def logout_account(root: Path, provider: str, account_id: str) -> bool:
 
 # ── CLI detection ────────────────────────────────────────────────────────────
 
+# Where a provider CLI can live besides PATH.
+#
+# Claude Code auto-updates itself into a *native* install under ~/.local/bin,
+# superseding the npm global the image created at build time. An interactive
+# `docker exec … claude` finds it because the login shell's profile adds that
+# directory; a subprocess spawned from the app does not, because the container's
+# ENV PATH never included it. The symptom is "`claude` not found" from an app that
+# you could run by hand in the same container seconds earlier — so resolve
+# explicitly rather than trusting PATH.
+CLI_SEARCH_DIRS: tuple[str, ...] = (
+    "~/.local/bin",
+    "~/.claude/local",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/opt/homebrew/bin",
+)
+
+
+def resolve_cli(name: str) -> str | None:
+    """Absolute path to a provider CLI, searching beyond PATH."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for d in CLI_SEARCH_DIRS:
+        base = Path(os.path.expanduser(d)) / name
+        for cand in (base, base.with_suffix(".cmd"), base.with_suffix(".exe")):
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+    return None
+
+
+def cli_search_path() -> str:
+    """PATH with the extra CLI directories prepended, for child processes."""
+    extra = [str(Path(os.path.expanduser(d))) for d in CLI_SEARCH_DIRS]
+    current = os.environ.get("PATH", "")
+    seen, parts = set(), []
+    for p in extra + current.split(os.pathsep):
+        if p and p not in seen:
+            seen.add(p)
+            parts.append(p)
+    return os.pathsep.join(parts)
+
+
 def cli_info(provider: str) -> dict:
-    """Whether the provider's CLI is on PATH, and its version."""
+    """Whether the provider's CLI can be found, and its version."""
     spec = _spec(provider)
-    path = shutil.which(spec["cli"])
+    path = resolve_cli(spec["cli"])
     info = {"installed": bool(path), "path": path or "", "version": "",
             "install_hint": spec["install_hint"]}
     if not path:

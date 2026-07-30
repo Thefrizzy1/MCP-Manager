@@ -110,6 +110,60 @@ def test_login_hint_targets_the_unlinked_account(tmp_path, monkeypatch):
     assert f"CLAUDE_CONFIG_DIR={AP.account_dir(tmp_path, 'claude', acct['id'])}" in hint
 
 
+# ── CLI resolution ───────────────────────────────────────────────────────────
+
+def test_resolve_cli_finds_an_auto_updated_native_install(tmp_path, monkeypatch):
+    """Claude Code auto-updates itself into ~/.local/bin, which the container's
+    ENV PATH does not include. `docker exec … claude` worked (login-shell PATH)
+    while the app's Popen failed with a bare FileNotFoundError on a CLI that was
+    plainly installed."""
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    binary = home / ".local" / "bin" / "claude"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+
+    monkeypatch.setattr(AP.shutil, "which", lambda n: None)          # not on PATH
+    monkeypatch.setattr(AP.os.path, "expanduser",
+                        lambda p: str(home / p[2:]) if p.startswith("~/") else p)
+
+    assert AP.resolve_cli("claude") == str(binary)
+
+
+def test_resolve_cli_prefers_path_when_present(monkeypatch):
+    monkeypatch.setattr(AP.shutil, "which", lambda n: "/usr/bin/claude")
+    assert AP.resolve_cli("claude") == "/usr/bin/claude"
+
+
+def test_resolve_cli_returns_none_when_really_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(AP.shutil, "which", lambda n: None)
+    monkeypatch.setattr(AP.os.path, "expanduser",
+                        lambda p: str(tmp_path / "empty") if p.startswith("~/") else p)
+    assert AP.resolve_cli("claude") is None
+
+
+def test_child_path_includes_the_native_install_dir(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    p = AP.cli_search_path()
+    assert "/usr/bin" in p
+    assert any("local" in part for part in p.split(AP.os.pathsep)), p
+
+
+def test_missing_cli_error_says_where_it_looked(tmp_path, monkeypatch):
+    """The old message told you to install a CLI you had already installed."""
+    from core import agent_runner as AR
+
+    monkeypatch.setattr(AR, "load_agent_config", lambda root: {
+        **AR.DEFAULT_AGENT_CONFIG, "give_plutus_tools": False})
+    monkeypatch.setattr(AR, "legacy_credential_source", lambda: ("cli", "test"))
+    monkeypatch.setattr(AP, "resolve_cli", lambda n: None)
+
+    rec = AR.run_agent(tmp_path, "hi", label="x")
+    err = rec["error"] or ""
+    assert "Looked in" in err and "~/.local/bin" in err
+    assert "command -v claude" in err
+
+
 # ── capability tests ─────────────────────────────────────────────────────────
 
 def test_capability_test_stops_at_the_first_real_failure(tmp_path, monkeypatch):

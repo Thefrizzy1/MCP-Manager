@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
-import { ClaudeCodeSection } from '@/components/settings/ClaudeCodeSection'
 import { AiProvidersSection } from '@/components/settings/AiProvidersSection'
 import { useToast } from '@/components/ui/Toast'
 
@@ -175,8 +174,6 @@ export function Settings() {
               <span className="text-[11.5px] text-ink-3">needs public HTTPS + Require bearer on</span>
             </Row>
           </Section>
-
-          <ClaudeCodeSection />
 
           <Section title="Custom integrations" subtitle="Extra service cards (JSON). Or use Add on the Connections page.">
             <Textarea
