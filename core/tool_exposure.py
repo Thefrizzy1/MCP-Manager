@@ -106,6 +106,14 @@ def is_tool_exposed(name: str, disabled: set[str], disabled_tools: set[str] | No
     return bool(cats - disabled)
 
 
+# Below this, the served surface is not "optimised" — it is broken. Disabling
+# every category once left /mcp with 21 tools and no way to write anything: agents
+# reported "I don't have tools to write files" and lost their work, while the
+# dashboard's own smoke tests kept passing because they run against the full
+# registry rather than the served instance.
+MIN_SERVED_FRACTION = 0.05
+
+
 def resolve_exposed(root: Path, all_names: list[str]) -> set[str] | None:
     """Allowed tool-name set for the served ``/mcp``, or None when nothing is
     disabled (so the caller can reuse the prebuilt full instance)."""
@@ -115,6 +123,23 @@ def resolve_exposed(root: Path, all_names: list[str]) -> set[str] | None:
     if not disabled and not disabled_tools:
         return None
     return {n for n in all_names if is_tool_exposed(n, disabled, disabled_tools)}
+
+
+def exposure_warning(root: Path, all_names: list[str]) -> str:
+    """A plain-language warning when the slice has gone too far, else ''.
+
+    Surfaced in the dashboard because the failure is otherwise invisible: the
+    served manifest shrinks silently and only an agent, mid-task, discovers it has
+    no tools.
+    """
+    served = resolve_exposed(root, all_names)
+    if served is None or not all_names:
+        return ""
+    if len(served) >= max(1, int(len(all_names) * MIN_SERVED_FRACTION)):
+        return ""
+    return (f"Only {len(served)} of {len(all_names)} tools are being served. Agents "
+            "will report that they have no tools for most tasks. Re-enable "
+            "categories under tool exposure.")
 
 
 def _tool_token_estimate(tool: Any) -> int:

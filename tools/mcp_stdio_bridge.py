@@ -37,6 +37,7 @@ from pathlib import Path
 # importable from this file's location rather than hoping cwd is /app.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from core import agent_tools  # noqa: E402
 from core.mcp_client import McpHttpClient  # noqa: E402
 
 MCP_PREFIX = "mcp__plutus__"
@@ -91,10 +92,10 @@ def main() -> int:
         rid = msg.get("id")
         method = msg.get("method")
 
-        # Refuse a denied tool here rather than forwarding it: the point of the
-        # connection picker is that the tool is out of reach for this run.
         if method == "tools/call":
             name = ((msg.get("params") or {}).get("name") or "")
+            # Refuse a denied tool here rather than forwarding it: the point of
+            # the connection picker is that the tool is out of reach for this run.
             if name in deny:
                 log(f"refused out-of-scope tool: {name}")
                 if rid is not None:
@@ -105,21 +106,47 @@ def main() -> int:
                                      "connection was not selected for this run."}],
                     }})
                 continue
+            # Library tools run here, in this process. They are the agent's way to
+            # write up what it found, so they must not depend on the endpoint
+            # being reachable or on what it chooses to expose.
+            if agent_tools.is_library_tool(name):
+                out = agent_tools.call_library_tool(
+                    name, (msg.get("params") or {}).get("arguments") or {})
+                log(f"library tool {name}: {'error' if out['is_error'] else 'ok'}")
+                if rid is not None:
+                    write({"jsonrpc": "2.0", "id": rid, "result": {
+                        "isError": out["is_error"],
+                        "content": [{"type": "text", "text": out["text"]}],
+                    }})
+                continue
 
         try:
             replies = client.proxy(msg)
         except Exception as exc:                 # transport died, server gone, …
             log(f"{method} failed: {exc}")
-            if rid is not None:
+            if rid is None:
+                continue
+            if method == "tools/list":
+                # The homelab tools are gone, but the agent can still write up
+                # what it knows — so answer with the built-ins rather than an
+                # error that leaves it with nothing at all.
+                write({"jsonrpc": "2.0", "id": rid,
+                       "result": {"tools": agent_tools.library_tools_for(list(deny))}})
+            else:
                 write(error(rid, -32603, f"Plutus MCP unreachable: {exc}"))
             continue
 
         for reply in replies:
-            if deny and method == "tools/list":
+            if method == "tools/list":
                 result = reply.get("result")
                 if isinstance(result, dict) and isinstance(result.get("tools"), list):
-                    result["tools"] = [t for t in result["tools"]
-                                       if t.get("name") not in deny]
+                    if deny:
+                        result["tools"] = [t for t in result["tools"]
+                                           if t.get("name") not in deny]
+                    # Advertised on the last page only, so pagination cannot
+                    # duplicate them.
+                    if not result.get("nextCursor"):
+                        result["tools"] += agent_tools.library_tools_for(list(deny))
             write(reply)
 
     client.close()

@@ -1091,29 +1091,43 @@ def _plutus_declarations(mcp_url: str, token: str,
                          disallowed: list[str] | None) -> tuple[list[dict], object]:
     """(function declarations, live MCP client) for a run that gets Plutus tools.
 
-    The tool list comes from a real ``tools/list`` against Plutus's own endpoint,
-    so a Gemini agent is offered exactly what a Claude agent is offered. Returns
-    an empty list and no client when tools are off or the endpoint is unreachable
-    — a model-only run is a worse run, not a dead one.
+    The MCP list comes from a real ``tools/list`` against Plutus's own endpoint,
+    so a Gemini agent is offered exactly what a Claude agent is offered.
+
+    The **library tools are always added**, and do not come from MCP at all. An
+    agent that cannot write up what it found is not much use, and whether it can
+    must not depend on what a particular endpoint happens to expose — a run
+    against a read-only profile ended with the agent asking the user to create the
+    file by hand. Losing the MCP endpoint costs the homelab tools; it does not
+    cost the ability to produce output.
     """
     from core import agent_tools
     from core.mcp_client import McpHttpClient
 
+    builtin = agent_tools.library_tools_for(disallowed)
+    builtin_decls, _ = agent_tools.gemini_declarations(builtin, None, limit=len(builtin) or 1)
+
     if not mcp_url:
-        return [], None
+        _emit(f"tools: {len(builtin_decls)} built-in library tools (Plutus MCP not attached)")
+        return builtin_decls, None
+
     client = McpHttpClient(mcp_url, token)
     try:
         tools = client.list_tools()
     except Exception as e:
         client.close()
-        _emit(f"warn: could not read Plutus tools ({e}) — running without them")
-        return [], None
-    decls, dropped = agent_tools.gemini_declarations(tools, disallowed)
+        _emit(f"warn: could not read Plutus MCP tools ({e}) — continuing with "
+              f"{len(builtin_decls)} built-in library tools")
+        return builtin_decls, None
+
+    # The cap counts the built-ins, which must never be the ones dropped.
+    room = max(1, agent_tools.MAX_DECLARATIONS - len(builtin_decls))
+    decls, dropped = agent_tools.gemini_declarations(tools, disallowed, limit=room)
     if dropped:
-        _emit(f"note: {dropped} tools left out (cap {agent_tools.MAX_DECLARATIONS}) — "
+        _emit(f"note: {dropped} MCP tools left out (cap {agent_tools.MAX_DECLARATIONS}) — "
               "narrow the connections for this run to choose which")
-    _emit(f"Plutus MCP tools available: {len(decls)}")
-    return decls, client
+    _emit(f"tools: {len(decls)} from Plutus MCP + {len(builtin_decls)} built-in library")
+    return builtin_decls + decls, client
 
 
 def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
@@ -1129,7 +1143,7 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
     """
     import json as _json
 
-    from core import ai_providers
+    from core import agent_tools, ai_providers
 
     spec = ai_providers.PROVIDERS[provider]
     ok, why = _account_credential(root, provider, account_id)
@@ -1184,8 +1198,12 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                 _emit(f"-> {name}: {_json.dumps(args, default=str)[:110]}")
                 transcript.append({"kind": "tool_call", "name": name, "id": "",
                                    "input": _clip(args)})
-                if client is None:
-                    out = {"text": "Plutus tools are not available to this run.",
+                if agent_tools.is_library_tool(name):
+                    # In-process: writing to the app's own library never depends
+                    # on the MCP endpoint being reachable.
+                    out = agent_tools.call_library_tool(name, args, root=root)
+                elif client is None:
+                    out = {"text": "Plutus MCP tools are not available to this run.",
                            "is_error": True}
                 else:
                     try:

@@ -166,6 +166,22 @@ So an agent can be told to research a topic and build a structure: subfolders,
 Markdown notes, an HTML dashboard. `fs_write_file` creates parent directories, so
 it only needs the path.
 
+**Three of those tools are built into the runner, not fetched over MCP** —
+`library_write_file`, `library_read_file`, `library_list_files`
+(`core/agent_tools.py`). Gemini gets them as function declarations; Codex gets
+them injected by the stdio bridge, which executes them in its own process. They
+take paths *relative* to the library, so confinement is a property of the API
+rather than something each caller re-checks.
+
+They are built in because being able to write up the work must not depend on what
+an endpoint happens to expose. A run against a profile serving a read-only slice
+ended with the agent reporting it had "no tool available to create or upload
+files" and asking the user to make the file by hand. Now the homelab tools can be
+missing, restricted, or the whole MCP endpoint unreachable, and the agent can
+still produce output — that case is covered by a test that points the bridge at a
+dead port and writes a file anyway. The connection ACL can still deny them
+explicitly; an operator who does that means it.
+
 **Models rot; ids are not pinned.** Google retires a model id for *new* keys
 ("This model models/gemini-2.5-flash is no longer available to new users") while
 the account that has always used it keeps working. So Gemini's model is resolved

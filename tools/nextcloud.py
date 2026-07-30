@@ -664,11 +664,16 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return "Error: Nextcloud not configured."
         try:
             now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            # Resolve the same way add_task does, or this reads from a slug that
+            # does not exist. Nextcloud has no calendar called "tasks", so a task
+            # created in the resolved VTODO calendar was then looked for under the
+            # literal name and 404'd — "Nextcloud Tasks resource not found".
+            slug, _note = await _resolve_task_calendar(params.list_name)
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 # Fetch existing task
-                r = await client.get(_caldav(f"{params.list_name}/{params.uid}.ics"), auth=_auth())
+                r = await client.get(_caldav(f"{slug}/{params.uid}.ics"), auth=_auth())
                 if r.status_code == 404:
-                    return f"Error: Task not found: `{params.uid}`"
+                    return f"Error: Task not found: `{params.uid}` in `{slug}`"
                 r.raise_for_status()
                 ical = r.text
 
@@ -682,7 +687,7 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 r = await client.put(
-                    _caldav(f"{params.list_name}/{params.uid}.ics"), auth=_auth(),
+                    _caldav(f"{slug}/{params.uid}.ics"), auth=_auth(),
                     headers={"Content-Type": "text/calendar; charset=utf-8"},
                     content=ical.encode()
                 )
@@ -702,8 +707,11 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
+            # Same resolution as add_task/complete_task — deleting from the
+            # literal list name 404s on every stock install.
+            slug, _note = await _resolve_task_calendar(params.list_name)
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-                r = await client.delete(_caldav(f"{params.list_name}/{params.uid}.ics"), auth=_auth())
+                r = await client.delete(_caldav(f"{slug}/{params.uid}.ics"), auth=_auth())
                 r.raise_for_status()
             return f"✓ Task deleted: `{params.uid}`"
         except Exception as e:

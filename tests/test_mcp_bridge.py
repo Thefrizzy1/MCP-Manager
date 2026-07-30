@@ -159,3 +159,58 @@ def test_an_unreachable_endpoint_answers_instead_of_hanging():
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
     ])
     assert replies and replies[0]["error"]["message"].startswith("Plutus MCP unreachable")
+
+
+# ── the library tools ride along, whatever the endpoint says ─────────────────
+
+def test_the_library_tools_are_advertised_alongside_the_real_ones(live_mcp):
+    replies, _ = run_bridge(live_mcp, HANDSHAKE + [
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+    ])
+    names = [t["name"] for t in next(r for r in replies if r.get("id") == 2)["result"]["tools"]]
+    assert "library_write_file" in names
+    assert len(names) > 50, "and they are additions, not a replacement"
+    assert len(names) == len(set(names)), "advertised exactly once"
+
+
+def test_codex_can_write_to_the_library_with_the_endpoint_down(tmp_path):
+    """The point of building them into the bridge: an endpoint that is missing,
+    or serving a read-only slice, must not cost the agent its own output."""
+    replies, _ = run_bridge("http://127.0.0.1:9/mcp", [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "library_write_file",
+            "arguments": {"path": "bridge-test/notes.md", "content": "# via Codex\n"}}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "library_read_file", "arguments": {"path": "bridge-test/notes.md"}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            "name": "library_read_file", "arguments": {"path": "../../.env"}}},
+    ])
+    by_id = {r["id"]: r for r in replies}
+
+    assert [t["name"] for t in by_id[1]["result"]["tools"]] == [
+        "library_write_file", "library_read_file", "library_list_files"]
+    assert by_id[2]["result"]["isError"] is False
+    assert by_id[3]["result"]["content"][0]["text"] == "# via Codex\n"
+    # Confinement holds in this process too.
+    assert by_id[4]["result"]["isError"] is True
+    assert "outside the research library" in by_id[4]["result"]["content"][0]["text"]
+
+    from core.library import library_dir
+    written = library_dir() / "bridge-test" / "notes.md"
+    assert written.is_file()
+    written.unlink()
+    written.parent.rmdir()
+
+
+def test_a_denied_library_tool_is_neither_listed_nor_run():
+    replies, _ = run_bridge("http://127.0.0.1:9/mcp", [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "library_write_file", "arguments": {"path": "x.md", "content": "x"}}},
+    ], deny="mcp__plutus__library_write_file")
+    by_id = {r["id"]: r for r in replies}
+
+    assert "library_write_file" not in [t["name"] for t in by_id[1]["result"]["tools"]]
+    assert by_id[2]["result"]["isError"] is True
+    assert "not available to this agent" in by_id[2]["result"]["content"][0]["text"]

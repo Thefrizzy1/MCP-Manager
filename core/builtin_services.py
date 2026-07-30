@@ -289,6 +289,15 @@ SERVICES: list[dict] = [
             {"name":"youtube_video","label":"Video Details","params":[("video_id","Video ID","text")]},
             {"name":"youtube_trending","label":"Trending","params":[("region","Region code","text"),("max_results","Max results","number")]}]},
 
+  {"id":"agent_db","label":"Agent Database","icon":"🗄","tag":"storage","section":"system",
+   "desc":"Plutus's own SQLite store — the always-writable fallback when Nextcloud, Obsidian or the filesystem are unavailable",
+   "config_keys":[],"health_url":None,"health_headers":lambda: {},"configured_keys":(),
+   "tools":[{"name":"db_write_note","label":"Save note","params":[("title","Title","text"),("body","Body","text"),("tags","Tags (comma sep)","text")]},
+            {"name":"db_read_note","label":"Read note","params":[("note_id","Note id","number")]},
+            {"name":"db_list_notes","label":"List notes","params":[("limit","How many","number")]},
+            {"name":"db_search_notes","label":"Search notes","params":[("query","Search text","text")]},
+            {"name":"db_status","label":"Status","params":[]}]},
+
   {"id":"github","label":"GitHub","icon":"🐙","tag":"dev","section":"public",
    "desc":"GitHub — repo search, repo info, issues & pull requests (public API; optional token)",
    "config_keys":[("GITHUB_TOKEN","Access token (optional — 5000 req/hr + private repos)","",True)],

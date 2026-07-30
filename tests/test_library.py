@@ -140,3 +140,103 @@ def test_zipping_a_file_is_a_clear_error_not_a_crash(files_client):
     client, lib = files_client
     (lib / "a.md").write_text("x", encoding="utf-8")
     assert client.get(f"/api/v1/files/download-folder?path={lib / 'a.md'}").status_code == 400
+
+
+# ── the built-in tools an agent always has ───────────────────────────────────
+
+def test_writing_builds_the_folder_structure_as_it_goes(tmp_path):
+    """"Research this and write it up" means folders, not one flat file."""
+    msg = LIB.write_note("research/topic/findings.md", "# Findings\n", root=tmp_path)
+    assert "findings.md" in msg
+    assert (tmp_path / "data" / "library" / "research" / "topic" / "findings.md").is_file()
+    assert LIB.read_note("research/topic/findings.md", root=tmp_path) == "# Findings\n"
+
+
+def test_appending_adds_rather_than_replaces(tmp_path):
+    LIB.write_note("a.md", "one\n", root=tmp_path)
+    LIB.write_note("a.md", "two\n", append=True, root=tmp_path)
+    assert LIB.read_note("a.md", root=tmp_path) == "one\ntwo\n"
+
+
+def test_listing_shows_folders_and_sizes(tmp_path):
+    LIB.write_note("notes/a.md", "hello", root=tmp_path)
+    out = LIB.list_dir("", root=tmp_path)
+    assert "notes/" in out and "README.md" in out
+    assert "a.md" in LIB.list_dir("notes", root=tmp_path)
+
+
+@pytest.mark.parametrize("bad", [
+    "../../.env", "..", "", "   ", "research/../../../secrets.json",
+    "notes/../../../../etc/passwd",
+])
+def test_a_path_that_would_leave_the_library_is_refused(tmp_path, bad):
+    with pytest.raises(LIB.LibraryError):
+        LIB.resolve_in_library(bad, tmp_path)
+
+
+@pytest.mark.parametrize("given", ["/etc/passwd", "/research/notes.md", "\\notes\\a.md"])
+def test_an_absolute_looking_path_is_pulled_into_the_library(tmp_path, given):
+    """Models write '/research/notes.md' as often as 'research/notes.md'.
+    Rejecting that would be pedantry; escaping on it would be a hole. It is
+    treated as library-relative, and what matters is that it lands inside."""
+    target = LIB.resolve_in_library(given, tmp_path)
+    assert LIB.is_in_library(str(target), tmp_path)
+
+
+def test_reading_something_that_is_not_there_says_so(tmp_path):
+    with pytest.raises(LIB.LibraryError, match="does not exist"):
+        LIB.read_note("nope.md", root=tmp_path)
+
+
+def test_an_oversized_note_is_refused_before_it_is_written(tmp_path):
+    with pytest.raises(LIB.LibraryError, match="larger than"):
+        LIB.write_note("big.md", "x" * (LIB.MAX_NOTE_BYTES + 1), root=tmp_path)
+
+
+# ── they are tools, and they never raise at the agent ────────────────────────
+
+def test_the_builtin_tools_are_declared_and_callable(tmp_path):
+    from core import agent_tools as AT
+
+    names = [t["name"] for t in AT.LIBRARY_TOOLS]
+    assert names == ["library_write_file", "library_read_file", "library_list_files"]
+    assert all(AT.is_library_tool(n) for n in names)
+    assert not AT.is_library_tool("nextcloud_upload_file")
+
+    out = AT.call_library_tool("library_write_file",
+                               {"path": "x/y.md", "content": "hi"}, root=tmp_path)
+    assert out["is_error"] is False
+    assert AT.call_library_tool("library_read_file", {"path": "x/y.md"},
+                                root=tmp_path)["text"] == "hi"
+
+
+def test_a_bad_call_comes_back_as_data_not_an_exception(tmp_path):
+    """A tool error is something the model reads and works around; raising here
+    would end the whole run."""
+    from core import agent_tools as AT
+
+    out = AT.call_library_tool("library_read_file", {"path": "../../.env"}, root=tmp_path)
+    assert out["is_error"] is True and "outside the research library" in out["text"]
+
+    assert AT.call_library_tool("library_nope", {}, root=tmp_path)["is_error"] is True
+
+
+def test_the_builtin_tools_convert_into_geminis_dialect():
+    """They ride in the same declarations array as the MCP tools, so they face
+    the same validation — one bad schema fails every call in the run."""
+    from core import agent_tools as AT
+    from tests.test_agent_tools import keywords_outside_the_subset
+
+    decls, dropped = AT.gemini_declarations(AT.LIBRARY_TOOLS, None)
+    assert dropped == 0 and len(decls) == 3
+    for d in decls:
+        assert keywords_outside_the_subset(d["parameters"]) == []
+    write = next(d for d in decls if d["name"] == "library_write_file")
+    assert write["parameters"]["required"] == ["path", "content"]
+
+
+def test_an_operator_can_still_deny_them():
+    from core import agent_tools as AT
+
+    kept = AT.library_tools_for(["mcp__plutus__library_write_file"])
+    assert [t["name"] for t in kept] == ["library_read_file", "library_list_files"]

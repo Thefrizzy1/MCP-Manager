@@ -83,7 +83,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "tasks":         ["nextcloud_get_tasks", "nextcloud_add_task", "nextcloud_complete_task", "nextcloud_delete_task", "habitica_"],
     "contacts":      ["nextcloud_list_contacts", "nextcloud_search_contacts", "nextcloud_add_contact"],
     "notes":         ["nextcloud_get_notes", "nextcloud_read_note", "nextcloud_create_note", "nextcloud_append_to_note", "nextcloud_write_note", "obsidian_"],
-    "files":         ["nextcloud_list_files", "nextcloud_read_file", "nextcloud_upload_file", "nextcloud_share_file", "nextcloud_move_file", "nextcloud_delete_file", "nextcloud_list_shares", "fs_", "smb_"],
+    "files":         ["nextcloud_list_files", "nextcloud_read_file", "nextcloud_upload_file", "nextcloud_share_file", "nextcloud_move_file", "nextcloud_delete_file", "nextcloud_list_shares", "fs_", "smb_", "db_"],
     "home":          ["ha_"],
     "automation":    ["n8n_"],
     "notifications": ["ntfy_", "send_email", "nextcloud_share_file"],
@@ -127,7 +127,19 @@ INTENT_PRESETS: dict[str, list[str]] = {
 
 # Tools that must always be reachable, even on an otherwise-empty profile, so a
 # client is never fully locked out of the slicer/meta surface.
-ALWAYS_EXPOSED: set[str] = {"plutus_tool_slicer"}
+# Never removable by any filter.
+#
+# The slicer is a token optimisation, but with every category disabled it stripped
+# the served /mcp down to 21 tools with no way to write anything anywhere — an
+# agent then correctly reported "I don't have tools to write files" and an hour of
+# research had nowhere to go. The agent database is the floor beneath every other
+# destination, so it must survive any configuration mistake; the slicer itself has
+# to stay reachable or there is no way to undo such a mistake from inside.
+ALWAYS_EXPOSED: set[str] = {
+    "plutus_tool_slicer",
+    "db_write_note", "db_read_note", "db_list_notes", "db_search_notes",
+    "db_delete_note", "db_status",
+}
 
 
 def infer_tool_categories(tool_name: str) -> set[str]:

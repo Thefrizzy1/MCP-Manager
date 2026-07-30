@@ -366,8 +366,10 @@ def test_gemini_is_offered_the_same_tools_claude_gets(tmp_path, spawns, fake_mcp
                        mcp_url="http://127.0.0.1:8765/mcp")
 
     assert rec["ok"] is True
-    assert [d["name"] for d in seen["declarations"]] == ["sonarr_queue"]
-    assert any("Plutus MCP tools available: 1" in ln for ln in rec["log"]), rec["log"]
+    names = [d["name"] for d in seen["declarations"]]
+    assert "sonarr_queue" in names, "the MCP surface is what Claude would see"
+    assert "library_write_file" in names, "plus the built-ins every runtime gets"
+    assert any("1 from Plutus MCP + 3 built-in library" in ln for ln in rec["log"]), rec["log"]
     assert fake_mcp.closed is True, "the MCP connection must not be leaked"
 
 
@@ -437,7 +439,8 @@ def test_the_connection_acl_reaches_gemini(tmp_path, spawns, fake_mcp, monkeypat
     AR.run_agent(tmp_path, "hi", label="x", provider="gemini", account_id=aid,
                  mcp_url="http://x/mcp",
                  disallowed_tools=["mcp__plutus__docker_stop_container"])
-    assert seen["names"] == ["sonarr_queue"]
+    mcp_names = [n for n in seen["names"] if not n.startswith("library_")]
+    assert mcp_names == ["sonarr_queue"]
 
 
 def test_a_runaway_tool_loop_is_stopped(tmp_path, spawns, fake_mcp, monkeypatch,
@@ -474,7 +477,81 @@ def test_an_unreachable_mcp_endpoint_degrades_instead_of_failing(tmp_path, spawn
     rec = AR.run_agent(tmp_path, "hi", label="x", provider="gemini", account_id=aid,
                        mcp_url="http://127.0.0.1:1/mcp")
     assert rec["ok"] is True and rec["result"] == "answered anyway"
-    assert any("could not read Plutus tools" in ln for ln in rec["log"]), rec["log"]
+    assert any("could not read Plutus MCP tools" in ln for ln in rec["log"]), rec["log"]
+
+
+# ── writing up the work never depends on the endpoint ────────────────────────
+
+def test_the_library_tools_are_offered_even_when_mcp_is_unreachable(tmp_path, spawns,
+                                                                    monkeypatch, with_tools):
+    """The reported failure: an agent on a read-only endpoint said it had "no tool
+    available to create files" and asked the user to make the file by hand."""
+    class Dead:
+        def __init__(self, *a, **kw): pass
+        def list_tools(self): raise RuntimeError("connection refused")
+        def close(self): pass
+
+    monkeypatch.setattr("core.mcp_client.McpHttpClient", Dead)
+    seen = {}
+
+    def fake(root, provider, account_id, *, contents, declarations=None, **kw):
+        seen["names"] = [d["name"] for d in declarations or []]
+        return {"ok": True, "parts": [], "text": "ok", "calls": [], "error": "",
+                "model": "m", "finish": "STOP"}
+
+    monkeypatch.setattr(AP, "api_turn", fake)
+    aid = _linked_gemini(tmp_path)
+    AR.run_agent(tmp_path, "write it up", label="x", provider="gemini", account_id=aid,
+                 mcp_url="http://127.0.0.1:1/mcp")
+
+    assert "library_write_file" in seen["names"]
+
+
+def test_a_read_only_endpoint_still_leaves_the_agent_able_to_write(tmp_path, spawns,
+                                                                   fake_mcp, monkeypatch,
+                                                                   with_tools):
+    """Exactly the live case: the endpoint served a handful of read-only tools, so
+    the agent's own output had nowhere to go."""
+    fake_mcp.tools = [{"name": "nextcloud_get_user_info", "description": "read only",
+                       "inputSchema": {"type": "object"}}]
+    fake, _ = _turns(
+        {"calls": [{"name": "library_write_file",
+                    "args": {"path": "research/findings.md", "content": "# Findings\n"}}],
+         "parts": [{"functionCall": {"name": "library_write_file", "args": {}}}]},
+        {"text": "Saved to research/findings.md."},
+    )
+    monkeypatch.setattr(AP, "api_turn", fake)
+    aid = _linked_gemini(tmp_path)
+
+    rec = AR.run_agent(tmp_path, "research and write it up", label="x",
+                       provider="gemini", account_id=aid, mcp_url="http://x/mcp")
+
+    assert rec["ok"] is True
+    # Written for real, in-process — the fake MCP was never asked.
+    assert fake_mcp.calls == []
+    assert (tmp_path / "data" / "library" / "research" / "findings.md").read_text() == "# Findings\n"
+
+
+def test_the_builtin_tools_are_never_the_ones_the_cap_drops(tmp_path, spawns, fake_mcp,
+                                                            monkeypatch, with_tools):
+    from core import agent_tools as AT
+
+    fake_mcp.tools = [{"name": f"t{i:03d}", "description": "x",
+                       "inputSchema": {"type": "object"}} for i in range(400)]
+    seen = {}
+
+    def fake(root, provider, account_id, *, contents, declarations=None, **kw):
+        seen["names"] = [d["name"] for d in declarations or []]
+        return {"ok": True, "parts": [], "text": "ok", "calls": [], "error": "",
+                "model": "m", "finish": "STOP"}
+
+    monkeypatch.setattr(AP, "api_turn", fake)
+    aid = _linked_gemini(tmp_path)
+    AR.run_agent(tmp_path, "hi", label="x", provider="gemini", account_id=aid,
+                 mcp_url="http://x/mcp")
+
+    assert "library_write_file" in seen["names"]
+    assert len(seen["names"]) <= AT.MAX_DECLARATIONS
 
 
 # ── stopping ─────────────────────────────────────────────────────────────────

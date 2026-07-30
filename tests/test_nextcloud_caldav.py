@@ -261,3 +261,55 @@ def test_a_freshly_created_event_falls_inside_the_window():
     end = caldav_utc(now + timedelta(days=1))
     event = caldav_utc(now + timedelta(minutes=5))
     assert start < event < end, (start, event, end)
+
+
+# ── a task must be findable where it was created ─────────────────────────────
+
+def _record_task_paths(monkeypatch):
+    """Register the tools against a fake server, recording every task-file URL."""
+    import httpx
+
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "PROPFIND":
+            return httpx.Response(207, text=SABRE_BODY,
+                                  headers={"content-type": "application/xml"})
+        if request.url.path.endswith(".ics"):
+            seen.append((request.method, request.url.path))
+            if request.method == "GET":
+                return httpx.Response(200, text=(
+                    "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:u1\r\n"
+                    "STATUS:NEEDS-ACTION\r\nEND:VTODO\r\nEND:VCALENDAR"))
+            return httpx.Response(204)
+        return httpx.Response(207, text='<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"/>',
+                              headers={"content-type": "application/xml"})
+
+    return _nextcloud_tools(monkeypatch, handler), seen
+
+
+def test_add_complete_and_delete_all_use_the_same_calendar(monkeypatch):
+    """The live smoke test's failure: add_task resolved "tasks" to the server's
+    real VTODO calendar, then delete_task used the literal name and 404'd —
+    "Nextcloud Tasks resource not found" on a task that had just been created.
+
+    Nextcloud has no calendar called "tasks", so any tool that trusts the caller's
+    list name is broken by construction. They must all resolve identically.
+    """
+    import asyncio
+
+    fns, seen = _record_task_paths(monkeypatch)
+
+    asyncio.run(invoke_mcp_tool_fn(fns["nextcloud_add_task"],
+                                   payload={"title": "t", "list_name": "tasks"}))
+    asyncio.run(invoke_mcp_tool_fn(fns["nextcloud_complete_task"],
+                                   payload={"uid": "u1", "list_name": "tasks"}))
+    asyncio.run(invoke_mcp_tool_fn(fns["nextcloud_delete_task"],
+                                   payload={"uid": "u1", "list_name": "tasks"}))
+
+    methods = [m for m, _ in seen]
+    assert "PUT" in methods and "DELETE" in methods, seen
+
+    calendars = {p.split("/calendars/friso/")[-1].split("/")[0] for _, p in seen}
+    assert calendars == {"personal"}, f"tools disagreed about the calendar: {seen}"
+    assert not any("/tasks/" in p for _, p in seen), "the literal slug 404s on a stock install"

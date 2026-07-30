@@ -83,6 +83,74 @@ def is_in_library(path: str, root: Path | None = None) -> bool:
     return is_within(path, str(library_dir(root)))
 
 
+# ── operations, addressed relative to the library root ───────────────────────
+#
+# Agents get *relative* paths ("research/findings.md"), never absolute ones. It
+# is easier for a model to get right, and it makes confinement a property of the
+# API rather than something each caller has to remember to check.
+
+MAX_NOTE_BYTES = 2 * 1024 * 1024
+MAX_LISTED = 500
+
+
+class LibraryError(ValueError):
+    """A path that would leave the library, or an operation that cannot be done."""
+
+
+def resolve_in_library(rel: str, root: Path | None = None) -> Path:
+    """An absolute path inside the library, or LibraryError."""
+    base = Path(os.path.realpath(str(ensure_library(root))))
+    cleaned = str(rel or "").strip().replace("\\", "/").lstrip("/")
+    if not cleaned or cleaned in (".", ".."):
+        raise LibraryError("give a path inside the library, e.g. 'research/notes.md'")
+    target = Path(os.path.realpath(str(base / cleaned)))
+    # realpath first, then the boundary test: a symlink or ".." inside the string
+    # must not be able to point out of the library.
+    if target != base and not str(target).startswith(str(base) + os.sep):
+        raise LibraryError(f"'{rel}' is outside the research library")
+    return target
+
+
+def write_note(rel: str, content: str, *, append: bool = False,
+               root: Path | None = None) -> str:
+    if len(content.encode("utf-8", "ignore")) > MAX_NOTE_BYTES:
+        raise LibraryError(f"content is larger than {MAX_NOTE_BYTES // 1024} KB")
+    target = resolve_in_library(rel, root)
+    target.parent.mkdir(parents=True, exist_ok=True)      # structures, not just files
+    with open(target, "a" if append else "w", encoding="utf-8") as f:
+        f.write(content)
+    verb = "Appended to" if append else "Wrote"
+    return f"{verb} {relative_name(str(target), root)} ({len(content)} chars)"
+
+
+def read_note(rel: str, root: Path | None = None) -> str:
+    target = resolve_in_library(rel, root)
+    if not target.is_file():
+        raise LibraryError(f"'{rel}' does not exist in the research library")
+    return target.read_text(encoding="utf-8", errors="replace")
+
+
+def list_dir(rel: str = "", root: Path | None = None) -> str:
+    base = ensure_library(root)
+    target = base if not (rel or "").strip() else resolve_in_library(rel, root)
+    if not target.is_dir():
+        raise LibraryError(f"'{rel}' is not a folder in the research library")
+    rows: list[str] = []
+    for entry in sorted(target.iterdir(), key=lambda p: (p.is_file(), p.name.lower())):
+        if len(rows) >= MAX_LISTED:
+            rows.append(f"… more than {MAX_LISTED} entries, narrow the path")
+            break
+        if entry.is_dir():
+            rows.append(f"{entry.name}/")
+        else:
+            try:
+                rows.append(f"{entry.name} ({entry.stat().st_size} B)")
+            except OSError:
+                rows.append(entry.name)
+    where = relative_name(str(target), root)
+    return f"{where}:\n" + ("\n".join(rows) if rows else "(empty)")
+
+
 def relative_name(path: str, root: Path | None = None) -> str:
     """A library-relative label for the UI, falling back to the basename."""
     try:
