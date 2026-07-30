@@ -142,6 +142,95 @@ def test_zipping_a_file_is_a_clear_error_not_a_crash(files_client):
     assert client.get(f"/api/v1/files/download-folder?path={lib / 'a.md'}").status_code == 400
 
 
+# ── a file manager that can actually manage files ────────────────────────────
+
+def test_a_folder_can_be_deleted_with_its_contents(files_client):
+    """Folders used to be refused outright, so a research run that built a tree
+    could only be dismantled one file at a time — and the empty folders stayed."""
+    client, lib = files_client
+    (lib / "topic" / "sub").mkdir(parents=True)
+    (lib / "topic" / "sub" / "a.md").write_text("x", encoding="utf-8")
+
+    # Not implied: a non-empty folder needs the caller to say so.
+    r = client.post("/api/v1/files/delete", json={"path": str(lib / "topic")})
+    assert r.status_code == 409 and "not empty" in r.json()["detail"]
+    assert (lib / "topic").is_dir()
+
+    r = client.post("/api/v1/files/delete",
+                    json={"path": str(lib / "topic"), "recursive": True})
+    assert r.status_code == 200 and r.json()["deleted"] == "folder"
+    assert not (lib / "topic").exists()
+
+
+def test_an_empty_folder_needs_no_ceremony(files_client):
+    client, lib = files_client
+    (lib / "empty").mkdir()
+    assert client.post("/api/v1/files/delete", json={"path": str(lib / "empty")}).status_code == 200
+
+
+def test_a_root_folder_cannot_be_deleted(files_client):
+    """"Clean up the library" must never be able to mean "remove the library"."""
+    client, lib = files_client
+    r = client.post("/api/v1/files/delete", json={"path": str(lib), "recursive": True})
+    assert r.status_code == 400 and "root folder" in r.json()["detail"]
+    assert lib.is_dir()
+
+
+def test_deleting_outside_the_roots_is_refused(files_client, tmp_path):
+    client, _ = files_client
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    r = client.post("/api/v1/files/delete", json={"path": str(outside), "recursive": True})
+    assert r.status_code == 403 and outside.is_dir()
+
+
+def test_a_folder_can_be_created(files_client):
+    client, lib = files_client
+    r = client.post("/api/v1/files/mkdir", json={"path": str(lib), "name": "notes"})
+    assert r.status_code == 200 and (lib / "notes").is_dir()
+    assert client.post("/api/v1/files/mkdir",
+                       json={"path": str(lib), "name": "notes"}).status_code == 409
+
+
+@pytest.mark.parametrize("name", ["../escape", "..", "a/b", "", "   "])
+def test_a_new_folder_name_cannot_traverse(files_client, name):
+    client, lib = files_client
+    r = client.post("/api/v1/files/mkdir", json={"path": str(lib), "name": name})
+    assert r.status_code in (400, 403, 409, 422), r.text
+    assert not (lib.parent / "escape").exists()
+
+
+def test_files_can_be_uploaded_into_a_folder(files_client):
+    client, lib = files_client
+    r = client.post("/api/v1/files/upload",
+                    data={"path": str(lib)},
+                    files=[("file", ("notes.md", b"# hello", "text/markdown")),
+                           ("file", ("data.csv", b"a,b\n1,2", "text/csv"))])
+    assert r.status_code == 200
+    assert {f["name"] for f in r.json()["files"]} == {"notes.md", "data.csv"}
+    assert (lib / "notes.md").read_bytes() == b"# hello"
+
+
+def test_an_upload_cannot_be_written_outside_the_roots(files_client, tmp_path):
+    client, lib = files_client
+    r = client.post("/api/v1/files/upload",
+                    data={"path": str(lib)},
+                    files=[("file", ("../../escaped.txt", b"x", "text/plain"))])
+    # The name is reduced to its basename, so it lands inside — never above.
+    assert r.status_code == 200
+    assert (lib / "escaped.txt").is_file()
+    assert not (tmp_path / "escaped.txt").exists()
+
+
+def test_uploading_into_somewhere_not_allowed_is_refused(files_client, tmp_path):
+    client, _ = files_client
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    r = client.post("/api/v1/files/upload", data={"path": str(outside)},
+                    files=[("file", ("x.txt", b"x", "text/plain"))])
+    assert r.status_code == 403 and not (outside / "x.txt").exists()
+
+
 # ── the built-in tools an agent always has ───────────────────────────────────
 
 def test_writing_builds_the_folder_structure_as_it_goes(tmp_path):

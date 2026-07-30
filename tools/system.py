@@ -590,6 +590,77 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
         return await asyncio.to_thread(_run)
 
+    class FsMkdirInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        path: str = Field(..., description="Directory to create (parents included)",
+                          min_length=1)
+
+    @mcp.tool(name="fs_create_directory",
+              annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def fs_create_directory(params: FsMkdirInput) -> str:
+        """Create a directory (and any missing parents) in an allowed path."""
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            try:
+                if os.path.isdir(params.path):
+                    return f"✓ '{params.path}' already exists"
+                os.makedirs(params.path, exist_ok=True)
+                return f"✓ Created directory '{params.path}'"
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
+
+    class FsDeleteInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        path: str = Field(..., description="File or directory to delete", min_length=1)
+        recursive: bool = Field(
+            default=False,
+            description="Required to delete a directory that still has contents")
+
+    @mcp.tool(name="fs_delete",
+              annotations={"readOnlyHint": False, "destructiveHint": True})
+    async def fs_delete(params: FsDeleteInput) -> str:
+        """Delete a file, or a directory (set recursive to remove its contents).
+
+        Deleting a non-empty directory needs `recursive: true` — an agent tidying
+        one file should not be able to remove a tree by naming its parent.
+        """
+        def _run() -> str:
+            if not _check_path(params.path):
+                return _denied(params.path)
+            # Refuse the allowed roots themselves: "clean up /Ablage" must not be
+            # able to mean "delete the share".
+            for root in _allowed_roots():
+                try:
+                    if os.path.realpath(params.path) == os.path.realpath(root):
+                        return f"Error: '{params.path}' is a configured root and cannot be deleted."
+                except OSError:
+                    continue
+            try:
+                if os.path.islink(params.path):
+                    os.unlink(params.path)          # the link, never its target
+                    return f"✓ Deleted link '{params.path}'"
+                if os.path.isfile(params.path):
+                    os.remove(params.path)
+                    return f"✓ Deleted file '{params.path}'"
+                if not os.path.isdir(params.path):
+                    return f"Error: '{params.path}' does not exist."
+                if not params.recursive and any(os.scandir(params.path)):
+                    return (f"Error: '{params.path}' is not empty. "
+                            "Call again with recursive: true to delete its contents.")
+                if params.recursive:
+                    import shutil
+                    shutil.rmtree(params.path)
+                else:
+                    os.rmdir(params.path)
+                return f"✓ Deleted directory '{params.path}'"
+            except Exception as e:
+                return _handle_error(e, "Filesystem")
+
+        return await asyncio.to_thread(_run)
+
     class FsRecentInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         path: str = Field(..., description="Directory to search", min_length=1)

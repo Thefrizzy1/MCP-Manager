@@ -152,7 +152,50 @@ def _toml_str(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-_CODEX_BLOCK = re.compile(r"^\[mcp_servers\.plutus\][^\[]*", re.MULTILINE)
+# A TOML table header: the first non-blank character of a line is '['. Matching
+# on the *character* instead — which an earlier version did, with `[^\[]*` — stops
+# at the '[' inside `args = [...]`, cuts the block mid-assignment, and leaves the
+# value orphaned at the start of a line. TOML then reads that value as a table
+# header, and the next write adds another one:
+#
+#     Error loading config.toml:7:2: duplicate key
+#     7 | ["/app/tools/mcp_stdio_bridge.py"]
+#
+# which stopped Codex from launching at all.
+_TOML_HEADER = re.compile(r"^\s*\[")
+_PLUTUS_HEADER = re.compile(r"^\s*\[mcp_servers\.plutus\]\s*$")
+
+
+def strip_plutus_block(text: str) -> str:
+    """Everything except our own [mcp_servers.plutus] table.
+
+    Line-based and header-aware: from our header, drop lines until the next line
+    that opens a table. Anything else in the file is preserved verbatim, comments
+    included.
+    """
+    out: list[str] = []
+    skipping = False
+    for line in (text or "").splitlines():
+        if _PLUTUS_HEADER.match(line):
+            skipping = True
+            continue
+        if skipping:
+            if _TOML_HEADER.match(line):
+                skipping = False          # a new table starts; keep it
+            else:
+                continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def valid_toml(text: str) -> bool:
+    import tomllib
+
+    try:
+        tomllib.loads(text)
+        return True
+    except (tomllib.TOMLDecodeError, ValueError):
+        return False
 
 
 def write_codex_mcp_config(root: Path, account_id: str, *, mcp_url: str,
@@ -197,8 +240,29 @@ def write_codex_mcp_config(root: Path, account_id: str, *, mcp_url: str,
         existing = path.read_text(encoding="utf-8")
     except OSError:
         pass
-    kept = _CODEX_BLOCK.sub("", existing).rstrip()
+
+    kept = strip_plutus_block(existing)
+    # Self-healing: a file the old generator mangled cannot be repaired by
+    # stripping our table, because the damage is an orphaned value masquerading as
+    # somebody else's table. Preserving it would keep Codex broken forever, so a
+    # config that will not parse is discarded rather than carried forward.
+    if kept and not valid_toml(kept):
+        _emit("note: rewrote a corrupt Codex config.toml (previous content did not parse)")
+        kept = ""
+
     text = (kept + "\n\n" + block) if kept else block
+    # Never hand Codex something that will not load: it exits 1 on a bad config,
+    # which fails the whole run rather than just the tool wiring. If merging with
+    # the existing file produced something unparseable, our own block alone is
+    # always valid — keeping the agent runnable matters more than preserving
+    # settings we could not parse anyway.
+    if not valid_toml(text):
+        _emit("note: could not merge into the existing Codex config.toml — "
+              "wrote just the Plutus block so the run can proceed")
+        text = block
+    if not valid_toml(text):
+        raise ValueError("generated Codex config.toml is not valid TOML")
+
     # 0600: the block carries the MCP bearer token.
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

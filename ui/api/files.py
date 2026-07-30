@@ -163,16 +163,131 @@ class FilePathBody(BaseModel):
     path: str = Field(..., min_length=1, max_length=4096)
 
 
-@router.post("/api/v1/files/delete")
-async def api_v1_files_delete(body: FilePathBody):
+class DeleteBody(FilePathBody):
+    # Deleting a folder takes everything in it, so it is never implied — the UI
+    # asks, and the API refuses a non-empty directory without this.
+    recursive: bool = False
+
+
+def _guard_target(path: str) -> str:
+    """An allowed, existing path that is not one of the roots themselves."""
     from core.path_guard import is_within_any
-    if not is_within_any(body.path, _all_roots()):
+    roots = _all_roots()
+    if not is_within_any(path, roots):
         raise HTTPException(403, "Path is outside the allowed directories")
-    ap = os.path.realpath(body.path)
-    if not os.path.isfile(ap):
-        raise HTTPException(400, "Only files can be deleted here")
+    ap = os.path.realpath(path)
+    if any(ap == os.path.realpath(r) for r in roots):
+        raise HTTPException(400, "That is a root folder — it cannot be deleted from here")
+    return ap
+
+
+@router.post("/api/v1/files/delete")
+async def api_v1_files_delete(body: DeleteBody):
+    """Delete a file, or a folder and its contents.
+
+    Folders used to be refused outright ("Only files can be deleted here"), which
+    left the file manager unable to clean up anything an agent had built — a
+    research run that made a folder tree could only be dismantled a file at a time,
+    and the now-empty folders stayed forever.
+    """
+    import shutil
+
+    ap = _guard_target(body.path)
+    if os.path.islink(ap):
+        try:
+            os.unlink(ap)                      # remove the link, never its target
+        except OSError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "deleted": "link"}
+    if os.path.isfile(ap):
+        try:
+            os.remove(ap)
+        except OSError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True, "deleted": "file"}
+    if not os.path.isdir(ap):
+        raise HTTPException(404, "Nothing there")
+
+    if not body.recursive and any(os.scandir(ap)):
+        raise HTTPException(409, "That folder is not empty — confirm to delete its contents")
     try:
-        os.remove(ap)
+        shutil.rmtree(ap) if body.recursive else os.rmdir(ap)
     except OSError as e:
         raise HTTPException(400, str(e))
-    return {"ok": True}
+    return {"ok": True, "deleted": "folder"}
+
+
+class MkdirBody(BaseModel):
+    path: str = Field(..., min_length=1, max_length=4096)   # parent directory
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+def _safe_child(parent: str, name: str) -> str:
+    """A new entry directly inside `parent`, with no traversal in the name."""
+    from core.path_guard import is_within_any
+    clean = os.path.basename(name.strip().replace("\\", "/").rstrip("/"))
+    if not clean or clean in (".", ".."):
+        raise HTTPException(400, "Invalid name")
+    if not is_within_any(parent, _all_roots()) or not os.path.isdir(os.path.realpath(parent)):
+        raise HTTPException(403, "Target folder is outside the allowed directories")
+    target = os.path.realpath(os.path.join(os.path.realpath(parent), clean))
+    if not is_within_any(target, _all_roots()):
+        raise HTTPException(403, "Path is outside the allowed directories")
+    return target
+
+
+@router.post("/api/v1/files/mkdir")
+async def api_v1_files_mkdir(body: MkdirBody):
+    # Rejected rather than normalised. A browser may legitimately send a path as
+    # an upload's filename, so uploads take the basename — but a person typing
+    # "../escape" into a New folder box has made a mistake, and quietly creating
+    # "escape" somewhere else is a worse answer than saying so.
+    raw = body.name.strip()
+    if raw in (".", "..") or "/" in raw or "\\" in raw:
+        raise HTTPException(400, "A folder name cannot contain '/' or '\\'")
+    target = _safe_child(body.path, raw)
+    if os.path.exists(target):
+        raise HTTPException(409, "Already exists")
+    try:
+        os.makedirs(target)
+    except OSError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "path": target}
+
+
+# Uploads are capped because the target can be a mounted share and the body is
+# buffered per chunk into a real file; without a limit a stray multi-GB upload
+# fills whatever volume it lands on.
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+
+
+@router.post("/api/v1/files/upload")
+async def api_v1_files_upload(request: Request):
+    """Upload one or more files into a folder inside the allowed roots."""
+    form = await request.form()
+    parent = str(form.get("path") or "").strip()
+    uploads = [f for f in form.getlist("file") if hasattr(f, "filename")]
+    if not parent:
+        raise HTTPException(400, "No target folder")
+    if not uploads:
+        raise HTTPException(400, "No file uploaded")
+
+    written = []
+    for up in uploads:
+        target = _safe_child(parent, up.filename or "upload")
+        size = 0
+        try:
+            with open(target, "wb") as fh:
+                while chunk := await up.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        fh.close()
+                        os.remove(target)
+                        raise HTTPException(
+                            413, f"'{up.filename}' is larger than "
+                                 f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+                    fh.write(chunk)
+        except OSError as e:
+            raise HTTPException(400, str(e))
+        written.append({"name": os.path.basename(target), "path": target, "size": size})
+    return {"ok": True, "files": written}

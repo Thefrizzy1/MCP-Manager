@@ -281,6 +281,85 @@ def test_tools_off_writes_no_mcp_config_anywhere(tmp_path, spawns, monkeypatch):
     assert not (AP.account_dir(tmp_path, "codex", aid) / "config.toml").exists()
 
 
+def test_repeated_launches_never_duplicate_the_bridge_block(tmp_path):
+    """The live failure: Codex exited 1 with
+
+        Error loading config.toml:7:2: duplicate key
+        7 | ["/app/tools/mcp_stdio_bridge.py"]
+
+    The block was stripped by scanning to the next '[' *character*, which is the
+    one inside `args = [...]` — so each write cut its own block mid-assignment and
+    orphaned the value at the start of a line, where TOML reads it as a table
+    header. Writing must be idempotent, however many times it runs.
+    """
+    import tomllib
+
+    AP.add_account(tmp_path, "codex", "P")
+    aid = AP.load_accounts(tmp_path)["codex"][0]["id"]
+
+    for _ in range(5):
+        path = AR.write_codex_mcp_config(tmp_path, aid, mcp_url="http://x/mcp")
+
+    text = Path(path).read_text(encoding="utf-8")
+    conf = tomllib.loads(text)                       # must parse, every time
+    assert text.count("[mcp_servers.plutus]") == 1
+    assert list(conf["mcp_servers"]) == ["plutus"]
+    assert conf["mcp_servers"]["plutus"]["args"][0].endswith("mcp_stdio_bridge.py")
+
+
+def test_a_config_corrupted_by_the_old_generator_repairs_itself(tmp_path):
+    """Users already have the broken file on disk. Stripping our table cannot fix
+    it — the damage is an orphaned value posing as someone else's table — so an
+    unparseable config is rewritten rather than carried forward forever."""
+    import tomllib
+
+    AP.add_account(tmp_path, "codex", "P")
+    aid = AP.load_accounts(tmp_path)["codex"][0]["id"]
+    conf = AP.account_dir(tmp_path, "codex", aid) / "config.toml"
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text(
+        '["/app/tools/mcp_stdio_bridge.py"]\nenv = { PLUTUS_MCP_URL = "http://a/mcp" }\n\n'
+        '["/app/tools/mcp_stdio_bridge.py"]\nenv = { PLUTUS_MCP_URL = "http://a/mcp" }\n\n'
+        '[mcp_servers.plutus]\ncommand = "python3"\n'
+        'args = ["/app/tools/mcp_stdio_bridge.py"]\n',
+        encoding="utf-8")
+    with pytest.raises(tomllib.TOMLDecodeError):
+        tomllib.loads(conf.read_text(encoding="utf-8"))
+
+    AR.write_codex_mcp_config(tmp_path, aid, mcp_url="http://x/mcp")
+
+    parsed = tomllib.loads(conf.read_text(encoding="utf-8"))
+    assert list(parsed["mcp_servers"]) == ["plutus"]
+
+
+def test_stripping_our_block_keeps_everything_else_verbatim():
+    kept = AR.strip_plutus_block(
+        'model = "gpt-5.1"\n# a comment\n\n'
+        '[mcp_servers.plutus]\ncommand = "old"\nargs = ["a", "b"]\n\n'
+        '[mcp_servers.other]\ncommand = "keep"\n')
+    assert "# a comment" in kept and 'model = "gpt-5.1"' in kept
+    assert "[mcp_servers.other]" in kept and "keep" in kept
+    assert "plutus" not in kept and "old" not in kept
+    # The args value must go with its block, not survive as a stray line.
+    assert '["a", "b"]' not in kept
+
+
+def test_an_unmergeable_config_still_leaves_codex_launchable(tmp_path, monkeypatch):
+    """Codex exits 1 on a config it cannot load. If merging goes wrong, our own
+    block alone is always valid — a run that works beats settings we could not
+    parse in the first place."""
+    import tomllib
+
+    AP.add_account(tmp_path, "codex", "P")
+    aid = AP.load_accounts(tmp_path)["codex"][0]["id"]
+    # Survives the "is the old file corrupt?" check, then poisons the merge.
+    monkeypatch.setattr(AR, "strip_plutus_block", lambda text: 'x = 1\n[bad')
+
+    path = AR.write_codex_mcp_config(tmp_path, aid, mcp_url="http://x/mcp")
+    conf = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    assert list(conf["mcp_servers"]) == ["plutus"]
+
+
 def test_a_windows_path_survives_toml_escaping(tmp_path):
     """Unescaped backslashes become escape sequences and Codex reads a path that
     does not exist."""
