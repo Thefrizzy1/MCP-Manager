@@ -17,6 +17,50 @@ from core.schedule_store import load_schedules
 
 log = logging.getLogger("plutus.scheduler")
 
+# Standard cron numbers the day-of-week field 0=Sunday … 6=Saturday, and that is
+# what every crontab, every online cron helper, and Plutus's own UI mean by it.
+# APScheduler's from_crontab does NOT: it numbers 0=Monday, so a schedule saved
+# as "Friday" (5) fired on Saturday, and "Sunday" (0) fired on Monday. Every
+# weekly schedule in the product was a day late, silently.
+#
+# Naming the days sidesteps the disagreement — APScheduler accepts these, and
+# there is nothing left to misread.
+_CRON_DOW = {"0": "sun", "1": "mon", "2": "tue", "3": "wed",
+             "4": "thu", "5": "fri", "6": "sat", "7": "sun"}
+
+
+def _dow_to_names(field: str) -> str:
+    """Rewrite a standard-cron day-of-week field using day names.
+
+    Handles the shapes a cron field actually takes — ``*``, ``5``, ``1-5``,
+    ``0,6``, ``*/2``, ``1-5/2`` — and leaves alone any names the user typed.
+
+    The step is deliberately not translated. A naive digit swap turns ``*/2``
+    into ``*/tue``, which is not a schedule at all: the number after a slash is
+    "every N", not a day.
+    """
+    def days(part: str) -> str:
+        return "-".join(_CRON_DOW.get(x, x) for x in part.split("-"))
+
+    out = []
+    for item in (field or "").split(","):
+        base, slash, step = item.partition("/")
+        out.append(days(base) + slash + step)
+    return ",".join(out)
+
+
+def cron_trigger(expr: str, timezone: str):
+    """A CronTrigger for a *standard* 5-field cron expression."""
+    from apscheduler.triggers.cron import CronTrigger
+
+    parts = (expr or "").split()
+    if len(parts) != 5:
+        # Let APScheduler raise its own error for anything that is not 5 fields.
+        return CronTrigger.from_crontab(expr, timezone=timezone)
+    minute, hour, day, month, dow = parts
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month,
+                       day_of_week=_dow_to_names(dow), timezone=timezone)
+
 
 class PlutusScheduler:
     def __init__(self, root: Path):
@@ -64,15 +108,13 @@ class PlutusScheduler:
     def reschedule(self) -> None:
         if not self._available or self._sched is None:
             return
-        from apscheduler.triggers.cron import CronTrigger
-
         for job in list(self._sched.get_jobs()):
             job.remove()
         for sc in load_schedules(self.root):
             if not sc.get("enabled"):
                 continue
             try:
-                trigger = CronTrigger.from_crontab(sc["cron"], timezone=sc.get("timezone") or "UTC")
+                trigger = cron_trigger(sc["cron"], sc.get("timezone") or "UTC")
             except Exception as e:
                 log.warning("Skipping schedule %s — bad cron/timezone: %s", sc.get("id"), e)
                 continue
@@ -87,6 +129,9 @@ class PlutusScheduler:
         name = sc.get("name") or sc.get("id")
 
         def _job() -> None:
+            from core.schedule_store import record_run
+
+            sid = sc.get("id") or ""
             try:
                 if kind == "agent" and self._run_agent:
                     # `permission` in older stored payloads is ignored: the
@@ -104,8 +149,17 @@ class PlutusScheduler:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:
                     self._run_tool(payload.get("tool", ""), payload.get("params", {}))
+                else:
+                    record_run(self.root, sid, "error",
+                               f"nothing wired to run a '{kind}' schedule")
+                    return
+                # "queued", not "ok": an agent schedule hands off to the run queue
+                # and returns immediately, so this records that the schedule fired
+                # — the run's own outcome lands in the agent run history.
+                record_run(self.root, sid, "queued" if kind != "tool" else "ok")
             except Exception as e:
                 log.warning("Scheduled job %s failed: %s", sc.get("id"), e)
+                record_run(self.root, sid, "error", str(e))
 
         return _job
 

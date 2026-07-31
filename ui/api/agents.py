@@ -273,7 +273,10 @@ def _schedule_view() -> dict:
     items = schedule_store.load_schedules(ROOT)
     nexts = agent_scheduler.next_run_times()
     for it in items:
+        # None here means the scheduler has no job for this entry — disabled, or
+        # a cron it refused. Either way the UI should not imply it will fire.
         it["next_run"] = nexts.get(it["id"])
+        it["scheduled"] = it["id"] in nexts
     return {"schedules": items, "scheduler_available": agent_scheduler.available}
 
 

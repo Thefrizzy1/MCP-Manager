@@ -69,3 +69,75 @@ def test_dispatch_swallows_runner_errors():
     # A failing run must not propagate out of the scheduled job.
     sched._make_job({"id": "s3", "kind": "agent", "name": "x",
                      "payload": {"prompt": "p"}})()
+
+
+# ── the day of the week a weekly schedule actually fires ─────────────────────
+
+def test_cron_day_of_week_follows_standard_cron_not_apschedulers():
+    """The bug this exists for: APScheduler's from_crontab numbers the
+    day-of-week field 0=Monday, while standard cron — and every crontab, every
+    online helper, and Plutus's own UI — means 0=Sunday.
+
+    So a schedule saved as "Friday" (5) fired on Saturday and "Sunday" (0) fired
+    on Monday. Every weekly schedule was a day late, and nothing said so: the run
+    simply did not happen when the user expected it.
+    """
+    import calendar
+    from datetime import datetime
+
+    from core.scheduler import cron_trigger
+
+    base = datetime(2026, 7, 31, 8, 0)          # a Friday, after the fire time
+    expected = ["Sunday", "Monday", "Tuesday", "Wednesday",
+                "Thursday", "Friday", "Saturday"]
+    for dow, want in enumerate(expected):
+        trigger = cron_trigger(f"0 7 * * {dow}", "UTC")
+        nxt = trigger.get_next_fire_time(None, base.replace(tzinfo=trigger.timezone))
+        assert calendar.day_name[nxt.weekday()] == want, f"cron dow={dow}"
+
+
+def test_seven_is_sunday_too():
+    """Standard cron accepts both 0 and 7 for Sunday."""
+    import calendar
+    from datetime import datetime
+
+    from core.scheduler import cron_trigger
+
+    trigger = cron_trigger("0 7 * * 7", "UTC")
+    nxt = trigger.get_next_fire_time(
+        None, datetime(2026, 7, 31, 8, 0, tzinfo=trigger.timezone))
+    assert calendar.day_name[nxt.weekday()] == "Sunday"
+
+
+def test_ranges_lists_and_steps_survive_the_rewrite():
+    """A hand-typed cron is a supported input, so the translation has to handle
+    the punctuation rather than only bare numbers."""
+    from core.scheduler import _dow_to_names
+
+    assert _dow_to_names("*") == "*"
+    assert _dow_to_names("1-5") == "mon-fri"
+    assert _dow_to_names("0,6") == "sun,sat"
+    assert _dow_to_names("*/2") == "*/2", "a step is every-N, not a day"
+    assert _dow_to_names("1-5/2") == "mon-fri/2"
+    # Names the user already typed are left alone.
+    assert _dow_to_names("mon-fri") == "mon-fri"
+
+
+def test_the_other_fields_are_untouched():
+    from core.scheduler import cron_trigger
+
+    trigger = cron_trigger("30 6 1 * *", "UTC")
+    fields = {f.name: str(f) for f in trigger.fields}
+    assert fields["minute"] == "30" and fields["hour"] == "6"
+    assert fields["day"] == "1" and fields["day_of_week"] == "*"
+
+
+def test_a_malformed_expression_still_raises():
+    """Silently accepting nonsense would mean a schedule that never fires."""
+    import pytest
+
+    from core.scheduler import cron_trigger
+
+    with pytest.raises(Exception):
+        cron_trigger("not a cron", "UTC")
+

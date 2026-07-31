@@ -263,6 +263,26 @@ def _maybe_notify_agent(rec: dict) -> None:
         log.warning("agent ntfy failed: %s", exc)
 
 
+def _record_skipped_run(label: str, cap: int) -> None:
+    """Leave a visible trace when the daily cap swallows a scheduled run."""
+    import datetime
+    import uuid as _uuid
+
+    now = datetime.datetime.now().astimezone()
+    try:
+        agent_runner.save_run(ROOT, {
+            "id": now.strftime("%Y%m%d-%H%M%S") + "-" + _uuid.uuid4().hex[:4],
+            "label": label, "prompt": "", "started": now.isoformat(),
+            "finished": now.isoformat(), "ok": False, "cost_usd": 0.0,
+            "skipped": True, "result": "",
+            "error": f"Skipped: the daily cap of {cap} runs is already used. "
+                     "Raise it in Settings → Agent, or wait for tomorrow.",
+            "log": [],
+        })
+    except Exception as exc:
+        log.warning("could not record a skipped run: %s", exc)
+
+
 _agent_queue: "queue.Queue" = queue.Queue(maxsize=6)
 
 
@@ -274,7 +294,13 @@ def _agent_queue_worker() -> None:
             acfg = agent_runner.load_agent_config(ROOT)
             cap = int(acfg.get("max_runs_per_day", 20) or 0)
             if cap and not job.get("force") and agent_runner.runs_today(ROOT) >= cap:
-                log.info("Agent daily run cap (%s) reached — skipping scheduled '%s'", cap, job.get("label"))
+                # Recorded, not just logged. A scheduled run that vanishes because
+                # of the cap is indistinguishable from a scheduler that never
+                # fired — and the log is inside the container, where the person
+                # wondering "did my job run?" is not looking.
+                log.info("Agent daily run cap (%s) reached — skipping scheduled '%s'",
+                         cap, job.get("label"))
+                _record_skipped_run(job.get("label", "agent"), cap)
                 continue
             url, token = _agent_mcp_target()
             rec = agent_runner.run_agent(

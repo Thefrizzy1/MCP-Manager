@@ -83,8 +83,34 @@ def _normalize(entry: dict) -> dict:
         "timezone": (entry.get("timezone") or "Europe/Berlin").strip(),
         "enabled": bool(entry.get("enabled", True)),
         "created": entry.get("created") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # What happened the last time this fired. Without it a schedule that never
+        # ran and one that ran and failed look identical in the UI — which is
+        # exactly the position a user is in when they ask "did that job run?".
+        "last_run": entry.get("last_run") or "",
+        "last_status": entry.get("last_status") or "",
+        "last_detail": (entry.get("last_detail") or "")[:300],
         "payload": payload,
     }
+
+
+def record_run(root: Path, sid: str, status: str, detail: str = "") -> None:
+    """Stamp a schedule with the outcome of a firing. Never raises.
+
+    Called from the scheduler thread, so a failure to write must not take the job
+    down with it — the run mattering more than the bookkeeping.
+    """
+    try:
+        items = load_schedules(root)
+        for i, it in enumerate(items):
+            if it.get("id") == sid:
+                items[i] = {**it,
+                            "last_run": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                            "last_status": status,
+                            "last_detail": (detail or "")[:300]}
+                save_schedules(root, items)
+                return
+    except Exception:
+        pass
 
 
 def add_schedule(root: Path, entry: dict) -> dict:

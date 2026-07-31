@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock, RotateCw } from 'lucide-react'
+import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock, RotateCw, Pencil } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import type { Service } from '@/lib/health'
@@ -55,6 +55,10 @@ interface Schedule {
   timezone?: string
   enabled: boolean
   next_run?: string | null
+  scheduled?: boolean
+  last_run?: string
+  last_status?: string
+  last_detail?: string
   payload?: Record<string, unknown>
 }
 
@@ -312,46 +316,12 @@ export function Agents() {
                 (schedules.data?.schedules ?? [])
                   .filter((x) => x.kind === 'agent' || x.kind === 'task')
                   .map((sc) => (
-                    <div key={sc.id} className="flex flex-wrap items-center gap-2 border-b border-border px-2 py-2 last:border-0">
-                      <StatusDot state={sc.enabled ? 'online' : 'disabled'} />
-                      <strong className="text-[13px] text-ink">{sc.name}</strong>
-                      <code className="font-mono text-[11.5px] text-ink-3">{sc.cron}</code>
-                      <span className="text-[11.5px] text-ink-3">
-                        next {sc.next_run ? sc.next_run.replace('T', ' ').slice(0, 16) : '—'}
-                      </span>
-                      <div className="ml-auto flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          aria-label={sc.enabled ? 'Pause schedule' : 'Resume schedule'}
-                          onClick={async () => {
-                            await api.post(`/api/v1/schedules/${sc.id}`, { ...sc, enabled: !sc.enabled })
-                            schedules.refetch()
-                          }}
-                        >
-                          {sc.enabled ? <Pause size={13} /> : <Play size={13} />}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => api.post(`/api/v1/schedules/${sc.id}/run-now`).then(() => startStream())}
-                        >
-                          Run
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="icon-sm"
-                          aria-label="Delete schedule"
-                          onClick={async () => {
-                            if (!confirm('Delete schedule?')) return
-                            await api.del(`/api/v1/schedules/${sc.id}`)
-                            schedules.refetch()
-                          }}
-                        >
-                          <Trash2 size={13} />
-                        </Button>
-                      </div>
-                    </div>
+                    <ScheduleRow
+                      key={sc.id}
+                      sc={sc}
+                      onChanged={() => schedules.refetch()}
+                      onRan={startStream}
+                    />
                   ))
               )}
             </div>
@@ -369,6 +339,143 @@ export function Agents() {
       </PageBody>
       {openRun && <RunTranscriptModal runId={openRun} onClose={() => setOpenRun(null)} />}
     </>
+  )
+}
+
+/** One scheduled job: what it does, when it last fired, and how to change it.
+ *
+ *  "Did that job run?" used to be unanswerable from here — a schedule that had
+ *  never fired looked exactly like one that fired and failed. The row now carries
+ *  the last outcome, and the cron is editable in place rather than only by
+ *  deleting the schedule and building it again in the wizard.
+ */
+function ScheduleRow({
+  sc,
+  onChanged,
+  onRan,
+}: {
+  sc: Schedule
+  onChanged: () => void
+  onRan: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(sc.name)
+  const [cron, setCron] = useState(sc.cron)
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+
+  async function save() {
+    setBusy(true)
+    try {
+      await api.post(`/api/v1/schedules/${sc.id}`, { ...sc, name, cron })
+      setEditing(false)
+      onChanged()
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const status = sc.last_status
+  const tone =
+    status === 'error' ? 'text-danger' : status === 'queued' || status === 'ok' ? 'text-ok' : 'text-ink-3'
+
+  return (
+    <div className="border-b border-border px-2 py-2 last:border-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusDot state={sc.enabled ? 'online' : 'disabled'} />
+        <strong className="text-[13px] text-ink">{sc.name}</strong>
+        <code className="font-mono text-[11.5px] text-ink-3">{sc.cron}</code>
+        <span className="text-[11.5px] text-ink-3">
+          next {sc.next_run ? sc.next_run.replace('T', ' ').slice(0, 16) : '—'}
+        </span>
+        {sc.enabled && sc.scheduled === false && (
+          <span className="text-[11.5px] text-danger">not scheduled — check the cron</span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>
+            <Pencil size={13} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={sc.enabled ? 'Pause schedule' : 'Resume schedule'}
+            onClick={async () => {
+              await api.post(`/api/v1/schedules/${sc.id}`, { ...sc, enabled: !sc.enabled })
+              onChanged()
+            }}
+          >
+            {sc.enabled ? <Pause size={13} /> : <Play size={13} />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Run this now, without waiting for the schedule"
+            onClick={() =>
+              api
+                .post(`/api/v1/schedules/${sc.id}/run-now`)
+                .then(() => {
+                  onRan()
+                  setTimeout(onChanged, 1500)
+                })
+                .catch((e) => toast.error(String(e)))
+            }
+          >
+            Run now
+          </Button>
+          <Button
+            variant="danger"
+            size="icon-sm"
+            aria-label="Delete schedule"
+            onClick={async () => {
+              if (!confirm('Delete schedule?')) return
+              await api.del(`/api/v1/schedules/${sc.id}`)
+              onChanged()
+            }}
+          >
+            <Trash2 size={13} />
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px]">
+        <span className={tone}>
+          {sc.last_run
+            ? `last ${sc.last_run.replace('T', ' ').slice(0, 16)} — ${status || 'ran'}`
+            : 'has not run yet'}
+        </span>
+        {sc.last_detail && <span className="text-ink-3">{sc.last_detail}</span>}
+      </div>
+
+      {editing && (
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <Field label="Name">
+            <Input className="max-w-[200px]" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field
+            label="Cron"
+            hint="min hour day month weekday · weekday 0=Sunday, e.g. 0 7 * * 5 is Friday 07:00"
+          >
+            <Input className="max-w-[180px]" value={cron} onChange={(e) => setCron(e.target.value)} />
+          </Field>
+          <Button variant="primary" size="sm" disabled={busy} onClick={save}>
+            Save
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setName(sc.name)
+              setCron(sc.cron)
+              setEditing(false)
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }
 
