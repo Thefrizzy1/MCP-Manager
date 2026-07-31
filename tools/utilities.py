@@ -19,6 +19,37 @@ from client import TIMEOUT, _handle_error
 _DATA = Path(__file__).resolve().parents[1] / "data"
 _WEATHER_PREF = _DATA / "weather_location.txt"
 
+# Below this, an HTML page almost certainly rendered its content in the browser
+# rather than serving it — a nav bar and a footer strip to roughly this much.
+_THIN_PAGE_CHARS = 250
+
+
+async def _render_with_firecrawl(url: str, max_chars: int) -> str:
+    """web_fetch's fallback for a page that turned out to be an empty shell.
+
+    Returns "" when Firecrawl is not configured or cannot help, so the caller
+    keeps whatever it already had. Never raises: a failed upgrade must not turn a
+    thin answer into no answer.
+    """
+    try:
+        from tools.scrape import firecrawl_configured
+        if not firecrawl_configured():
+            return ""
+        from tools.scrape import _call, _clip, _page_markdown
+
+        body = await _call("POST", "/v2/scrape",
+                           {"url": url, "formats": ["markdown"],
+                            "onlyMainContent": True}, timeout=90.0)
+        doc = body.get("data") if isinstance(body.get("data"), dict) else body
+        _title, _src, markdown = _page_markdown(doc)
+        if not markdown.strip():
+            return ""
+        return (f"## Content from {url}\n\n_Rendered with Firecrawl — the page "
+                f"builds its content in the browser._\n\n{_clip(markdown, max_chars)}")
+    except Exception:
+        return ""
+
+
 # web_fetch follows redirects manually so the SSRF guard can screen every hop.
 _MAX_REDIRECTS = 5
 
@@ -403,6 +434,16 @@ def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 text = re.sub(r'<[^>]+>', ' ', text)
                 text = _html.unescape(text)
                 text = re.sub(r'\s+', ' ', text).strip()
+
+                # A page that renders its content in the browser leaves almost
+                # nothing in the HTML, so stripping tags finds a nav bar and a
+                # footer. That is not an error — it is a silently useless answer,
+                # which is worse. When Firecrawl is configured, let it render the
+                # page properly rather than handing back the shell.
+                if len(text) < _THIN_PAGE_CHARS and "html" in content_type:
+                    rendered = await _render_with_firecrawl(url, params.max_chars)
+                    if rendered:
+                        return rendered
                 text = text[:params.max_chars]
 
             return f"## Content from {url}\n\n{text}"

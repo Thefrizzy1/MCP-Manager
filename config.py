@@ -182,6 +182,12 @@ class Config(BaseModel):
     reddit_username: str = _get("REDDIT_USERNAME")
     reddit_password: str = _get("REDDIT_PASSWORD")
 
+    # Firecrawl — renders JavaScript and returns Markdown, which is the gap
+    # web_fetch cannot close. FIRECRAWL_API_URL points at a self-hosted instance;
+    # left empty it is Firecrawl's own API.
+    firecrawl_api_key: str = _get("FIRECRAWL_API_KEY")
+    firecrawl_api_url: str = _get("FIRECRAWL_API_URL")
+
     hf_token: str = _get("HF_TOKEN")
     github_token: str = _get("GITHUB_TOKEN")
     gitlab_url: str = _get("GITLAB_URL", "https://gitlab.com")
