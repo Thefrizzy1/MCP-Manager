@@ -23,6 +23,20 @@ export function ConnectionPicker({
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
+  // While the panel is open, the ticks you can see are yours.
+  //
+  // On the Rooms page this list is server state: each click POSTs and the answer
+  // arrives a moment later, and a background refetch polls every few seconds. So
+  // a tick could be overwritten by a response that was already in flight when you
+  // clicked — you deselect something, it comes back, and you have to do it again.
+  // Holding a local view while open makes each click stick immediately; the panel
+  // re-syncs from the parent the moment it closes.
+  const [draft, setDraft] = useState(selected)
+  useEffect(() => {
+    if (!open) setDraft(selected)
+  }, [open, selected])
+  const view = open ? draft : selected
+
   useEffect(() => {
     if (!open) return
     function onDown(e: MouseEvent) {
@@ -40,12 +54,17 @@ export function ConnectionPicker({
   }, [open])
 
   const total = connections.length
-  const count = connections.filter((c) => selected[c.id]).length
+  const count = connections.filter((c) => view[c.id]).length
   const needle = q.trim().toLowerCase()
   const filtered = needle ? connections.filter((c) => c.label.toLowerCase().includes(needle)) : connections
 
-  const setAll = (val: boolean) => onChange(Object.fromEntries(connections.map((c) => [c.id, val])))
-  const toggle = (id: string) => onChange({ ...selected, [id]: !selected[id] })
+  function emit(next: Record<string, boolean>) {
+    setDraft(next)
+    onChange(next)
+  }
+
+  const setAll = (val: boolean) => emit(Object.fromEntries(connections.map((c) => [c.id, val])))
+  const toggle = (id: string) => emit({ ...view, [id]: !view[id] })
 
   const label =
     count === 0 ? 'None selected' : count === total ? `All ${total} selected` : `${count} of ${total} selected`
@@ -99,7 +118,7 @@ export function ConnectionPicker({
               <p className="px-3 py-2 text-[12px] text-ink-3">No matches.</p>
             ) : (
               filtered.map((c, i) => {
-                const on = !!selected[c.id]
+                const on = !!view[c.id]
                 // The list arrives self-hosted-first; mark where the public
                 // (internet-facing) ones begin so ticking one is a deliberate act.
                 const pub = isPublic(c)

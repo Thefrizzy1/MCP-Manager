@@ -111,7 +111,9 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
         "pub_nationalize_name", "pub_github_zen",
     ],
     "crypto":        ["pub_coingecko_price", "pub_binance_ticker", "pub_coincap_assets", "pub_blockchain_btc_ticker", "pub_er_api_latest"],
-    "meta":          ["plutus_tool_slicer", "test_all_tools"],
+    # agent_* is delegation: a coordinator handing work to cheap workers.
+    # Meta rather than a domain — it is about *how* work gets done, not what.
+    "meta":          ["plutus_tool_slicer", "test_all_tools", "agent_"],
 }
 
 # Curated multi-category presets so users don't have to memorize the granular list.
