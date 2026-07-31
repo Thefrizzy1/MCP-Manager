@@ -199,6 +199,7 @@ TOOL_SAFETY_LEVELS: dict[str, int] = {
     "github_set_issue_state": 2,
     "github_create_branch": 2,
     "github_create_pull": 2,
+    "github_create_repo": 2,
 }
 
 

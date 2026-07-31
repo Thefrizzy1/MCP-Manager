@@ -39,6 +39,18 @@ async def api_providers():
             "guided_login_available": provider_login.available()}
 
 
+@router.get("/api/v1/providers/{pid}/accounts/{aid}/usage")
+async def api_account_usage(pid: str, aid: str):
+    """Spend and limits for one account, where the provider publishes them.
+
+    Several of these are free plans, so "how much is left" is the question that
+    actually gets asked — and a provider with no usage API says so plainly rather
+    than showing a blank panel that looks broken.
+    """
+    _known_account(pid, aid)
+    return await asyncio.to_thread(ai_providers.account_usage, ROOT, pid, aid)
+
+
 @router.get("/api/v1/providers/{pid}/models")
 async def api_provider_models(pid: str, account_id: str = ""):
     """The models this provider — and, where it can be asked, this *account* — offers.
@@ -112,8 +124,9 @@ async def api_test_account(pid: str, aid: str, with_mcp: bool = False):
     if with_mcp:
         from ui.runtime import _agent_mcp_target
         url, token = _agent_mcp_target()
-        # Claude's check runs through --mcp-config; the others end at the same
-        # endpoint by a different road, so they get the url instead of a file.
+        # Claude's check runs through --mcp-config; Codex's goes through the
+        # bridge its config.toml registers (written by the check itself), so the
+        # others get the url instead of a file.
         if pid == "claude":
             mcp_path = agent_runner.write_plutus_mcp_config(ROOT, mcp_url=url, token=token)
     res = await asyncio.to_thread(

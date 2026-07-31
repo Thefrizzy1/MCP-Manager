@@ -170,6 +170,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "token_cmd": ("claude", "setup-token"),
         "token_env": "CLAUDE_CODE_OAUTH_TOKEN",
         "key_hint": "Session token from `claude setup-token`",
+        "usage_note": ("Anthropic does not publish plan usage through an API. "
+                       "Run `/usage` inside Claude Code, or see the Console."),
         "exec": _claude_exec,
         "test_model": "haiku",
         "role": ROLE_GENERAL,
@@ -191,6 +193,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "login_cmd": ("codex",),
         "token_cmd": None,
         "token_env": None,
+        "usage_note": ("OpenAI does not publish ChatGPT plan usage through an API. "
+                       "Codex prints what it used at the end of each run."),
         "exec": _codex_exec,
         "test_model": "",           # use whatever the account defaults to
         "role": ROLE_CODING,
@@ -213,6 +217,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "token_cmd": None,
         "token_env": "GEMINI_API_KEY",
         "key_hint": "Free key from https://aistudio.google.com/apikey",
+        "usage_note": ("Google does not publish free-tier quota through the API. "
+                       "Check https://aistudio.google.com for the current limits."),
         "api_base": "https://generativelanguage.googleapis.com/v1beta",
         "dialect": "gemini",
         "exec": None,
@@ -1022,6 +1028,77 @@ def model_capabilities(root: Path, provider: str, account_id: str, model: str) -
     return dict(_caps_cache.get(ck, {}).get(model) or {})
 
 
+# ── usage and limits ─────────────────────────────────────────────────────────
+#
+# "How much of my free tier is left" is the question a homelab running several
+# free plans actually has. Only some providers answer it, and pretending
+# otherwise would be worse than silence — so each one either reports real numbers
+# or says plainly that its API does not publish them.
+
+def _money(value, digits: int = 3) -> str:
+    try:
+        return f"${float(value):.{digits}f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _openrouter_usage(root: Path, provider: str, account_id: str) -> dict:
+    """OpenRouter publishes spend, limit and rate limit for the key itself."""
+    key = stored_token(root, provider, account_id)
+    if not key:
+        return {"ok": False, "items": [], "error": "no API key stored"}
+    spec = _spec(provider)
+    res = _http("GET", f"{spec['api_base']}/key", key, timeout=20,
+                headers=api_headers(root, provider, key))
+    if res["error"]:
+        return {"ok": False, "items": [], "error": _explain_api(res)}
+    d = (res["json"] or {}).get("data") or {}
+    used = d.get("usage")
+    limit = d.get("limit")
+    items = [{"label": "Spent", "value": _money(used)}]
+    if limit is None:
+        items.append({"label": "Credit limit", "value": "unlimited",
+                      "hint": "pay-as-you-go — no cap set on this key"})
+    else:
+        remaining = d.get("limit_remaining")
+        if remaining is None:
+            try:
+                remaining = float(limit) - float(used or 0)
+            except (TypeError, ValueError):
+                remaining = None
+        items.append({"label": "Remaining", "value": _money(remaining),
+                      "hint": f"of {_money(limit)}"})
+    if d.get("is_free_tier") is not None:
+        items.append({"label": "Tier", "value": "free" if d["is_free_tier"] else "paid"})
+    rl = d.get("rate_limit") or {}
+    if rl.get("requests"):
+        items.append({"label": "Rate limit",
+                      "value": f"{rl['requests']}/{rl.get('interval', '?')}"})
+    return {"ok": True, "items": items, "error": ""}
+
+
+# Attached here rather than in the registry literal: the function is defined
+# below it, and a forward reference in a module-level dict is a NameError.
+PROVIDERS["openrouter"]["usage"] = _openrouter_usage
+
+
+def account_usage(root: Path, provider: str, account_id: str) -> dict:
+    """{"ok", "items": [{label, value, hint}], "error", "supported"}.
+
+    ``supported`` false means the provider has no usage API at all — a different
+    thing from a call that failed, and the UI says so differently.
+    """
+    spec = _spec(provider)
+    fn = spec.get("usage")
+    if not fn:
+        return {"ok": False, "supported": False, "items": [],
+                "error": spec.get("usage_note") or
+                f"{spec['label']} does not publish usage through its API."}
+    out = fn(root, provider, account_id)
+    out["supported"] = True
+    return out
+
+
 def _identity_headers(spec: dict) -> dict[str, str]:
     """Who is calling. OpenRouter shows this on the account's activity page.
 
@@ -1190,14 +1267,48 @@ def capability_test(root: Path, provider: str, account_id: str, *,
         got = sentinel in mran["out"] and "NO_MCP" not in mran["out"]
         checks.append(_check("MCP tools reachable", got,
                              mran["out"][:200] if mran["out"] else _explain(mran, sentinel)))
+    elif mcp_url and provider == "codex":
+        # Codex reaches the same endpoint through a stdio bridge registered in
+        # its config.toml. Three things can break independently — the endpoint,
+        # the config, and whether Codex actually loads it — so each is reported
+        # separately. "Codex has no tools" was previously one opaque symptom
+        # with no way to tell which of the three had gone wrong.
+        checks.append(_mcp_check(mcp_url, mcp_token, "the stdio bridge points here"))
+        if checks[-1]["ok"]:
+            checks.append(_codex_bridge_check(root, account_id, mcp_url, mcp_token))
+        if checks[-1]["ok"]:
+            mcp_prompt = ("Call any one tool from the 'plutus' MCP server, then reply "
+                          f"with the tool's name and the word {sentinel}. If you have "
+                          "no MCP tools at all, reply NO_MCP.")
+            mran = _run_cli([cli["path"], *build(mcp_prompt, chosen)], env, timeout)
+            got = sentinel in mran["out"] and "NO_MCP" not in mran["out"]
+            checks.append(_check(
+                "Codex can call them", got,
+                mran["out"][-300:] if mran["out"] else _explain(mran, sentinel)))
     elif mcp_url:
-        # Codex reaches the same endpoint through the stdio bridge. Prompting the
-        # CLI to prove it would cost a full agent turn per Test press, so check
-        # the endpoint the bridge will use — and say that is what was checked.
-        checks.append(_mcp_check(mcp_url, mcp_token,
-                                 "the stdio bridge points here (docs/AGENTS.md §2b)"))
+        checks.append(_mcp_check(mcp_url, mcp_token, "reachable for this account"))
 
     return {"ok": all(c["ok"] for c in checks), "checks": checks}
+
+
+def _codex_bridge_check(root: Path, account_id: str, mcp_url: str, token: str) -> dict:
+    """Is the bridge actually registered in this account's Codex config?
+
+    Written fresh here rather than trusting a previous run's file: the config is
+    rewritten before every agent launch, so testing a stale one would report on
+    something no future run will use.
+    """
+    from core.agent_runner import MCP_BRIDGE, write_codex_mcp_config
+
+    if not MCP_BRIDGE.is_file():
+        return _check("Bridge registered in config.toml", False,
+                      f"the bridge script is missing at {MCP_BRIDGE}")
+    try:
+        path = write_codex_mcp_config(root, account_id, mcp_url=mcp_url, token=token)
+    except Exception as e:
+        return _check("Bridge registered in config.toml", False, str(e))
+    return _check("Bridge registered in config.toml", True,
+                  f"{path} → {MCP_BRIDGE.name}")
 
 
 def _mcp_check(mcp_url: str, token: str, how: str) -> dict:

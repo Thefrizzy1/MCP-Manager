@@ -390,6 +390,7 @@ SERVICES: list[dict] = [
             {"name":"github_comment","label":"Comment (token)","params":[("repo","owner/repo","text"),("number","Issue/PR number","number"),("body","Comment","text")]},
             {"name":"github_set_issue_state","label":"Close/reopen issue (token)","params":[("repo","owner/repo","text"),("number","Issue number","number"),("state","closed|open","text")]},
             {"name":"github_create_branch","label":"Create branch (token)","params":[("repo","owner/repo","text"),("name","New branch","text"),("base","From branch","text")]},
+            {"name":"github_create_repo","label":"Create repo (token)","params":[("name","Repository name","text"),("description","Description","text"),("private","Private (true/false)","text"),("org","Organisation (optional)","text")]},
             {"name":"github_create_pull","label":"Open pull request (token)","params":[("repo","owner/repo","text"),("title","Title","text"),("head","From branch","text"),("base","Into branch","text"),("body","Description","text")]}]},
 
   {"id":"gitlab","label":"GitLab","icon":"🦊","tag":"dev","section":"public",

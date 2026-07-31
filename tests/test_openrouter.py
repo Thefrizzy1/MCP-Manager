@@ -292,3 +292,68 @@ def test_an_openrouter_error_is_explained(tmp_path, http):
                             "error": "Insufficient credits"}
     res = AP.api_generate(tmp_path, "openrouter", aid, "hi")
     assert res["ok"] is False and "Insufficient credits" in res["error"]
+
+
+# ── usage and limits ─────────────────────────────────────────────────────────
+#
+# A homelab running several free plans wants to know how much is left. Only some
+# providers publish it; the ones that do not have to say so, because a blank
+# panel reads as broken rather than as "not available".
+
+def test_usage_reports_spend_and_headroom(tmp_path, monkeypatch):
+    aid = _linked(tmp_path)
+    monkeypatch.setattr(AP, "_http", lambda *a, **k: {"code": 200, "error": "", "json": {
+        "data": {"usage": 0.4231, "limit": 5.0, "limit_remaining": 4.5769,
+                 "is_free_tier": False,
+                 "rate_limit": {"requests": 200, "interval": "10s"}}}})
+
+    res = AP.account_usage(tmp_path, "openrouter", aid)
+    assert res["ok"] is True and res["supported"] is True
+    items = {i["label"]: i for i in res["items"]}
+    assert items["Spent"]["value"] == "$0.423"
+    assert items["Remaining"]["value"] == "$4.577" and items["Remaining"]["hint"] == "of $5"
+    assert items["Tier"]["value"] == "paid"
+    assert items["Rate limit"]["value"] == "200/10s"
+
+
+def test_a_key_with_no_cap_says_unlimited_not_zero(tmp_path, monkeypatch):
+    """limit: null means pay-as-you-go. Rendering that as $0 remaining would read
+    as an account that cannot spend anything."""
+    aid = _linked(tmp_path)
+    monkeypatch.setattr(AP, "_http", lambda *a, **k: {"code": 200, "error": "", "json": {
+        "data": {"usage": 1.5, "limit": None}}})
+
+    items = {i["label"]: i for i in AP.account_usage(tmp_path, "openrouter", aid)["items"]}
+    assert items["Credit limit"]["value"] == "unlimited"
+    assert "Remaining" not in items
+
+
+def test_remaining_is_derived_when_the_api_omits_it(tmp_path, monkeypatch):
+    aid = _linked(tmp_path)
+    monkeypatch.setattr(AP, "_http", lambda *a, **k: {"code": 200, "error": "", "json": {
+        "data": {"usage": 2.0, "limit": 10.0}}})
+    items = {i["label"]: i for i in AP.account_usage(tmp_path, "openrouter", aid)["items"]}
+    assert items["Remaining"]["value"] == "$8"
+
+
+def test_usage_needs_a_key(tmp_path):
+    acct = AP.add_account(tmp_path, "openrouter", "Personal")
+    res = AP.account_usage(tmp_path, "openrouter", acct["id"])
+    assert res["ok"] is False and "no API key" in res["error"]
+
+
+def test_a_rejected_key_is_explained_here_too(tmp_path, monkeypatch):
+    aid = _linked(tmp_path)
+    monkeypatch.setattr(AP, "_http", lambda *a, **k: {
+        "code": 401, "json": {}, "error": "Invalid API key"})
+    res = AP.account_usage(tmp_path, "openrouter", aid)
+    assert res["ok"] is False and "paste a fresh one" in res["error"]
+
+
+def test_providers_without_a_usage_api_say_why(tmp_path):
+    """Silence would look like a bug; a wrong number would be worse."""
+    for pid in ("claude", "codex", "gemini"):
+        acct = AP.add_account(tmp_path, pid, "X")
+        res = AP.account_usage(tmp_path, pid, acct["id"])
+        assert res["supported"] is False, pid
+        assert "does not publish" in res["error"], pid

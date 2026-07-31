@@ -602,6 +602,47 @@ def register_github_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return _explain(e, params.repo)
         return f"✓ Created branch `{params.name}` in {repo} from `{base}` (`{sha[:7]}`)"
 
+    class CreateRepoInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        name: str = Field(..., description="Repository name", min_length=1, max_length=100)
+        description: str = Field(default="", max_length=350)
+        private: bool = Field(default=True, description="Private (the safer default)")
+        org: str = Field(default="", description="Create under this organisation instead of your account")
+        auto_init: bool = Field(
+            default=True,
+            description="Start with a README so the repo has a default branch")
+
+    @mcp.tool(name="github_create_repo",
+              annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def github_create_repo(params: CreateRepoInput) -> str:
+        """Create a repository, on the account or one of its organisations.
+
+        Private by default: a repo created by an agent should not be public
+        because nobody said otherwise.
+
+        `auto_init` matters more than it looks — an empty repo has no default
+        branch, so committing a file or opening a pull request against it fails
+        until something is in it.
+        """
+        if not github_authenticated():
+            return NEEDS_TOKEN
+        path = f"/orgs/{params.org.strip('/')}/repos" if params.org else "/user/repos"
+        try:
+            data = await _request("POST", path, json={
+                "name": params.name, "description": params.description,
+                "private": params.private, "auto_init": params.auto_init})
+        except Exception as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 422:
+                return (f"Error: GitHub refused to create '{params.name}' (422) — "
+                        "the name is already taken, or invalid.")
+            return _explain(e, params.org or "your account")
+        r = data or {}
+        return (f"✓ Created {'private' if r.get('private') else 'public'} repository "
+                f"**{r.get('full_name', params.name)}**\n\n"
+                f"- Default branch: `{r.get('default_branch') or '(none — repo is empty)'}`\n"
+                f"- {r.get('html_url', '')}\n"
+                f"- Clone: `{r.get('clone_url', '')}`")
+
     class PullInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         repo: str = Field(..., description="owner/repo", min_length=3, max_length=140)

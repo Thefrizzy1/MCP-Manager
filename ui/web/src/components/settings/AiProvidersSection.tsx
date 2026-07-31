@@ -12,6 +12,42 @@ interface Check {
   ok: boolean
   detail: string
 }
+interface UsageItem {
+  label: string
+  value: string
+  hint?: string
+}
+interface Usage {
+  ok: boolean
+  supported: boolean
+  items: UsageItem[]
+  error?: string
+}
+
+/** Spend and limits for one account.
+ *
+ *  Most of these are free plans, so "how much is left" is the question that gets
+ *  asked. Only some providers answer it; the ones that do not say why, because a
+ *  blank panel reads as broken rather than as "not published". */
+function UsagePanel({ usage }: { usage: Usage }) {
+  if (!usage.supported) {
+    return <p className="mt-1.5 text-[11.5px] text-ink-3">{usage.error}</p>
+  }
+  if (!usage.ok) {
+    return <p className="mt-1.5 text-[11.5px] text-danger">{usage.error}</p>
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+      {usage.items.map((it) => (
+        <span key={it.label} className="text-[11.5px]">
+          <span className="text-ink-3">{it.label} </span>
+          <strong className="text-ink">{it.value}</strong>
+          {it.hint && <span className="text-ink-3"> {it.hint}</span>}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 const STATE_TEXT: Record<string, string> = {
   connected: 'Connected',
@@ -102,6 +138,20 @@ export function AiProvidersSection() {
   const [adding, setAdding] = useState('')
   const [checks, setChecks] = useState<Record<string, Check[]>>({})
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
+  const [usage, setUsage] = useState<Record<string, Usage>>({})
+
+  async function loadUsage(pid: string, aid: string) {
+    const key = `${pid}/${aid}`
+    setBusy(`usage-${key}`)
+    try {
+      const got = await api.get<Usage>(`/api/v1/providers/${pid}/accounts/${aid}/usage`)
+      setUsage((u) => ({ ...u, [key]: got }))
+    } catch (e) {
+      toast.error(String(e))
+    } finally {
+      setBusy('')
+    }
+  }
 
   async function addAccount(pid: string) {
     const label = (newLabel[pid] || '').trim()
@@ -242,6 +292,21 @@ export function AiProvidersSection() {
                         </Button>
                       )}
                       <div className="ml-auto flex items-center gap-1">
+                        {a.authenticated && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            title="Spend and limits for this account"
+                            disabled={busy === `usage-${key}`}
+                            onClick={() => loadUsage(p.id, a.id)}
+                          >
+                            {busy === `usage-${key}` ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              'Usage'
+                            )}
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" disabled={busy === key} onClick={() => test(p.id, a.id)}>
                           {busy === key ? <Loader2 size={13} className="animate-spin" /> : 'Test'}
                         </Button>
@@ -334,6 +399,8 @@ export function AiProvidersSection() {
                         )}
                       </div>
                     )}
+
+                    {usage[key] && <UsagePanel usage={usage[key]} />}
 
                     {checks[key] && (
                       <ul className="mt-2 space-y-1">

@@ -334,22 +334,78 @@ def test_no_mcp_claim_without_something_to_check(tmp_path, monkeypatch):
                                                   "Can execute prompt"]
 
 
-def test_codex_mcp_is_checked_at_the_endpoint_the_bridge_uses(tmp_path, monkeypatch):
-    """Codex does reach Plutus's tools — through the stdio bridge — so the check
-    is real, it just isn't --mcp-config."""
+def test_codex_mcp_is_checked_in_three_separable_stages(tmp_path, monkeypatch):
+    """"Codex has no tools" was one opaque symptom with three independent causes:
+    the endpoint, the config.toml the bridge is registered in, and whether Codex
+    loads it. Each is reported separately so the answer names the broken one."""
     monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
                                                    "version": "", "install_hint": ""})
     acct = AP.add_account(tmp_path, "codex", "Personal")
     (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(AP, "_run_cli", lambda *a, **k: {"code": 0, "out": "PLUTUS_OK",
-                                                        "err": "", "timeout": False})
+    monkeypatch.setattr(AP, "_run_cli", lambda *a, **k: {
+        "code": 0, "out": "called plutus_status PLUTUS_OK", "err": "", "timeout": False})
     monkeypatch.setattr(AP, "mcp_reachable",
                         lambda url, token="", timeout=30: {"ok": True, "count": 209, "error": ""})
 
     res = AP.capability_test(tmp_path, "codex", acct["id"], mcp_url="http://x/mcp")
-    last = res["checks"][-1]
-    assert last["name"] == "MCP tools reachable" and last["ok"] is True
-    assert "209 Plutus tools" in last["detail"]
+    names = [c["name"] for c in res["checks"]]
+    assert names[-3:] == ["MCP tools reachable", "Bridge registered in config.toml",
+                          "Codex can call them"]
+    assert res["ok"] is True
+    assert "209 Plutus tools" in res["checks"][-3]["detail"]
+    # The config is rewritten by the check, so it reports on what a run will use.
+    conf = AP.account_dir(tmp_path, "codex", acct["id"]) / "config.toml"
+    assert "[mcp_servers.plutus]" in conf.read_text(encoding="utf-8")
+
+
+def test_codex_reporting_no_mcp_tools_is_a_failure_not_a_pass(tmp_path, monkeypatch):
+    """The exact reported symptom. If Codex says it has no tools, Test has to say
+    so rather than passing because the CLI answered at all."""
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
+                                                   "version": "", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "codex", "Personal")
+    (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(AP, "mcp_reachable",
+                        lambda url, token="", timeout=30: {"ok": True, "count": 209, "error": ""})
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, env, timeout):
+        calls["n"] += 1
+        # First call is the plain prompt check, second is the MCP one.
+        return {"code": 0, "out": "PLUTUS_OK" if calls["n"] == 1 else "NO_MCP",
+                "err": "", "timeout": False}
+
+    monkeypatch.setattr(AP, "_run_cli", fake_run)
+    res = AP.capability_test(tmp_path, "codex", acct["id"], mcp_url="http://x/mcp")
+
+    assert res["ok"] is False
+    assert res["checks"][-1] == {"name": "Codex can call them", "ok": False,
+                                 "detail": "NO_MCP"}
+
+
+def test_a_dead_endpoint_stops_before_spending_a_codex_run(tmp_path, monkeypatch):
+    """No point asking Codex to call tools that are not reachable — and the run
+    would cost real usage to tell us what we already know."""
+    monkeypatch.setattr(AP, "cli_info", lambda p: {"installed": True, "path": f"/usr/bin/{p}",
+                                                   "version": "", "install_hint": ""})
+    acct = AP.add_account(tmp_path, "codex", "Personal")
+    (AP.account_dir(tmp_path, "codex", acct["id"]) / "auth.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(AP, "mcp_reachable",
+                        lambda url, token="", timeout=30: {"ok": False, "count": 0,
+                                                           "error": "connection refused"})
+    runs = {"n": 0}
+
+    def fake_run(cmd, env, timeout):
+        runs["n"] += 1
+        return {"code": 0, "out": "PLUTUS_OK", "err": "", "timeout": False}
+
+    monkeypatch.setattr(AP, "_run_cli", fake_run)
+    res = AP.capability_test(tmp_path, "codex", acct["id"], mcp_url="http://x/mcp")
+
+    assert res["ok"] is False
+    assert runs["n"] == 1, "only the plain prompt check should have run"
+    assert res["checks"][-1]["name"] == "MCP tools reachable"
 
 
 def test_an_unreachable_endpoint_fails_the_mcp_check(tmp_path, monkeypatch):

@@ -18,7 +18,8 @@ import tools.github as GH
 from core.invoke_tool import invoke_mcp_tool_fn
 
 WRITE_TOOLS = ["github_write_file", "github_create_issue", "github_comment",
-               "github_set_issue_state", "github_create_branch", "github_create_pull"]
+               "github_set_issue_state", "github_create_branch", "github_create_pull",
+               "github_create_repo"]
 
 
 def _tool(name):
@@ -92,6 +93,7 @@ def _fake_api(monkeypatch, routes, *, token="ghp_test"):
     ("github_set_issue_state", {"repo": "a/b", "number": 1}),
     ("github_create_branch", {"repo": "a/b", "name": "x"}),
     ("github_create_pull", {"repo": "a/b", "title": "t", "head": "x"}),
+    ("github_create_repo", {"name": "r"}),
 ])
 def test_token_only_tools_say_so_instead_of_failing(monkeypatch, name, payload):
     """Without a token these cannot work, so they explain rather than letting
@@ -296,3 +298,42 @@ def test_write_tools_are_annotated_and_smoke_excluded():
         if name not in WRITE_TOOLS:
             assert t.annotations.readOnlyHint is True, name
             assert tool_safety_level(name) == 0, name
+
+
+# ── creating repositories ────────────────────────────────────────────────────
+
+def test_a_new_repo_is_private_by_default(monkeypatch):
+    """A repo an agent creates because it was asked to should not be public
+    because nobody said otherwise."""
+    seen = _fake_api(monkeypatch, {"POST /user/repos": _Resp(
+        {"full_name": "friso/notes", "private": True, "default_branch": "main",
+         "html_url": "https://gh/r", "clone_url": "https://gh/r.git"})})
+    out = _run("github_create_repo", {"name": "notes"})
+
+    assert seen[0]["path"] == "/user/repos"
+    assert seen[0]["json"]["private"] is True
+    assert seen[0]["json"]["auto_init"] is True
+    assert "private repository" in out and "friso/notes" in out
+
+
+def test_an_org_repo_goes_to_the_org_endpoint(monkeypatch):
+    seen = _fake_api(monkeypatch, {"POST /orgs/acme/repos": _Resp(
+        {"full_name": "acme/svc", "private": False, "default_branch": "main"})})
+    out = _run("github_create_repo", {"name": "svc", "org": "acme", "private": False})
+    assert seen[0]["path"] == "/orgs/acme/repos"
+    assert "public repository" in out
+
+
+def test_auto_init_is_reported_because_an_empty_repo_has_no_branch(monkeypatch):
+    """Without a default branch, committing a file or opening a PR against the
+    new repo fails — so the answer says which case this is."""
+    _fake_api(monkeypatch, {"POST /user/repos": _Resp(
+        {"full_name": "friso/empty", "private": True, "default_branch": None})})
+    out = _run("github_create_repo", {"name": "empty", "auto_init": False})
+    assert "none — repo is empty" in out
+
+
+def test_a_taken_name_says_so(monkeypatch):
+    _fake_api(monkeypatch, {"POST /user/repos": _Resp({}, 422, text="name already exists")})
+    out = _run("github_create_repo", {"name": "notes"})
+    assert "already taken" in out
