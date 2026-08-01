@@ -26,7 +26,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 ROOMS_FILE = "workforce.json"
 RUNS_DIR = "room_runs"
@@ -38,8 +38,24 @@ DEFAULT_ROLE = "researcher"
 # otherwise grows its prompt without limit and step four blows the context window.
 MAX_HANDOFF_CHARS = 6000
 
+# How far a chain of rooms may run. A room can hand off to another when it
+# finishes — research → write → review — and without a ceiling a cycle, or a long
+# chain somebody built by accident, would run until the cost cap noticed.
+MAX_CHAIN = 6
+
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 _LOCK = threading.Lock()
+
+
+def room_folder(root: Path, room: dict) -> str:
+    """The room's own folder in the research library, as a library-relative path.
+
+    A room needs somewhere to put things. Handing a 6 KB excerpt to the next seat
+    is fine for a summary and useless for a draft, a table, or a dashboard — so
+    seats write files here and later seats read them, which also means the work
+    survives the run and shows up in the Files page.
+    """
+    return f"rooms/{room.get('id') or _slug(room.get('label', 'room'))}"
 
 
 # ── storage ──────────────────────────────────────────────────────────────────
@@ -105,7 +121,7 @@ def update_room(root: Path, room_id: str, changes: dict) -> dict:
         room = next((r for r in rooms if r.get("id") == room_id), None)
         if not room:
             raise KeyError(room_id)
-        for key in ("label", "brief", "mcp_services"):
+        for key in ("label", "brief", "mcp_services", "next_room"):
             if key in changes and changes[key] is not None:
                 room[key] = changes[key]
         save_rooms(root, rooms)
@@ -221,12 +237,30 @@ _ROLE_FRAMING = {
 }
 
 
-def render_seat_prompt(room: dict, seat: dict, brief: str, prior: list[dict]) -> str:
-    """The prompt for one seat: its role, the room brief, and what came before."""
+def render_seat_prompt(room: dict, seat: dict, brief: str, prior: list[dict],
+                       *, folder: str = "", inbox: str = "") -> str:
+    """The prompt for one seat: its role, the brief, its folder, and what came before."""
     parts = [_ROLE_FRAMING.get(seat.get("role", ""), ""), ""]
     if seat.get("goal"):
         parts += [f"Your specific goal: {seat['goal']}", ""]
     parts += [f"## Room brief\n{brief or room.get('brief') or '(no brief given)'}", ""]
+
+    if folder:
+        # Named explicitly rather than left implicit: a seat that does not know
+        # where to put things puts them in its reply, and the reply is truncated
+        # before the next seat sees it.
+        parts += [
+            "## Your working folder", "",
+            f"`{folder}` in Plutus's research library. Use `library_write_file` to "
+            "save anything substantial there — drafts, notes, tables, HTML — and "
+            "`library_list_files` / `library_read_file` to pick up what earlier "
+            "seats left. Only a short summary survives into the next seat's "
+            "prompt, so put the real work in files.", "",
+        ]
+
+    if inbox:
+        parts += ["## Handed to this room", "",
+                  inbox[:MAX_HANDOFF_CHARS], ""]
 
     if prior:
         parts.append("## Work already done in this room")
@@ -281,14 +315,46 @@ def get_room_run(root: Path, run_id: str) -> dict | None:
 LIVE: dict = {"room_id": "", "run_id": "", "seat_id": "", "running": False}
 
 
+def _hand_off(root: Path, room: dict, room_id: str, brief: str, prior: list[dict],
+              rec: dict, *, run_agent: Callable[..., dict], max_cost_usd: float,
+              on_change: Callable[[dict], None] | None, chain: tuple[str, ...]) -> None:
+    """After a room succeeds, run its ``next_room`` and record the follow-up id.
+
+    Guarded three ways so a chain cannot run away: it stops at MAX_CHAIN rooms,
+    refuses a room already in this chain (no cycles), and refuses to point at
+    itself. The last seat's output is handed to the next room as its inbox, and
+    the two rooms share a working folder so files carry across, not just text.
+    A next-room failure is recorded on this room but never masks its success.
+    """
+    nxt = str(room.get("next_room") or "").strip()
+    if not nxt or nxt == room_id or nxt in chain or len(chain) >= MAX_CHAIN:
+        return
+    if not get_room(root, nxt):
+        return
+    last = prior[-1]["result"] if prior else ""
+    try:
+        followup = run_room(root, nxt, brief, run_agent=run_agent,
+                            max_cost_usd=max_cost_usd, on_change=on_change,
+                            inbox=last, _chain=chain + (room_id,))
+        rec["next_run_id"] = followup.get("id", "")
+    except Exception as exc:
+        rec["next_error"] = f"handoff to '{nxt}' failed: {exc}"
+
+
 def run_room(root: Path, room_id: str, brief: str, *,
              run_agent: Callable[..., dict],
              max_cost_usd: float = 5.0,
-             on_change: Callable[[dict], None] | None = None) -> dict:
+             on_change: Callable[[dict], None] | None = None,
+             inbox: str = "", _chain: tuple[str, ...] = ()) -> dict:
     """Run every seat in order, feeding each one the work before it.
 
     ``run_agent`` is injected (rather than imported) so this is testable without a
     CLI, and so it is obvious that rooms add no new way to execute an agent.
+
+    A room that finishes successfully hands off to its ``next_room``, if it has
+    one — research → write → review as a pipeline rather than one room of five
+    seats. The handoff carries the last seat's output and the shared working
+    folder, so the next room can pick up files rather than re-derive them.
     """
     room = get_room(root, room_id)
     if not room:
@@ -297,12 +363,22 @@ def run_room(root: Path, room_id: str, brief: str, *,
     if not seats:
         raise ValueError("this room has no agents in it yet")
 
+    folder = room_folder(root, room)
+    try:
+        from core.library import ensure_library, resolve_in_library
+        ensure_library(root)
+        resolve_in_library(folder, root).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass          # a missing folder is a worse room, not a failed one
+
     rec = {
         "id": time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4],
         "room_id": room_id, "room_label": room.get("label", ""),
         "brief": brief or room.get("brief", ""),
+        "folder": folder,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "finished": None, "ok": False, "cost_usd": 0.0, "steps": [], "error": None,
+        "next_run_id": "",
     }
     LIVE.update(room_id=room_id, run_id=rec["id"], seat_id="", running=True)
     prior: list[dict] = []
@@ -311,7 +387,8 @@ def run_room(root: Path, room_id: str, brief: str, *,
             LIVE["seat_id"] = seat["id"]
             if on_change:
                 on_change(dict(rec))
-            prompt = render_seat_prompt(room, seat, rec["brief"], prior)
+            prompt = render_seat_prompt(room, seat, rec["brief"], prior,
+                                        folder=folder, inbox=inbox)
             out = run_agent(
                 root, prompt,
                 label=f"{room.get('label', 'room')} · {seat.get('label') or seat['role']}",
@@ -341,6 +418,9 @@ def run_room(root: Path, room_id: str, brief: str, *,
                 break
         else:
             rec["ok"] = True
+            # Hand off to the next room in the pipeline (research → write → review).
+            _hand_off(root, room, room_id, brief, prior, rec, run_agent=run_agent,
+                      max_cost_usd=max_cost_usd, on_change=on_change, chain=_chain)
     except Exception as exc:
         rec["error"] = str(exc)
     finally:

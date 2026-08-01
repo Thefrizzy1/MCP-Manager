@@ -214,3 +214,45 @@ def test_live_state_clears_when_the_room_finishes(tmp_path, room):
     run, _ = _recording_runner()
     W.run_room(tmp_path, room["id"], "brief", run_agent=run)
     assert W.LIVE["running"] is False and W.LIVE["seat_id"] == ""
+
+
+# ── room-to-room handoff (research → write → review pipeline) ──────────────────
+
+def test_a_room_hands_off_to_its_next_room(tmp_path):
+    a = W.add_room(tmp_path, "Research")
+    b = W.add_room(tmp_path, "Write")
+    W.add_seat(tmp_path, a["id"], role="researcher", provider="claude", account_id="x")
+    W.add_seat(tmp_path, b["id"], role="writer", provider="claude", account_id="x")
+    W.update_room(tmp_path, a["id"], {"next_room": b["id"]})
+
+    run, calls = _recording_runner([{"result": "the findings"}, {"result": "the draft"}])
+    rec = W.run_room(tmp_path, a["id"], "brief", run_agent=run)
+
+    assert rec["ok"] and rec["next_run_id"]        # handoff actually happened
+    assert len(calls) == 2                          # one seat in each room ran
+    # room B's seat received room A's output as its inbox
+    assert "Handed to this room" in calls[1]["prompt"]
+    assert "the findings" in calls[1]["prompt"]
+
+
+def test_handoff_refuses_a_cycle_instead_of_looping_forever(tmp_path):
+    a = W.add_room(tmp_path, "A")
+    b = W.add_room(tmp_path, "B")
+    W.add_seat(tmp_path, a["id"], role="researcher", provider="claude", account_id="x")
+    W.add_seat(tmp_path, b["id"], role="researcher", provider="claude", account_id="x")
+    W.update_room(tmp_path, a["id"], {"next_room": b["id"]})
+    W.update_room(tmp_path, b["id"], {"next_room": a["id"]})   # A -> B -> A cycle
+
+    run, calls = _recording_runner()
+    rec = W.run_room(tmp_path, a["id"], "brief", run_agent=run)
+
+    assert rec["ok"]
+    assert len(calls) == 2   # A's seat, then B's — B->A is refused (A already in chain)
+
+
+def test_a_room_without_a_next_room_just_finishes(tmp_path):
+    a = W.add_room(tmp_path, "Solo")
+    W.add_seat(tmp_path, a["id"], role="researcher", provider="claude", account_id="x")
+    run, calls = _recording_runner()
+    rec = W.run_room(tmp_path, a["id"], "brief", run_agent=run)
+    assert rec["ok"] and rec["next_run_id"] == "" and len(calls) == 1
