@@ -129,6 +129,23 @@ a {
   background: var(--ink-3);
 }
 
+/* One authored motion moment: page content settles in on route change.
+   Exponential ease-out from an already-near-final position; reduced-motion is
+   neutralised by the global rule below. */
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.page-enter {
+  animation: page-enter 0.36s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 /* Respect reduced-motion globally. */
 @media (prefers-reduced-motion: reduce) {
   *,
