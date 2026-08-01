@@ -459,7 +459,8 @@ def cancel() -> dict:
 
 # ── command + event parsing (pure, testable) ─────────────────────────────────
 def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = None,
-                    disallowed_tools: list[str] | None = None, model: str | None = None) -> list[str]:
+                    disallowed_tools: list[str] | None = None, model: str | None = None,
+                    system_prompt: str = "") -> list[str]:
     """Argv for one headless `claude -p` run.
 
     The trailing ``--`` is load-bearing. Several Claude Code options are variadic
@@ -487,6 +488,9 @@ def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = Non
     chosen_model = model or cfg.get("model")
     if chosen_model:
         cmd += ["--model", chosen_model]
+    # The agent's operating manual (library location, fallbacks, how to work).
+    if system_prompt:
+        cmd += ["--append-system-prompt", system_prompt]
     cmd += ["--", prompt]
     return cmd
 
@@ -940,8 +944,15 @@ def _execute_claude(root: Path, rec: dict, prompt: str, cfg: dict, *, label: str
                     provider: str, account_id: str, cred_source: str,
                     transcript: list[dict]) -> None:
     """Claude Code in stream-json mode — the only runtime with MCP tools and cost."""
+    skill = ""
+    if cfg.get("inject_skill", True):
+        try:
+            from core.agent_skill import render_skill
+            skill = render_skill(cfg)
+        except Exception:
+            skill = ""
     cmd = build_agent_cmd(prompt, cfg, mcp_config_path=mcp_config_path,
-                          disallowed_tools=disallowed_tools, model=model)
+                          disallowed_tools=disallowed_tools, model=model, system_prompt=skill)
     # Spawn by absolute path. A bare "claude" is resolved from the child's PATH,
     # which misses the auto-updated native install and fails with a bare
     # FileNotFoundError even though the CLI is plainly installed.
