@@ -65,6 +65,31 @@ def test_accounts_are_isolated_by_config_dir(tmp_path):
     assert env_a != env_b
 
 
+def test_token_only_account_runs_from_the_working_cli_login(tmp_path, monkeypatch):
+    """The reported 401: an account holds a pasted token the API rejects, while the
+    server's interactive `claude` login works. The agent must run from that login
+    ("log in the CLI, launch agents from it"), never the rejected token."""
+    acc = AP.add_account(tmp_path, "claude", "Mine")
+    # The account has only a token — the thing that 401s.
+    monkeypatch.setattr(AP, "stored_token", lambda *a, **k: "sk-ant-oat01-rejected")
+    # The CLI's default home holds a real login (the mounted ~/.claude).
+    home = AP.default_home("claude")
+    home.mkdir(parents=True, exist_ok=True)
+    (home / ".credentials.json").write_text("{}")
+
+    env = AP.account_env(tmp_path, "claude", acc["id"])
+    assert env["CLAUDE_CONFIG_DIR"] == str(home)          # runs from the working login
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in env           # not the rejected token
+
+
+def test_token_is_the_last_resort_when_no_login_exists(tmp_path, monkeypatch):
+    acc = AP.add_account(tmp_path, "claude", "KeyOnly")
+    monkeypatch.setattr(AP, "stored_token", lambda *a, **k: "sk-ant-oat01-x")
+    # No login anywhere (default home stays empty) -> the token is used.
+    env = AP.account_env(tmp_path, "claude", acc["id"])
+    assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == "sk-ant-oat01-x"
+
+
 def test_duplicate_label_is_rejected(tmp_path):
     AP.add_account(tmp_path, "claude", "Personal")
     with pytest.raises(ValueError, match="already exists"):

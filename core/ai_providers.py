@@ -578,12 +578,23 @@ def account_env(root: Path, provider: str, account_id: str,
     """
     spec = _spec(provider)
     env: dict[str, str] = {}
-    if spec.get("config_dir_env"):
-        env[spec["config_dir_env"]] = str(account_dir(root, provider, account_id))
-    # The account's own key, read here so every caller gets it without having to
-    # remember to look it up.
+    own_creds = credentials_file(root, provider, account_id)
+    shared = shared_credentials_file(provider)
     tok = token or stored_token(root, provider, account_id)
-    if tok and spec.get("token_env"):
+    # A pasted token that the API rejects ("401 Invalid bearer token") is the
+    # failing case — even though the same operator's interactive `claude` login
+    # works. So when the account has *only* a token (no login of its own) and the
+    # CLI's default home already holds a working login, run agents from that login
+    # instead of the token: "log in the CLI, launch agents from it".
+    use_shared = own_creds is None and bool(tok) and shared is not None
+    if spec.get("config_dir_env"):
+        env[spec["config_dir_env"]] = str(
+            default_home(provider) if use_shared else account_dir(root, provider, account_id)
+        )
+    # The token is only a last resort — used when there is no real login anywhere
+    # (its own adopted creds or a shared one), so it can never shadow a login that
+    # works, and empty accounts still isolate by their own config dir.
+    if tok and spec.get("token_env") and own_creds is None and shared is None:
         env[spec["token_env"]] = tok
     return env
 
