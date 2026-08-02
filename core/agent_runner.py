@@ -121,11 +121,35 @@ def save_agent_config(root: Path, updates: dict) -> dict:
     return cfg
 
 
-def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "") -> str:
-    """Write an mcp.json that points Claude Code at Plutus's own MCP endpoint."""
-    server: dict = {"type": "http", "url": mcp_url}
-    if token:
-        server["headers"] = {"Authorization": f"Bearer {token}"}
+def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "",
+                            disallowed: list[str] | None = None) -> str:
+    """Write an mcp.json that points Claude Code at Plutus's own MCP tools.
+
+    Routed through the stdio bridge (as Codex already is) rather than straight at
+    the URL, because the bridge is what makes the connection picker *cheap* as
+    well as enforced. Pointed at the endpoint directly, Claude received all ~260
+    tool schemas — about 39k tokens — on every single request, and the picker's
+    decision arrived separately as ``--disallowedTools``: the out-of-scope tools
+    were still described to the model in full, so restricting a run cost more
+    tokens than not restricting it. The bridge removes them from ``tools/list``,
+    so a run scoped to three connections is charged for three connections.
+
+    Set ``PLUTUS_CLAUDE_MCP_HTTP=1`` to go back to the direct HTTP entry. It is
+    the same tool surface either way — only the transport and the token bill
+    differ — but a transport change deserves a way back that is not a redeploy.
+    """
+    if str(os.getenv("PLUTUS_CLAUDE_MCP_HTTP", "")).strip().lower() in ("1", "true", "yes"):
+        server: dict = {"type": "http", "url": mcp_url}
+        if token:
+            server["headers"] = {"Authorization": f"Bearer {token}"}
+    else:
+        env = {"PLUTUS_MCP_URL": mcp_url}
+        if token:
+            env["PLUTUS_MCP_TOKEN"] = token
+        if disallowed:
+            env["PLUTUS_MCP_DENY"] = ",".join(sorted(disallowed))
+        server = {"command": sys.executable or "python3",
+                  "args": [str(MCP_BRIDGE)], "env": env}
     conf = {"mcpServers": {"plutus": server}}
     path = _runs_dir(root).parent / "agent_mcp.json"
     # Create with 0600 rather than chmod-ing after writing — the old order left the
@@ -1428,7 +1452,11 @@ def run_agent(
         try:
             if runtime == "claude":
                 mcp_config_path = write_plutus_mcp_config(root, mcp_url=mcp_url,
-                                                          token=bearer_token)
+                                                          token=bearer_token,
+                                                          disallowed=disallowed_tools)
+                if disallowed_tools:
+                    _emit(f"tool scope: {len(disallowed_tools)} tools withheld from this "
+                          f"run's manifest, not just blocked")
             elif prov == "codex":
                 write_codex_mcp_config(root, aid, mcp_url=mcp_url, token=bearer_token,
                                        disallowed=disallowed_tools)

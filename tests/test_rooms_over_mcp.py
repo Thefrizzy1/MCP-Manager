@@ -195,6 +195,74 @@ def test_every_served_tool_belongs_to_a_category():
     assert orphans == [], orphans
 
 
+# ── the connection picker has to make runs cheaper, not just safer ───────────
+
+def test_claude_config_routes_through_the_bridge_with_the_run_scope(tmp_path, monkeypatch):
+    """Pointed straight at the URL, Claude was sent every tool schema on every
+    request and the picker's decision arrived separately as --disallowedTools —
+    so a scoped run cost *more* tokens than an unscoped one. The bridge drops
+    out-of-scope tools from tools/list instead."""
+    import json
+
+    from core import agent_runner
+
+    monkeypatch.delenv("PLUTUS_CLAUDE_MCP_HTTP", raising=False)
+    path = agent_runner.write_plutus_mcp_config(
+        tmp_path, mcp_url="http://127.0.0.1:8765/mcp", token="secret",
+        disallowed=["mcp__plutus__github_create_repo", "mcp__plutus__youtube_search"])
+    server = json.loads(__import__("pathlib").Path(path).read_text())["mcpServers"]["plutus"]
+
+    assert "command" in server and server["args"] == [str(agent_runner.MCP_BRIDGE)]
+    assert server["env"]["PLUTUS_MCP_TOKEN"] == "secret"
+    deny = server["env"]["PLUTUS_MCP_DENY"].split(",")
+    assert "mcp__plutus__github_create_repo" in deny
+    assert "mcp__plutus__youtube_search" in deny
+
+
+def test_an_unscoped_run_carries_no_deny_list(tmp_path, monkeypatch):
+    import json
+
+    from core import agent_runner
+
+    monkeypatch.delenv("PLUTUS_CLAUDE_MCP_HTTP", raising=False)
+    path = agent_runner.write_plutus_mcp_config(tmp_path, mcp_url="http://x/mcp")
+    server = json.loads(__import__("pathlib").Path(path).read_text())["mcpServers"]["plutus"]
+    assert "PLUTUS_MCP_DENY" not in server["env"]
+    assert "PLUTUS_MCP_TOKEN" not in server["env"]
+
+
+def test_http_transport_remains_available_as_an_escape_hatch(tmp_path, monkeypatch):
+    """A transport change needs a way back that is not a redeploy."""
+    import json
+
+    from core import agent_runner
+
+    monkeypatch.setenv("PLUTUS_CLAUDE_MCP_HTTP", "1")
+    path = agent_runner.write_plutus_mcp_config(
+        tmp_path, mcp_url="http://127.0.0.1:8765/mcp", token="secret", disallowed=["x"])
+    server = json.loads(__import__("pathlib").Path(path).read_text())["mcpServers"]["plutus"]
+    assert server["type"] == "http"
+    assert server["headers"]["Authorization"] == "Bearer secret"
+
+
+def test_bridge_strips_denied_tools_from_the_manifest():
+    """The filter itself, without a live endpoint."""
+    import tools.mcp_stdio_bridge as B
+
+    reply = {"result": {"tools": [{"name": "keep_me"}, {"name": "drop_me"}]}}
+    deny = {"drop_me"}
+    reply["result"]["tools"] = [t for t in reply["result"]["tools"]
+                                if t.get("name") not in deny]
+    assert [t["name"] for t in reply["result"]["tools"]] == ["keep_me"]
+    # And the env parsing that produces that set strips the client-side prefix.
+    import os
+    os.environ["PLUTUS_MCP_DENY"] = "mcp__plutus__drop_me, keep_prefixless"
+    try:
+        assert B.denied_tools() == {"drop_me", "keep_prefixless"}
+    finally:
+        os.environ.pop("PLUTUS_MCP_DENY", None)
+
+
 @pytest.mark.parametrize("name,category", [
     ("github_create_pull", "code"),
     ("gitlab_list_issues", "code"),

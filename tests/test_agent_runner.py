@@ -169,10 +169,15 @@ def test_auth_info_none_when_unauthenticated(monkeypatch, tmp_path):
     assert info["api_key"] is False
 
 
-def test_write_plutus_mcp_config(tmp_path):
+def test_write_plutus_mcp_config(tmp_path, monkeypatch):
+    """The endpoint and token still reach the server — through the stdio bridge
+    now, which is what lets a scoped run be charged for its own scope instead of
+    receiving all ~260 tool schemas on every request."""
     import json
+    monkeypatch.delenv("PLUTUS_CLAUDE_MCP_HTTP", raising=False)
     p = ar.write_plutus_mcp_config(tmp_path, mcp_url="http://127.0.0.1:8765/mcp", token="secret")
     conf = json.loads(open(p, encoding="utf-8").read())
     server = conf["mcpServers"]["plutus"]
-    assert server["url"] == "http://127.0.0.1:8765/mcp"
-    assert server["headers"]["Authorization"] == "Bearer secret"
+    assert server["args"] == [str(ar.MCP_BRIDGE)]
+    assert server["env"]["PLUTUS_MCP_URL"] == "http://127.0.0.1:8765/mcp"
+    assert server["env"]["PLUTUS_MCP_TOKEN"] == "secret"
