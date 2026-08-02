@@ -548,6 +548,12 @@ from contextlib import asynccontextmanager  # noqa: E402
 @asynccontextmanager
 async def ui_lifespan(_app):
     ensure_data_dir(ROOT)
+    # Guarantee a login credential exists even if the UI runs standalone (or was
+    # spawned before main.py seeded). Idempotent; see core/ui_users.
+    from config import allow_empty_ui_password
+    if cfg.ui_enabled and not allow_empty_ui_password():
+        from core import ui_users
+        ui_users.ensure_seed(ROOT)
     agent_tasks.seed_if_empty(ROOT)
     threading.Thread(target=_agent_queue_worker, name="agent-queue", daemon=True).start()
     loop_task = asyncio.create_task(

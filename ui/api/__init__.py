@@ -12,6 +12,7 @@ from starlette.staticfiles import StaticFiles
 
 from ui.api import (
     agents,
+    auth,
     catalog,
     connections,
     discover,
@@ -28,8 +29,15 @@ from ui.api import (
 from ui.api.deps import csrf_origin_guard
 from ui.runtime import DIST_DIR, ICONS_DIR, STATIC_DIR, ui_lifespan
 
-# Routers whose every route is guarded by verify_auth, plus the deliberately
-# public one. Order only affects OpenAPI grouping, not resolution.
+# Routers with no verify_auth: the deliberately public ones. The route-guard test
+# holds these to an explicit path allowlist so nothing goes public by accident.
+_PUBLIC_ROUTERS = (
+    public.router,
+    auth.public_router,
+)
+
+# Routers whose every route is guarded by verify_auth.
+# Order only affects OpenAPI grouping, not resolution.
 _AUTHED_ROUTERS = (
     files.router,
     health.router,
@@ -40,6 +48,7 @@ _AUTHED_ROUTERS = (
     providers.router,
     reddit.router,
     agents.router,
+    auth.router,
     settings.router,
     system.router,
     workforce.router,
@@ -61,7 +70,8 @@ def build_ui_app() -> FastAPI:
     # @app.middleware("http") sugar, which Starlette deprecates for removal in 1.0.
     app.add_middleware(BaseHTTPMiddleware, dispatch=csrf_origin_guard)
 
-    app.include_router(public.router)
+    for r in _PUBLIC_ROUTERS:
+        app.include_router(r)
     for r in _AUTHED_ROUTERS:
         app.include_router(r)
     return app

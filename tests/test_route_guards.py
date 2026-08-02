@@ -9,12 +9,18 @@ be added unguarded.
 """
 from __future__ import annotations
 
-from ui.api import _AUTHED_ROUTERS, build_ui_app
-from ui.api import public
+from ui.api import _AUTHED_ROUTERS, _PUBLIC_ROUTERS, build_ui_app
+from ui.api import auth, public
 from ui.api.deps import verify_auth
 
-# The only paths reachable without Basic auth.
-PUBLIC_PATHS = {"/", "/ui", "/server/health"}
+# The only paths reachable without a session cookie / Basic auth. The auth
+# surface is deliberately public: the login page, the login/logout endpoints, and
+# the SPA shell (which itself redirects to /login when there is no session).
+PUBLIC_PATHS = {
+    "/", "/ui", "/server/health",
+    "/login", "/app",
+    "/api/v1/auth/login", "/api/v1/auth/logout",
+}
 
 
 def _has_verify_auth(router) -> bool:
@@ -30,16 +36,21 @@ def test_every_authed_router_requires_verify_auth():
         assert _has_verify_auth(router), f"authed router is missing verify_auth: {router!r}"
 
 
-def test_public_router_only_serves_allowlisted_paths():
-    assert not _has_verify_auth(public.router), "public router must not require auth"
-    for path in _router_paths(public.router):
-        assert path in PUBLIC_PATHS, f"public router serves a non-allowlisted path: {path}"
+def test_public_routers_only_serve_allowlisted_paths():
+    for router in _PUBLIC_ROUTERS:
+        assert not _has_verify_auth(router), f"public router must not require auth: {router!r}"
+        for path in _router_paths(router):
+            assert path in PUBLIC_PATHS, f"public router serves a non-allowlisted path: {path}"
+
+
+def test_auth_public_router_is_registered_public():
+    assert auth.public_router in _PUBLIC_ROUTERS
 
 
 def test_core_surfaces_present():
     """Guard against a router being dropped from the assembly by accident."""
-    paths: set[str] = set(_router_paths(public.router))
-    for router in _AUTHED_ROUTERS:
+    paths: set[str] = set()
+    for router in (*_PUBLIC_ROUTERS, *_AUTHED_ROUTERS):
         paths |= _router_paths(router)
     for expected in (
         "/app",

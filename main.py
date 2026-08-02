@@ -223,16 +223,19 @@ def _start_ui_watchdog(ui_proc: "multiprocessing.Process") -> None:
 if __name__ == "__main__":
     ensure_data_dir(ROOT)
     _sweep_stale_tmp()
-    # Before the UI child is forked: it re-imports config, so a password minted
-    # after the fork would exist only in this process and the dashboard would
-    # 503 against a password the banner had just printed.
-    _first_run_password = ""
+    # Seed the user store before forking the UI child: it re-imports config and
+    # reads the store file, so seeding here guarantees a known credential exists
+    # in both processes. The store (not a minted .env password) is the source of
+    # truth — a random password printed once, then lost, was the "endless login
+    # prompt" lockout. First run seeds admin/adminadmin (flagged so the UI nags
+    # until changed); an existing .env UI_PASSWORD is adopted instead.
+    _login_hint = ""
     if cfg.ui_enabled and not allow_empty_ui_password():
-        from core.env_store import ensure_ui_password, ui_password_persisted
-        _pw, _generated = ensure_ui_password()
-        cfg.ui_password = _pw
-        if _generated:
-            _first_run_password = _pw
+        from core import ui_users
+        _seed = ui_users.ensure_seed(ROOT)
+        if _seed.get("default_password"):
+            _login_hint = (f"username `{_seed['username']}`, "
+                           f"password `{_seed['default_password']}`")
     ui_proc = None
     if cfg.ui_enabled:
         ui_proc = multiprocessing.Process(target=run_ui, daemon=True)
@@ -252,15 +255,12 @@ if __name__ == "__main__":
         print("   MCP auth: Bearer token required (MCP_REQUIRE_BEARER=true)", flush=True)
     if cfg.ui_enabled:
         print(f"   Web UI: http://0.0.0.0:{cfg.ui_port}/ui", flush=True)
-        if _first_run_password:
-            # Printed once, on the run that created it. Afterwards it lives in
-            # .env and the banner stays quiet — a password echoed at every boot
-            # ends up in every log shipper and every screen share.
-            saved = ("saved to .env" if ui_password_persisted() else
-                     "COULD NOT be saved to .env — it will change on restart until "
-                     "you set UI_PASSWORD yourself")
-            print(f"   🔑 First run: username `{cfg.ui_username}`, "
-                  f"password `{_first_run_password}` ({saved})", flush=True)
+        if _login_hint:
+            # Shown while the default password is still in place. Once it is
+            # changed in Settings the store clears the flag and the banner goes
+            # quiet — a credential echoed at every boot ends up in every log.
+            print(f"   🔑 Default login: {_login_hint} — change it in Settings → Users",
+                  flush=True)
     else:
         print("   Web UI: off (UI_ENABLED=false) — MCP API only, lower RAM", flush=True)
     _run_mcp_main()

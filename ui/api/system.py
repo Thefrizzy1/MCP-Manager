@@ -7,7 +7,7 @@ import json
 import time
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from config import cfg
@@ -29,20 +29,12 @@ from ui.runtime import (
     telemetry,
     tools,
 )
-from ui.spa_page import render_spa
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
-
-@router.get("/app", response_class=HTMLResponse)
-async def spa():
-    # Serve the built React app when present (Vite writes ui/static/dist), else
-    # fall back to the legacy framework-free SPA so nothing breaks pre-build.
-    from ui.runtime import DIST_DIR
-    index = DIST_DIR / "index.html"
-    if index.is_file():
-        return HTMLResponse(index.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
-    return HTMLResponse(render_spa(), headers={"Cache-Control": "no-store"})
+# The SPA shell (/app) is served by ui.api.auth.public_router, which redirects to
+# /login when there is no valid session. It used to live here, but a hard
+# verify_auth 401 on /app gave browsers a dead end instead of the login page.
 
 
 @router.get("/agents")
