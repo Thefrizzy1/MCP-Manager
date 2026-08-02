@@ -41,27 +41,37 @@ async def run_service_smoke_tools(
     results: list[dict[str, Any]] = []
     passed = failed = warnings = skipped = 0
 
+    # Tools we deliberately never fire, and tools whose service simply is not set
+    # up. Neither is a warning: a warning means something is wrong, and a smoke
+    # run that refuses to delete your files is working exactly as intended.
+    # Counting them as warnings made a perfectly healthy card read
+    # "10 ok | 2 failed | 2 warning | 2 skipped" — the same two tools twice, one
+    # of those times as a complaint.
+    deliberate: list[str] = []
+    unconfigured: list[str] = []
+
     for tdef in tool_entries:
         tn = tdef["name"]
         safety_level = tool_safety_level(tn)
         if safety_level >= 2 or (safety_level == 1 and tn not in REVERSIBLE_MUTATION_TOOLS):
-            lines.append(f"- {tn}  (skipped: safety level {safety_level})")
-            results.append(_result(tn, "warning", "safety", f"Skipped: safety level {safety_level}."))
-            warnings += 1
+            results.append(_result(tn, "skipped", "safety",
+                                   "Not tested: this tool changes real data."))
+            deliberate.append(tn)
             skipped += 1
             continue
 
         tool = tool_manager.get_tool(tn)
         if not tool:
+            # This one *is* worth a warning: the card advertises a tool that does
+            # not exist, which means the card and the registry disagree.
             lines.append(f"- {tn}  (skipped: disabled or not registered)")
             results.append(_result(tn, "warning", "registration", "Skipped: disabled or not registered."))
             warnings += 1
             skipped += 1
             continue
         if not is_tool_environment_ready(tn):
-            lines.append(f"- {tn}  (skipped: not configured)")
-            results.append(_result(tn, "warning", "configuration", "Skipped: not configured."))
-            warnings += 1
+            results.append(_result(tn, "skipped", "configuration", "Not tested: not configured."))
+            unconfigured.append(tn)
             skipped += 1
             continue
 
@@ -107,8 +117,22 @@ async def run_service_smoke_tools(
             results.append(_result(tn, "fail", "execution", detail))
             failed += 1
 
-    summary = f"Summary: {passed} ok | {failed} failed | {warnings} warning | {skipped} skipped"
-    body = "\n\n".join(lines) if lines else "(no tools for this service)"
+    # One line for the whole deliberate set, not one per tool. Listing every write
+    # tool it declined to run buries the results that matter under noise about
+    # working as designed.
+    notes: list[str] = []
+    if deliberate:
+        notes.append(f"_Not tested — these change real data: {', '.join(deliberate)}._")
+    if unconfigured:
+        notes.append(f"_Not tested — not configured: {', '.join(unconfigured)}._")
+
+    parts = [f"Summary: {passed} ok | {failed} failed"]
+    if warnings:
+        parts.append(f"{warnings} warning")
+    if skipped:
+        parts.append(f"{skipped} not tested")
+    summary = " | ".join(parts)
+    body = "\n\n".join(lines + notes) if (lines or notes) else "(no tools for this service)"
     output = summary + "\n\n" + body
     return {
         "passed": passed,
@@ -149,10 +173,24 @@ def _audit_detail(audit: dict[str, Any]) -> str:
     return "; ".join(parts)
 
 
+# Upstream said "not now", not "broken". A smoke run that hits a per-minute rate
+# limit — which Reddit's anonymous feed does readily when several tools fire in
+# a row — was reporting the tools themselves as failures.
+_TRANSIENT = ("rate-limit", "rate limit", "too many requests", "try again",
+              "temporarily unavailable", "timed out", "503", "429")
+
+
+def looks_transient(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return any(s in low for s in _TRANSIENT)
+
+
 def _classify_execution(tool: str, text: str) -> dict[str, Any]:
     low = text.strip().lower()
     if looks_like_missing_service_config(text):
         return _result(tool, "warning", "configuration", text[:450])
+    if not text_looks_successful(text) and looks_transient(text):
+        return _result(tool, "warning", "transient", text[:450])
     if not text_looks_successful(text) or "exception" in low:
         return _result(tool, "fail", "execution", text[:900] or "Empty response.")
     return _result(tool, "pass", "execution", text.replace("\r\n", "\n")[:280])

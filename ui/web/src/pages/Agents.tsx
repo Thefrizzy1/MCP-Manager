@@ -184,7 +184,12 @@ export function Agents() {
       <PageBody>
         <div className="space-y-5">
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Runs today" value={cap ? `${used}/${cap}` : used} tone={cap && used >= cap ? 'danger' : 'muted'} />
+            <Stat
+              label="Runs today"
+              value={used}
+              hint={cap ? `daily cap ${cap}` : undefined}
+              tone={cap && used >= cap ? 'danger' : 'muted'}
+            />
             <Stat label="Queued" value={s?.queue_depth ?? 0} tone={(s?.queue_depth ?? 0) > 0 ? 'warn' : 'muted'} />
             <Stat label="Cost (all-time)" value={`$${Math.round((s?.total_cost_usd ?? 0) * 100) / 100}`} />
             <Stat
@@ -224,6 +229,7 @@ export function Agents() {
             <LaunchWizard
               key={prefill?.id ?? 'blank'}
               initial={prefill}
+              legacyLogin={mode !== 'none'}
               connections={orderConnections(
                 (conns.data?.services ?? []).filter((x) => x.configured && !x.ignored),
               )}
@@ -522,11 +528,15 @@ const orderConnections = (list: Service[]) =>
 function LaunchWizard({
   connections,
   initial,
+  legacyLogin,
   onLaunched,
   onScheduled,
 }: {
   connections: Service[]
   initial?: RunPrefill | null
+  /** Whether the old single Claude credential (mounted ~/.claude or a saved
+   *  token) exists. Without it "Default login" is an option that cannot run. */
+  legacyLogin: boolean
   onLaunched: () => void
   onScheduled: () => void
 }) {
@@ -547,6 +557,15 @@ function LaunchWizard({
   const [smartFallback, setSmartFallback] = useState(true)
   const providersQ = useProviders()
   const linkedAccounts = toLinked(providersQ.data?.providers)
+  // "Default login" means the legacy single Claude credential. On an install
+  // that never had one — a Gemini-only or OpenRouter-only setup — offering it
+  // as the first and preselected option gives you a launch that cannot work.
+  // Accounts arrive async, so this settles once they do.
+  useEffect(() => {
+    if (legacyLogin || account || linkedAccounts.length === 0) return
+    const first = linkedAccounts[0]
+    setAccount(`${first.provider}/${first.id}`)
+  }, [legacyLogin, account, linkedAccounts])
   // Which runtime this launch will use — the model menu follows it. With no
   // account picked that is the legacy single login, which is Claude.
   const { provider, accountId } = splitAccount(account)
@@ -669,7 +688,7 @@ function LaunchWizard({
                 setModel('')
               }}
             >
-              <option value="">Default login</option>
+              {legacyLogin && <option value="">Default login</option>}
               {linkedAccounts.map((a) => (
                 <option key={`${a.provider}/${a.id}`} value={`${a.provider}/${a.id}`}>
                   {a.providerLabel} · {a.label}

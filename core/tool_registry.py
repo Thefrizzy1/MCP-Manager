@@ -27,6 +27,14 @@ def looks_like_missing_service_config(message: str) -> bool:
         return True
     if "obsidian rest api not configured" in t:
         return True
+    # "this needs a GitHub token. Add GITHUB_TOKEN in Settings → GitHub" is a
+    # configuration state, not a failure — but it matched none of the phrasings
+    # above, so a card whose service simply had no token read as 12 broken tools.
+    if "needs a" in t and any(w in t for w in
+                              ("token", "api key", " key", "login", "account")):
+        return True
+    if "add " in t and "in settings" in t:
+        return True
     return False
 
 # Exact overrides (subset of keys for special tools).
@@ -132,6 +140,32 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "youtube_channel": {"channel": "@YouTube"},
     "youtube_video": {"video_id": "dQw4w9WgXcQ"},
     "youtube_trending": {"region": "US", "max_results": 3},
+    # The GitHub read tools need a repo. A public one keeps the smoke run
+    # meaningful without a token and without touching anything of the user's.
+    "github_repo_info": {"repo": "Thefrizzy1/MCP-Manager"},
+    "github_list_issues": {"repo": "Thefrizzy1/MCP-Manager", "state": "open", "limit": 3},
+    "github_list_pulls": {"repo": "Thefrizzy1/MCP-Manager", "state": "open", "limit": 3},
+    "github_list_branches": {"repo": "Thefrizzy1/MCP-Manager", "limit": 5},
+    "github_list_commits": {"repo": "Thefrizzy1/MCP-Manager", "limit": 3},
+    "github_read_file": {"repo": "Thefrizzy1/MCP-Manager", "path": "requirements.txt"},
+    "github_workflow_runs": {"repo": "Thefrizzy1/MCP-Manager", "limit": 3},
+    "github_search_repos": {"query": "mcp server", "sort": "stars", "limit": 3},
+    "github_search_code": {"query": "plutus", "limit": 3},
+    "github_me": {},
+    "github_my_repos": {"limit": 3},
+    "github_notifications": {"limit": 3},
+    # Firecrawl and the social readers, so their cards test something real.
+    "firecrawl_scrape": {"url": "https://example.com", "max_chars": 500},
+    "firecrawl_map": {"url": "https://example.com", "limit": 5},
+    "firecrawl_search": {"query": "homelab", "limit": 2},
+    "firecrawl_crawl": {"url": "https://example.com", "limit": 1, "max_depth": 1},
+    "reddit_subreddit_posts": {"subreddit": "selfhosted", "sort": "hot", "limit": 3},
+    "reddit_search": {"query": "homelab", "limit": 3},
+    "reddit_me": {},
+    "reddit_my_subreddits": {"limit": 5},
+    "reddit_home_feed": {"limit": 5},
+    "reddit_my_posts": {"kind": "saved", "limit": 5},
+    "agent_list_workers": {},
 }
 TOOL_SMOKE_DEFAULTS.update(_PUB_DEFS)
 
