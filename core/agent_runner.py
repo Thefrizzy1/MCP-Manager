@@ -1207,6 +1207,23 @@ def _plutus_declarations(mcp_url: str, token: str, disallowed: list[str] | None,
     return builtin_decls + decls, client
 
 
+def _spare_account(root: Path, provider: str, used: str) -> str:
+    """Another linked account on the same provider, or "".
+
+    Same provider only: a model id chosen for one provider means nothing to
+    another, and silently switching provider would change what the run costs and
+    what it can do.
+    """
+    from core import ai_providers
+
+    for account in ai_providers.load_accounts(root).get(provider, []):
+        aid = account.get("id") or ""
+        if aid and aid != used:
+            if ai_providers.account_status(root, provider, account)["authenticated"]:
+                return aid
+    return ""
+
+
 def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
                  model: str, cfg: dict, transcript: list[dict], *,
                  mcp_url: str = "", bearer_token: str = "",
@@ -1255,6 +1272,19 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                                         timeout=int(left),
                                         search=not decls)
             rec["model"] = res.get("model") or model
+            if not res["ok"] and ai_providers.is_rate_limited(res["error"]):
+                # api_turn already backed off and retried. Still limited means
+                # this account is done for now, so move to another one rather
+                # than throwing away the work done so far.
+                spare = _spare_account(root, provider, account_id)
+                if spare:
+                    _emit(f"note: {account_id} is rate limited — switching to {spare}")
+                    account_id = spare
+                    rec["account_id"] = spare
+                    res = ai_providers.api_turn(root, provider, account_id,
+                                                contents=contents, declarations=decls,
+                                                model=model, timeout=int(left),
+                                                search=not decls)
             if not res["ok"]:
                 rec["error"] = f"{spec['label']}: {res['error']}"
                 _emit(rec["error"])

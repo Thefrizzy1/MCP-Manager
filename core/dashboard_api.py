@@ -22,7 +22,18 @@ def ca_cert_installed() -> bool:
 
 
 def tool_to_service_map() -> dict[str, str]:
-    return service_tool_map(project_root())
+    """Every registered tool's owning service, not just the carded ones.
+
+    The live tool list is passed so the prefix fallback can reach tools no card
+    mentions — see service_tool_map for why that gap mattered.
+    """
+    names: list[str] = []
+    try:
+        from ui.runtime import all_tool_names
+        names = all_tool_names()
+    except Exception:
+        pass          # the map still works, just without the fallback
+    return service_tool_map(project_root(), tool_names=names)
 
 
 def mcp_urls(local_ip_hint: str = "192.168.1.111") -> dict[str, Any]:

@@ -120,7 +120,15 @@ def write_note(rel: str, content: str, *, append: bool = False,
     with open(target, "a" if append else "w", encoding="utf-8") as f:
         f.write(content)
     verb = "Appended to" if append else "Wrote"
-    return f"{verb} {relative_name(str(target), root)} ({len(content)} chars)"
+    # Name the destination, every time. A model asked to update a Nextcloud file
+    # will happily pass "Obsidian Vault/Notes.md" here, and a reply of
+    # "Wrote Obsidian Vault/Notes.md" reads as confirmation that it did — so it
+    # reports success on a file that never reached Nextcloud. Saying which store
+    # this is makes that claim impossible to make honestly.
+    return (f"{verb} research library file `{relative_name(str(target), root)}` "
+            f"({len(content)} chars). This is Plutus's own research library — "
+            "NOT Nextcloud, Obsidian, or any mounted share. Use the nextcloud_* "
+            "or obsidian_* tools to write to those.")
 
 
 def read_note(rel: str, root: Path | None = None) -> str:

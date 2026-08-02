@@ -818,6 +818,27 @@ def api_headers(root: Path, provider: str, key: str) -> dict[str, str]:
     return headers
 
 
+# Free tiers are rate limited per minute, and a burst of tool calls walks
+# straight into it. Those clear in seconds, so the run should wait rather than
+# die — the alternative is a research job that fails at step nine of ten and
+# throws away everything it had.
+RETRY_ATTEMPTS = 3
+RETRY_BASE_DELAY = 3.0
+
+
+def _sleep(seconds: float) -> None:
+    """Its own function so tests can make the backoff instant."""
+    time.sleep(seconds)
+
+
+def is_rate_limited(error: str, code: int = 0) -> bool:
+    low = (error or "").lower()
+    if code in (429, 500, 502, 503, 529):
+        return True
+    return any(s in low for s in ("rate limit", "rate-limit", "too many requests",
+                                  "overloaded", "quota", "try again", "temporarily"))
+
+
 def api_turn(root: Path, provider: str, account_id: str, *, contents: list[dict],
              declarations: list[dict] | None = None, model: str = "",
              timeout: int = 120, search: bool = False, extras: dict | None = None) -> dict:
@@ -863,6 +884,18 @@ def api_turn(root: Path, provider: str, account_id: str, *, contents: list[dict]
     headers = api_headers(root, provider, key)
 
     res = _http("POST", url, key, payload=body, timeout=timeout, headers=headers)
+
+    # Back off and retry a limit rather than losing the run to it. Bounded and
+    # short: a per-minute limit clears in seconds, and a daily cap costs only
+    # these few seconds before the real error surfaces.
+    attempt = 1
+    while (res["error"] and attempt < RETRY_ATTEMPTS
+           and is_rate_limited(res["error"], res["code"])):
+        delay = RETRY_BASE_DELAY * attempt
+        _sleep(delay)
+        attempt += 1
+        res = _http("POST", url, key, payload=body, timeout=timeout, headers=headers)
+
     if res["error"] and "tools" in body and not declarations \
             and _rejects_the_search_tool(res["error"]):
         # A built-in tool (Gemini's grounding) is a degradation when unavailable,
