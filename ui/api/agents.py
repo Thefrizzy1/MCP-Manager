@@ -177,17 +177,37 @@ class AgentRunBody(BaseModel):
     # permission, and an agent reading an untrusted page can be asked for either.
     allow_write: bool = True
     allow_publish: bool = False
+    # A named kind of agent: supplies the connection slice, the capability
+    # defaults, and the folder its output belongs in. Empty = decide it all here.
+    preset: str = Field(default="", max_length=40)
     # Retry a rate limit and, if it persists, move to another account on the
     # same provider rather than losing the run.
     smart_fallback: bool = True
 
 
+@router.get("/api/v1/agent/presets")
+async def api_v1_agent_presets():
+    """The named kinds of agent, with today's folder already resolved.
+
+    Resolved server-side so the wizard shows the folder the run will actually
+    use — "research/weekly/2026-W31", not a template with braces in it.
+    """
+    from core import agent_presets
+
+    return {"presets": agent_presets.public_presets(),
+            "default": agent_presets.DEFAULT_PRESET}
+
+
 @router.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody):
-    extra = sorted(set(_agent_service_disallow(body.mcp_services))
-                   | set(_agent_capability_disallow(body.allow_write, body.allow_publish)))
-    ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
-                        extra_disallowed=extra, mcp_services=body.mcp_services,
+    from ui.runtime import apply_preset
+
+    prompt, services, allow_write, allow_publish = apply_preset(
+        body.prompt, body.preset, body.mcp_services, body.allow_write, body.allow_publish)
+    extra = sorted(set(_agent_service_disallow(services))
+                   | set(_agent_capability_disallow(allow_write, allow_publish)))
+    ok = _enqueue_agent(prompt, body.label or "agent", force=True,
+                        extra_disallowed=extra, mcp_services=services,
                         provider=body.provider, account_id=body.account_id,
                         model=body.model or None,
                         smart_fallback=body.smart_fallback)

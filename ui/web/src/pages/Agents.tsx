@@ -47,6 +47,17 @@ interface RunPrefill {
   account_id: string
   model?: string
 }
+interface AgentPreset {
+  id: string
+  label: string
+  description: string
+  /** Already resolved for today — "research/weekly/2026-W31", not a template. */
+  folder: string
+  /** null means "do not narrow the connections", which is not the same as none. */
+  services: string[] | null
+  allow_write: boolean
+  allow_publish: boolean
+}
 interface Schedule {
   id: string
   name: string
@@ -555,6 +566,15 @@ function LaunchWizard({
   const [allowWrite, setAllowWrite] = useState(true)
   const [allowPublish, setAllowPublish] = useState(false)
   const [smartFallback, setSmartFallback] = useState(true)
+  const [preset, setPreset] = useState('')
+  // Presets are resolved server-side so the folder shown is the one the run will
+  // actually use — "research/weekly/2026-W31", not a template with braces in it.
+  const presetsQ = useQuery({
+    queryKey: ['agent-presets'],
+    queryFn: () => api.get<{ presets: AgentPreset[] }>('/api/v1/agent/presets'),
+    staleTime: 5 * 60_000,
+  })
+  const presetSpec = (presetsQ.data?.presets ?? []).find((x) => x.id === preset)
   const providersQ = useProviders()
   const linkedAccounts = toLinked(providersQ.data?.providers)
   // "Default login" means the legacy single Claude credential. On an install
@@ -628,7 +648,7 @@ function LaunchWizard({
           enabled: true,
           payload: {
             prompt: prompt.trim(), mcp_services: mcpServices, ...picked,
-            model: model.trim(), allow_write: allowWrite,
+            model: model.trim(), allow_write: allowWrite, preset,
             allow_publish: allowPublish, smart_fallback: smartFallback,
           },
         })
@@ -642,6 +662,7 @@ function LaunchWizard({
           model: model.trim(),
           allow_write: allowWrite,
           allow_publish: allowPublish,
+          preset,
           smart_fallback: smartFallback,
         })
         onLaunched()
@@ -740,6 +761,28 @@ function LaunchWizard({
             <ConnectionPicker connections={connections} selected={selected} onChange={setSelected} />
           </Field>
         )}
+        <Field
+          label="Kind of agent"
+          hint="Sets the connections, what it may do, and the folder its work goes in. Fewer tools also means a cheaper run."
+        >
+          <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
+            <option value="">No preset — choose everything below</option>
+            {(presetsQ.data?.presets ?? [])
+              .filter((x) => x.folder || x.services)
+              .map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.label} — {x.description}
+                </option>
+              ))}
+          </Select>
+          {presetSpec && (
+            <p className="pt-1.5 text-[12px] text-ink-3">
+              Files go to <code className="text-ink-2">{presetSpec.folder}</code>
+              {presetSpec.services && ` · ${presetSpec.services.length} connections`}
+              {!presetSpec.allow_write && ' · read-only'}
+            </p>
+          )}
+        </Field>
         <Field
           label="What this agent may do"
           hint="Connections say where it can act; these say how far."

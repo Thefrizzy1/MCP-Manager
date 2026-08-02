@@ -343,6 +343,39 @@ def _agent_service_disallow(selected: list[str] | None) -> list[str]:
     return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
 
 
+def apply_preset(prompt: str, preset: str | None,
+                 mcp_services: list[str] | None,
+                 allow_write: bool, allow_publish: bool):
+    """Fold a preset into one launch's settings.
+
+    A preset supplies defaults for the three things every launch has to decide —
+    which connections, how far it may go, and where the output lands — and the
+    third was previously not decided at all, so an agent put an hour of research
+    in a reply that then got truncated.
+
+    It never *widens* an explicit choice. Connections are taken only when the
+    caller passed none, and the capability switches are AND-ed: a read-only
+    preset cannot be talked into writing by a stale tick box, and ticking
+    read-only always wins over a preset that allows writes.
+
+    Returns ``(prompt, mcp_services, allow_write, allow_publish)``.
+    """
+    if not preset:
+        return prompt, mcp_services, allow_write, allow_publish
+
+    from core import agent_presets
+
+    spec = agent_presets.get_preset(preset)
+    if mcp_services is None and spec["services"] is not None:
+        mcp_services = list(spec["services"])
+    allow_write = allow_write and spec["allow_write"]
+    allow_publish = allow_publish and spec["allow_publish"]
+    block = agent_presets.preamble(preset, root=ROOT)
+    if block:
+        prompt = f"{block}\n\n{prompt}"
+    return prompt, mcp_services, allow_write, allow_publish
+
+
 def _agent_capability_disallow(allow_write: bool, allow_publish: bool) -> list[str]:
     """What the wizard's write/post switches forbid, on top of the connection ACL.
 
@@ -408,11 +441,16 @@ def _run_agent_bg(prompt: str, label: str = "agent", *,
                   mcp_services: list[str] | None = None, profile: str | None = None,
                   provider: str = "", account_id: str = "",
                   allow_write: bool = True, allow_publish: bool = False,
+                  preset: str | None = None,
                   smart_fallback: bool = True) -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
     # callers and older schedules that never stored a selection). `profile` is no
     # longer offered in the UI; it stays here so schedules saved before it was
     # removed keep working.
+    #
+    prompt, mcp_services, allow_write, allow_publish = apply_preset(
+        prompt, preset, mcp_services, allow_write, allow_publish)
+
     extra = sorted(set(_agent_service_disallow(mcp_services))
                    | set(_agent_profile_disallow(profile))
                    | set(_agent_capability_disallow(allow_write, allow_publish)))
