@@ -238,12 +238,23 @@ _ROLE_FRAMING = {
 
 
 def render_seat_prompt(room: dict, seat: dict, brief: str, prior: list[dict],
-                       *, folder: str = "", inbox: str = "") -> str:
+                       *, folder: str = "", inbox: str = "",
+                       advice: list[dict] | None = None) -> str:
     """The prompt for one seat: its role, the brief, its folder, and what came before."""
     parts = [_ROLE_FRAMING.get(seat.get("role", ""), ""), ""]
     if seat.get("goal"):
         parts += [f"Your specific goal: {seat['goal']}", ""]
     parts += [f"## Room brief\n{brief or room.get('brief') or '(no brief given)'}", ""]
+
+    if advice:
+        # Above the material, not inside it: this is a correction to the brief,
+        # and a correction buried under three screens of prior output is one the
+        # model reads as background rather than as an instruction.
+        parts.append("## Redirection from earlier seats")
+        parts.append("These override the brief where they conflict with it.")
+        parts += [f"- **{a.get('author') or 'earlier seat'}:** {a.get('note', '')}"
+                  for a in advice]
+        parts.append("")
 
     if folder:
         # Named explicitly rather than left implicit: a seat that does not know
@@ -256,6 +267,10 @@ def render_seat_prompt(room: dict, seat: dict, brief: str, prior: list[dict],
             "`library_list_files` / `library_read_file` to pick up what earlier "
             "seats left. Only a short summary survives into the next seat's "
             "prompt, so put the real work in files.", "",
+            "If you find something that changes what the *next* seat should do — "
+            "the brief is wrong, a whole approach is a dead end — call "
+            "`room_advise`. Your output is passed on as material; that is passed "
+            "on as an instruction.", "",
         ]
 
     if inbox:
@@ -310,9 +325,86 @@ def get_room_run(root: Path, run_id: str) -> dict | None:
         return None
 
 
+# ── redirection between seats ────────────────────────────────────────────────
+#
+# A seat that discovers the brief was wrong had no way to say so. Its output went
+# to the next seat as *material*, mixed in with everything else it produced, and
+# a finding like "this library was deprecated last year, use the other one" reads
+# as one more paragraph rather than as an instruction.
+#
+# room_advise lets a seat leave a short, explicit redirection for the seats after
+# it. File-backed rather than in memory because the seat's tool call is served by
+# the MCP process while the room may be running in the UI process — a module
+# global would be written in one and read in the other, which is to say never.
+
+MAX_ADVICE = 12
+MAX_ADVICE_CHARS = 1200
+
+
+def _advice_path(root: Path, run_id: str) -> Path:
+    return _runs_dir(root) / f"{run_id}.advice.json"
+
+
+def add_advice(root: Path, run_id: str, note: str, *, author: str = "") -> list[dict]:
+    """Record one seat's redirection for the seats that follow it."""
+    note = (note or "").strip()[:MAX_ADVICE_CHARS]
+    if not note:
+        raise ValueError("an empty note tells the next seat nothing")
+    p = _advice_path(root, run_id)
+    with _LOCK:
+        items = load_advice(root, run_id)
+        # Capped so a seat stuck in a loop cannot crowd the brief out of the
+        # prompt it is supposed to be qualifying.
+        if len(items) >= MAX_ADVICE:
+            raise ValueError(f"this run already has {MAX_ADVICE} notes — that is the limit")
+        items.append({"author": (author or "a previous seat")[:60], "note": note,
+                      "at": time.strftime("%H:%M:%S")})
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(items, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+    return items
+
+
+def load_advice(root: Path, run_id: str) -> list[dict]:
+    if not run_id or "/" in run_id or "\\" in run_id or run_id.startswith("."):
+        return []
+    try:
+        data = json.loads(_advice_path(root, run_id).read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
 # ── execution ────────────────────────────────────────────────────────────────
 
 LIVE: dict = {"room_id": "", "run_id": "", "seat_id": "", "running": False}
+
+_LIVE_FILE = "room_live.json"
+
+
+def publish_live(root: Path) -> None:
+    """Mirror LIVE to disk so the MCP process can see which run is in flight.
+
+    Rooms are started from two processes and their tools are served from a third
+    context; "which run am I part of" has to be answerable from any of them.
+    """
+    try:
+        p = Path(root) / "data" / _LIVE_FILE
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(LIVE), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass          # a stale indicator is not worth failing a run over
+
+
+def read_live(root: Path) -> dict:
+    """LIVE as last published, from whichever process asks."""
+    try:
+        data = json.loads((Path(root) / "data" / _LIVE_FILE).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else dict(LIVE)
+    except (OSError, json.JSONDecodeError):
+        return dict(LIVE)
 
 # One room at a time, across *every* way of starting one. It lives here rather
 # than in the HTTP layer because a room can now also be started over MCP: with a
@@ -390,14 +482,19 @@ def run_room(root: Path, room_id: str, brief: str, *,
         "next_run_id": "",
     }
     LIVE.update(room_id=room_id, run_id=rec["id"], seat_id="", running=True)
+    publish_live(root)
     prior: list[dict] = []
     try:
         for seat in seats:
             LIVE["seat_id"] = seat["id"]
+            publish_live(root)
             if on_change:
                 on_change(dict(rec))
+            # Re-read per seat, not once up front: the whole point is that the
+            # seat before this one may have just left a correction.
             prompt = render_seat_prompt(room, seat, rec["brief"], prior,
-                                        folder=folder, inbox=inbox)
+                                        folder=folder, inbox=inbox,
+                                        advice=load_advice(root, rec["id"]))
             out = run_agent(
                 root, prompt,
                 label=f"{room.get('label', 'room')} · {seat.get('label') or seat['role']}",
@@ -436,6 +533,7 @@ def run_room(root: Path, room_id: str, brief: str, *,
         rec["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         save_room_run(root, rec)
         LIVE.update(running=False, seat_id="")
+        publish_live(root)
         if on_change:
             on_change(dict(rec))
     return rec

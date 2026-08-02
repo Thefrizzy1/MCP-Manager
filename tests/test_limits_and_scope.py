@@ -180,7 +180,7 @@ def test_every_service_tool_is_gated_not_just_the_carded_ones():
                             "agent_list_workers",
                             "room_list", "room_create", "room_update", "room_delete",
                             "room_add_seat", "room_remove_seat", "room_run",
-                            "room_result"}, ungated
+                            "room_result", "room_advise"}, ungated
     for name in ("nextcloud_upload_file", "nextcloud_delete_file",
                  "nextcloud_move_file", "fs_delete"):
         assert tmap.get(name), f"{name} is not gated by any connection"

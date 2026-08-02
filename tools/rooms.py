@@ -270,6 +270,46 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 f"Rooms take minutes. Check room_result(run_id=\"{rid}\") for the outcome — "
                 f"do not assume it succeeded.")
 
+    class AdviseInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        note: str = Field(..., min_length=1, max_length=1200,
+                          description="What the seats after you should do differently")
+        run_id: str = Field(default="", max_length=80,
+                            description="Defaults to the room run you are part of")
+
+    @mcp.tool(name="room_advise", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def room_advise(params: AdviseInput) -> str:
+        """Redirect the seats that come after you in this room.
+
+        Use this when you find something that changes what the *next* seat should
+        do — the brief named a library that is deprecated, the data says the
+        question was wrong, a whole line of work is a dead end. Your normal output
+        is passed on as material; this is passed on as an instruction, above the
+        brief, and it overrides the brief where they conflict.
+
+        Keep it to what should change and why. It is not a place for findings —
+        those belong in your working folder.
+        """
+        live = workforce.read_live(_ROOT)
+        # Only a run that is actually in flight, not merely the last one seen:
+        # run_id outlives a finished room, so falling back to it would let a
+        # single agent leave advice for a room that stopped hours ago.
+        run_id = params.run_id.strip() or (live.get("run_id", "") if live.get("running") else "")
+        if not run_id:
+            return ("Error: no room run to advise. room_advise only applies while a "
+                    "room is running; a single agent run has no seats after it.")
+        if not workforce.get_room_run(_ROOT, run_id) and live.get("run_id") != run_id:
+            return f"Error: no room run '{run_id}'."
+        try:
+            items = workforce.add_advice(_ROOT, run_id, params.note)
+        except ValueError as e:
+            return f"Error: {e}"
+        return (f"✓ Recorded and read back — note {len(items)} of "
+                f"{workforce.MAX_ADVICE} for run `{run_id}`.\n\n"
+                f"> {items[-1]['note']}\n\n"
+                f"Every seat after you sees this above the brief. It does not reach "
+                f"seats that have already run.")
+
     class ResultInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         run_id: str = Field(default="", description="Run id; empty returns the most recent runs",
