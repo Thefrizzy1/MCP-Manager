@@ -7,7 +7,7 @@ import re
 import uuid
 import httpx
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field, ConfigDict
 from mcp.server.fastmcp import FastMCP
@@ -44,7 +44,11 @@ def parse_dav_multistatus(xml_text: str) -> list[dict]:
         if not href:
             continue
         entry: dict = {"href": href, "displayname": "", "is_calendar": False,
-                       "is_collection": False, "comps": [], "contentlength": None}
+                       "is_collection": False, "comps": [], "contentlength": None,
+                       # None = the server did not say. Only ``False`` is a real
+                       # "you may not write here", so an absent property never
+                       # hides a calendar the user can actually use.
+                       "writable": None}
         for dn in resp.iter(f"{{{DAV_NS}}}displayname"):
             entry["displayname"] = (dn.text or "").strip()
             break
@@ -58,6 +62,16 @@ def parse_dav_multistatus(xml_text: str) -> list[dict]:
             name = (comp.get("name") or "").strip().upper()
             if name:
                 entry["comps"].append(name)
+        # Nextcloud generates read-only calendars — "Contact birthdays" is the
+        # one everybody has — and they sort to the top alphabetically. Writing to
+        # one is a 403 that reads like broken credentials, so ask the server who
+        # may write where instead of guessing from the name.
+        for privs in resp.iter(f"{{{DAV_NS}}}current-user-privilege-set"):
+            granted = {p.tag for p in privs.iter() if p.tag.startswith(f"{{{DAV_NS}}}")}
+            entry["writable"] = any(
+                f"{{{DAV_NS}}}{p}" in granted
+                for p in ("write", "write-content", "bind", "all"))
+            break
         for cl in resp.iter(f"{{{DAV_NS}}}getcontentlength"):
             try:
                 entry["contentlength"] = int((cl.text or "").strip())
@@ -252,12 +266,19 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
     # ─── CALENDARS ────────────────────────────────────────────────────────────
 
-    def _calendars_from_multistatus(xml_text: str) -> list[tuple[str, str, list[str]]]:
-        """[(slug, display name, supported components)] from a PROPFIND body."""
+    def _calendars_from_multistatus(xml_text: str) -> list[tuple[str, str, list[str], bool]]:
+        """[(slug, display name, supported components, writable)] from a PROPFIND body.
+
+        Writable calendars sort first. Sorting by display name alone put
+        "Contact birthdays" — a read-only calendar Nextcloud generates from your
+        contacts — at the top of every list, so anything that picked the first
+        entry picked a calendar it could not write to and got a 403 that reads
+        like broken credentials.
+        """
         from urllib.parse import unquote, urlparse
 
         home = urlparse(_caldav("")).path.rstrip("/")
-        out: list[tuple[str, str, list[str]]] = []
+        out: list[tuple[str, str, list[str], bool]] = []
         for e in parse_dav_multistatus(xml_text):
             path = urlparse(e["href"]).path.rstrip("/")
             if path == home:                 # the calendar home itself
@@ -267,8 +288,10 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             slug = unquote(path.split("/")[-1])
             if not slug:
                 continue
-            out.append((slug, e["displayname"] or slug, e["comps"]))
-        out.sort(key=lambda c: c[1].lower())
+            # Only an explicit False means read-only; a server that does not
+            # report privileges must not have all its calendars treated as such.
+            out.append((slug, e["displayname"] or slug, e["comps"], e["writable"] is not False))
+        out.sort(key=lambda c: (not c[3], c[1].lower()))
         return out
 
     _CAL_PROPFIND = b"""<?xml version="1.0"?>
@@ -276,11 +299,12 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
   <d:prop>
     <d:displayname/>
     <d:resourcetype/>
+    <d:current-user-privilege-set/>
     <c:supported-calendar-component-set/>
   </d:prop>
 </d:propfind>"""
 
-    async def _discover_calendars() -> list[tuple[str, str, list[str]]]:
+    async def _discover_calendars() -> list[tuple[str, str, list[str], bool]]:
         """Calendar list straight from the server, or [] if it cannot be read."""
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
@@ -301,17 +325,39 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         both task tools. Resolve a real VTODO-capable calendar instead, and only
         fall back to the caller's value if discovery turns up nothing.
         """
+        return await _resolve_calendar(requested, "VTODO")
+
+    async def _resolve_calendar(requested: str, comp: str) -> tuple[str, str]:
+        """(slug, note) for a call that needs a calendar it can write to.
+
+        ``comp`` is VTODO for tasks or VEVENT for events. A calendar the user
+        cannot write to is never chosen automatically — that was the whole
+        "Nextcloud won't let me write" symptom: discovery offered
+        contact_birthdays first and the write came back 403.
+        """
         wanted = (requested or "").strip()
         cals = await _discover_calendars()
         if not cals:
             return wanted or "personal", ""
-        slugs = {c[0] for c in cals}
-        if wanted and wanted in slugs:
-            return wanted, ""
-        todo = [c for c in cals if "VTODO" in c[2]]
-        pick = (todo or cals)[0]
+        by_slug = {c[0]: c for c in cals}
+        if wanted and wanted in by_slug:
+            hit = by_slug[wanted]
+            if hit[3]:
+                return wanted, ""
+            # Honour the explicit choice — refusing to write where you were told
+            # to write is worse — but say plainly what is about to happen.
+            return wanted, (f"_`{wanted}` is read-only on this server "
+                            f"(Nextcloud generates it); the write will very "
+                            f"likely be refused._\n\n")
+
+        usable = [c for c in cals if c[3] and comp in c[2]] or [c for c in cals if c[3]]
+        if not usable:
+            return wanted or cals[0][0], (
+                "_No writable calendar was found on this server. Check the "
+                "account's calendar permissions._\n\n")
+        pick = usable[0]
         note = ""
-        if wanted and wanted not in slugs:
+        if wanted:
             note = (f"_'{wanted}' is not a calendar on this server — used "
                     f"`{pick[0]}` instead. Available: "
                     + ", ".join(f"`{c[0]}`" for c in cals) + "._\n\n")
@@ -327,26 +373,21 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
-            body = b"""<?xml version="1.0"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav">
-  <d:prop>
-    <d:displayname/>
-    <d:resourcetype/>
-    <c:supported-calendar-component-set/>
-  </d:prop>
-</d:propfind>"""
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 r = await client.request("PROPFIND", _caldav(), auth=_auth(),
-                    headers={"Depth": "1", "Content-Type": "application/xml"}, content=body)
+                    headers={"Depth": "1", "Content-Type": "application/xml"},
+                    content=_CAL_PROPFIND)
                 r.raise_for_status()
 
             calendars = _calendars_from_multistatus(r.text)
             if not calendars:
                 return "No Nextcloud calendars found for this user."
 
-            calendars.sort(key=lambda c: c[1].lower())
+            # Keep the writable-first ordering from _calendars_from_multistatus:
+            # a plain name sort here put the read-only "Contact birthdays" back on
+            # top, which is exactly the calendar callers must not default to.
             result = "## Nextcloud Calendars\n\n"
-            for slug, display, comps in calendars:
+            for slug, display, comps, writable in calendars:
                 if comps:
                     has_e = "VEVENT" in comps
                     has_t = "VTODO" in comps
@@ -360,7 +401,8 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                         kind = ", ".join(c.lower() for c in comps)
                 else:
                     kind = "events (assumed)"
-                result += f"- **{display}** — slug: `{slug}` — {kind}\n"
+                flag = "" if writable else " — **read-only** (do not write here)"
+                result += f"- **{display}** — slug: `{slug}` — {kind}{flag}\n"
             return result
         except Exception as e:
             return _handle_error(e, "Nextcloud CalDAV")
@@ -463,8 +505,12 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
+            # Resolve first: the old code PUT straight at params.calendar, so a
+            # default or an agent's guess landed on a calendar that did not exist
+            # (404) or could not be written to (403), and the error named neither.
+            calendar, note = await _resolve_calendar(params.calendar, "VEVENT")
             uid = str(uuid.uuid4())
-            now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            now_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             date_clean = params.date.replace("-", "")
 
             if params.start_time:
@@ -503,14 +549,15 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
             async with httpx.AsyncClient(timeout=TIMEOUT) as client:
                 r = await client.put(
-                    _caldav(f"{params.calendar}/{uid}.ics"), auth=_auth(),
+                    _caldav(f"{calendar}/{uid}.ics"), auth=_auth(),
                     headers={"Content-Type": "text/calendar; charset=utf-8"},
                     content=ical.encode()
                 )
                 r.raise_for_status()
 
             time_str = f" at {params.start_time}" if params.start_time else " (all day)"
-            return f"✓ Event '{params.title}' added to {params.calendar} on {params.date}{time_str}\nUID: `{uid}`"
+            return (f"{note}✓ Event '{params.title}' added to {calendar} on "
+                    f"{params.date}{time_str}\nUID: `{uid}`")
         except Exception as e:
             return _handle_error(e, "Nextcloud CalDAV")
 
@@ -619,7 +666,7 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             # PUT 404'd every time ("Nextcloud Tasks resource not found").
             slug, note = await _resolve_task_calendar(params.list_name)
             uid = str(uuid.uuid4())
-            now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            now_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             prio_map = {"high": "1", "normal": "5", "low": "9"}
             priority = prio_map.get(params.priority, "5")
 
@@ -663,7 +710,7 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not cfg.is_configured("nextcloud_url", "nextcloud_username", "nextcloud_password"):
             return "Error: Nextcloud not configured."
         try:
-            now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            now_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             # Resolve the same way add_task does, or this reads from a slug that
             # does not exist. Nextcloud has no calendar called "tasks", so a task
             # created in the resolved VTODO calendar was then looked for under the
@@ -831,7 +878,7 @@ def register_nextcloud_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return "Error: Nextcloud not configured."
         try:
             uid = str(uuid.uuid4())
-            now_str = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+            now_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
             # Split name into parts
             name_parts = params.name.strip().split(" ", 1)
