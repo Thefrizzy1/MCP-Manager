@@ -16,6 +16,7 @@ the UI takes effect without a restart. See core/mcp_bearer_middleware.py.
 from __future__ import annotations
 
 import os
+import secrets
 import threading
 from pathlib import Path
 
@@ -93,6 +94,39 @@ def _write_env_file(p: Path, content: str) -> None:
         f.write(content)
         f.flush()
         os.fsync(f.fileno())
+
+
+def ensure_ui_password(path: Path | None = None) -> tuple[str, bool]:
+    """Guarantee a UI password exists. Returns ``(password, generated_now)``.
+
+    Called once at boot. Plutus used to fall back to a constant compiled into the
+    source and print it in the banner, which is a published credential for a
+    dashboard that can reach Docker, SSH and the filesystem. Instead the first run
+    mints a random password and persists it, so the value is unique per install
+    and still discoverable — it is printed once, and lives in .env afterwards.
+
+    If .env cannot be written the generated password is kept for this process
+    only: still unguessable, but it changes on restart, and the caller says so
+    rather than pretending it was saved.
+    """
+    p = path or ENV_PATH
+    existing = (os.getenv("UI_PASSWORD") or read_env(p).get("UI_PASSWORD") or "").strip()
+    if existing:
+        return existing, False
+    pw = secrets.token_urlsafe(12)
+    try:
+        update_env({"UI_PASSWORD": pw}, path=p)
+    except Exception:
+        # Keep it live in-process even when persistence fails, so the UI works
+        # this session instead of 503-ing on a fresh box with a read-only mount.
+        os.environ["UI_PASSWORD"] = pw
+        apply_live_env({"UI_PASSWORD": pw})
+    return pw, True
+
+
+def ui_password_persisted(path: Path | None = None) -> bool:
+    """True when the password is actually written down, not just in this process."""
+    return bool(read_env(path or ENV_PATH).get("UI_PASSWORD", "").strip())
 
 
 def update_env(updates: dict, *, validate: bool = True, path: Path | None = None) -> dict[str, str]:

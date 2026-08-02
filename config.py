@@ -10,8 +10,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Used when UI_PASSWORD is not set in the environment (first run / fresh .env).
-DEFAULT_UI_PASSWORD = "adminadmin"
+# There is deliberately no shared default password. A published constant on a
+# dashboard that reaches Docker, SSH and the filesystem is a backdoor the moment
+# the port is exposed, and "adminadmin" was previously printed at every boot. On
+# first run core.env_store.ensure_ui_password() generates a random one, writes it
+# to .env, and prints it once; with no password set at all the UI refuses to
+# serve (503) rather than falling back to something guessable.
 
 
 def _get(key: str, default: str = "") -> str:
@@ -57,7 +61,7 @@ class Config(BaseModel):
     ui_port: int = int(_get("UI_PORT", "8766"))
     ui_enabled: bool = _get_bool("UI_ENABLED", True)
     ui_username: str = _get("UI_USERNAME", "admin")
-    ui_password: str = _get("UI_PASSWORD", DEFAULT_UI_PASSWORD)
+    ui_password: str = _get("UI_PASSWORD", "")
     # HTTPS base behind Tailscale serve/funnel or proxy (path /mcp appended in UI)
     public_mcp_base: str = _get("PUBLIC_MCP_BASE", "")
     # Peers whose X-Forwarded-* uvicorn should trust. Plutus is meant to sit

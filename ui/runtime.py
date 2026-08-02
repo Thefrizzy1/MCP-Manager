@@ -34,6 +34,7 @@ from core.tool_cache import beta_cache_background_loop
 from core.tool_manager_adapter import ToolRegistryAdapter
 from mcp.server.fastmcp import FastMCP
 from tools.agent_db import register_agent_db_tools
+from tools.rooms import register_room_tools
 from tools.agents import register_agent_tools
 from tools.apps import register_app_tools
 from tools.comfyui import register_comfyui_tools
@@ -118,6 +119,7 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_resource_tools(m, allow=allow)
     register_app_tools(m, allow=allow)
     register_agent_db_tools(m, allow=allow)
+    register_room_tools(m, allow=allow)
     _load_user_extensions(m, allow=allow)
 
 

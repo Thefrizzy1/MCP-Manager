@@ -23,7 +23,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from config import DEFAULT_UI_PASSWORD
+from config import cfg as _cfg
 from core import oauth_provider as op
 from core.env_store import ENV_PATH, read_env
 
@@ -58,7 +58,8 @@ async def _params(request: Request) -> dict:
 
 def _ui_credentials() -> tuple[str, str]:
     env = read_env()
-    return (env.get("UI_USERNAME") or "admin").strip(), (env.get("UI_PASSWORD") or DEFAULT_UI_PASSWORD)
+    return ((env.get("UI_USERNAME") or "admin").strip(),
+            env.get("UI_PASSWORD") or _cfg.ui_password)
 
 
 # ── discovery ─────────────────────────────────────────────────────────────────

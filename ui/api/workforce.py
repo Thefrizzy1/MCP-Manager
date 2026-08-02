@@ -58,11 +58,23 @@ class RoomPatch(BaseModel):
     label: str | None = None
     brief: str | None = None
     mcp_services: list[str] | None = None
+    # The room to run once this one succeeds. core.workforce has honoured this
+    # since the handoff landed, but it was never accepted here or offered in the
+    # UI, so the whole chain feature was unreachable. "" clears it.
+    next_room: str | None = None
 
 
 @router.post("/api/v1/rooms/{room_id}")
 async def api_update_room(room_id: str, body: RoomPatch):
     _room_or_404(room_id)
+    nxt = (body.next_room or "").strip()
+    if nxt:
+        # Caught here as well as at run time so the mistake surfaces while you are
+        # wiring the chain, not silently as a handoff that never happens.
+        if nxt == room_id:
+            raise HTTPException(400, "a room cannot hand off to itself")
+        if not workforce.get_room(ROOT, nxt):
+            raise HTTPException(404, f"no room '{nxt}' to hand off to")
     try:
         return {"ok": True, "room": workforce.update_room(ROOT, room_id, body.model_dump(exclude_none=True))}
     except (KeyError, ValueError) as e:

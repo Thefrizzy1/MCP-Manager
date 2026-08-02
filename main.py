@@ -72,7 +72,7 @@ from urllib.request import urlopen
 
 import uvicorn
 
-from config import DEFAULT_UI_PASSWORD, allow_empty_ui_password, cfg
+from config import allow_empty_ui_password, cfg
 from core.recent_runs import ensure_data_dir
 from ui.api import build_ui_app
 from ui.runtime import ROOT, build_mcp_asgi_app
@@ -213,12 +213,16 @@ def _start_ui_watchdog(ui_proc: "multiprocessing.Process") -> None:
 if __name__ == "__main__":
     ensure_data_dir(ROOT)
     _sweep_stale_tmp()
-    if not cfg.ui_password and not allow_empty_ui_password():
-        print(
-            "⚠️  UI_PASSWORD is empty in .env — /ui will return 503 until you set a password "
-            "(or PLUTUS_ALLOW_EMPTY_UI_PASSWORD=1 for dev only).",
-            flush=True,
-        )
+    # Before the UI child is forked: it re-imports config, so a password minted
+    # after the fork would exist only in this process and the dashboard would
+    # 503 against a password the banner had just printed.
+    _first_run_password = ""
+    if cfg.ui_enabled and not allow_empty_ui_password():
+        from core.env_store import ensure_ui_password, ui_password_persisted
+        _pw, _generated = ensure_ui_password()
+        cfg.ui_password = _pw
+        if _generated:
+            _first_run_password = _pw
     ui_proc = None
     if cfg.ui_enabled:
         ui_proc = multiprocessing.Process(target=run_ui, daemon=True)
@@ -238,12 +242,15 @@ if __name__ == "__main__":
         print("   MCP auth: Bearer token required (MCP_REQUIRE_BEARER=true)", flush=True)
     if cfg.ui_enabled:
         print(f"   Web UI: http://0.0.0.0:{cfg.ui_port}/ui", flush=True)
-        if os.getenv("UI_PASSWORD") is None:
-            print(
-                f"   ℹ️  Login: username `{cfg.ui_username}`, password `{DEFAULT_UI_PASSWORD}` "
-                "(set UI_PASSWORD in .env to change)",
-                flush=True,
-            )
+        if _first_run_password:
+            # Printed once, on the run that created it. Afterwards it lives in
+            # .env and the banner stays quiet — a password echoed at every boot
+            # ends up in every log shipper and every screen share.
+            saved = ("saved to .env" if ui_password_persisted() else
+                     "COULD NOT be saved to .env — it will change on restart until "
+                     "you set UI_PASSWORD yourself")
+            print(f"   🔑 First run: username `{cfg.ui_username}`, "
+                  f"password `{_first_run_password}` ({saved})", flush=True)
     else:
         print("   Web UI: off (UI_ENABLED=false) — MCP API only, lower RAM", flush=True)
     _run_mcp_main()

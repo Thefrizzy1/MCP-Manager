@@ -30,6 +30,7 @@ interface Room {
   label: string
   brief: string
   mcp_services: string[]
+  next_room?: string
   seats: Seat[]
 }
 interface RoomStep {
@@ -275,6 +276,27 @@ export function Rooms() {
                         )
                       }
                     />
+                  </Field>
+
+                  <Field
+                    label="Then run"
+                    hint="When this room finishes, the next one starts on the same working folder and is told what this room produced. That is how research reaches the developers."
+                  >
+                    <Select
+                      value={open.next_room || ''}
+                      onChange={(e) =>
+                        call(() => api.post(`/api/v1/rooms/${open.id}`, { next_room: e.target.value }), 'next')
+                      }
+                    >
+                      <option value="">Nothing — stop after this room</option>
+                      {(rooms.data?.rooms || [])
+                        .filter((r) => r.id !== open.id)
+                        .map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                    </Select>
                   </Field>
 
                   {/* the seats — drop target */}

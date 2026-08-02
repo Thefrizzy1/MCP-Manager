@@ -171,9 +171,16 @@ def test_every_service_tool_is_gated_not_just_the_carded_ones():
     tmap = tool_to_service_map()
     ungated = [n for n in tools.tool_names() if n not in tmap]
 
-    # Delegation belongs to no service by design; everything else must be owned.
+    # Delegation and rooms belong to no service by design — they orchestrate
+    # Plutus itself rather than talking to an integration, so there is no
+    # connection to tick. They are gated on the other axis instead: every
+    # mutating room_* tool is annotated non-read-only, so the wizard's write
+    # switch blocks them. Everything else must be owned by a service.
     assert set(ungated) <= {"agent_delegate", "agent_delegate_batch",
-                            "agent_list_workers"}, ungated
+                            "agent_list_workers",
+                            "room_list", "room_create", "room_update", "room_delete",
+                            "room_add_seat", "room_remove_seat", "room_run",
+                            "room_result"}, ungated
     for name in ("nextcloud_upload_file", "nextcloud_delete_file",
                  "nextcloud_move_file", "fs_delete"):
         assert tmap.get(name), f"{name} is not gated by any connection"

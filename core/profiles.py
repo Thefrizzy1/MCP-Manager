@@ -77,7 +77,7 @@ def tool_filter(mcp: Any, allow: set[str] | None):
 # ── Categories & intent matching (moved from the deleted tool_gate) ───────────
 
 TOOL_CATEGORIES: dict[str, list[str]] = {
-    "media":         ["jellyfin_", "sonarr_", "radarr_", "lidarr_", "jellyseerr_", "qbittorrent_"],
+    "media":         ["jellyfin_", "sonarr_", "radarr_", "lidarr_", "jellyseerr_", "qbittorrent_", "youtube_"],
     "photos":        ["immich_"],
     "calendar":      ["nextcloud_list_calendars", "nextcloud_get_events", "nextcloud_add_event", "nextcloud_delete_event"],
     "tasks":         ["nextcloud_get_tasks", "nextcloud_add_task", "nextcloud_complete_task", "nextcloud_delete_task", "habitica_"],
@@ -86,13 +86,18 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "files":         ["nextcloud_list_files", "nextcloud_read_file", "nextcloud_upload_file", "nextcloud_share_file", "nextcloud_move_file", "nextcloud_delete_file", "nextcloud_list_shares", "fs_", "smb_", "db_"],
     "home":          ["ha_"],
     "automation":    ["n8n_"],
-    "notifications": ["ntfy_", "send_email", "nextcloud_share_file"],
-    "monitoring":    ["uptime_status", "syncthing_", "docker_get_logs", "fail2ban_status"],
+    "notifications": ["ntfy_", "send_email", "nextcloud_share_file", "nextcloud_get_notifications"],
+    "monitoring":    ["uptime_status", "syncthing_", "docker_get_logs", "fail2ban_status",
+                      "proton_bridge_status", "nextcloud_get_activity"],
     "system_ops":    ["docker_", "omv_", "ssh_", "fail2ban_", "tailscale_"],
-    "ai":            ["comfyui_", "fal_"],
+    "ai":            ["comfyui_", "fal_", "huggingface_"],
     "weather":       ["weather_", "get_context"],
     "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_"],
     "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_"],
+    # Source forges. Previously uncategorised, which meant the slicer could not
+    # remove them at all: 26 GitHub/GitLab schemas rode along in every single
+    # agent prompt — ~4k tokens a request — even for a run about the weather.
+    "code":          ["github_", "gitlab_"],
     "finance":       ["currency_"],
     "trivia": [
         "pub_chuck_joke", "pub_kanye_quote", "pub_bored_activity", "pub_animechan_quote", "pub_breaking_bad_quote",
@@ -113,7 +118,8 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "crypto":        ["pub_coingecko_price", "pub_binance_ticker", "pub_coincap_assets", "pub_blockchain_btc_ticker", "pub_er_api_latest"],
     # agent_* is delegation: a coordinator handing work to cheap workers.
     # Meta rather than a domain — it is about *how* work gets done, not what.
-    "meta":          ["plutus_tool_slicer", "test_all_tools", "agent_"],
+    "meta":          ["plutus_tool_slicer", "test_all_tools", "agent_", "room_",
+                      "plutus_status", "nextcloud_get_user_info"],
 }
 
 # Curated multi-category presets so users don't have to memorize the granular list.
@@ -124,6 +130,7 @@ INTENT_PRESETS: dict[str, list[str]] = {
     "homelab":  ["system_ops", "monitoring", "automation"],
     "smarthome": ["home", "automation", "notifications", "monitoring"],
     "creative": ["ai", "photos", "files"],
+    "dev":      ["code", "files", "search"],
     "web":      ["search", "weather", "finance", "ip_network", "social"],
     "social":   ["social", "search"],
     "fun":      ["trivia", "crypto"],
