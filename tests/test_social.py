@@ -140,6 +140,8 @@ def test_all_social_tools_register_and_none_can_write():
 
     assert set(tools) == {
         "reddit_subreddit_posts", "reddit_search", "reddit_post_comments",
+        # Which logins exist, so a caller can name one instead of guessing.
+        "reddit_accounts",
         # Only reachable with a Reddit login — the account's own view.
         "reddit_me", "reddit_my_subreddits", "reddit_home_feed", "reddit_my_posts",
         "hackernews_stories", "hackernews_search", "lemmy_posts",

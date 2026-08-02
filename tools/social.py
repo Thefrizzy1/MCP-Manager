@@ -38,6 +38,7 @@ core.ssrf_guard before a request goes out, the same guard web_fetch uses.
 import asyncio
 import html as _html
 import re
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -126,59 +127,90 @@ async def _get_json(url: str, params: dict | None = None, *, screen: bool = Fals
 # private endpoints. Nothing here requires it — every tool falls back to the feeds
 # — but everything is better with it.
 
-_REDDIT_TOKEN: dict = {"value": "", "expires": 0.0}
+# One cached token per account, keyed by account id. A single shared slot would
+# hand the second account the first account's token — every "as me" call would
+# quietly answer as the wrong person.
+_REDDIT_TOKENS: dict[str, dict] = {}
 _REDDIT_AUTH_GATE = asyncio.Lock()
 _TOKEN_EARLY_REFRESH = 60.0        # renew a minute early rather than mid-request
 
+_SOCIAL_ROOT = Path(__file__).resolve().parents[1]
+
+
+def reddit_accounts() -> list[dict]:
+    from core import reddit_accounts as ra
+    return ra.list_accounts(_SOCIAL_ROOT)
+
 
 def reddit_configured() -> bool:
-    """True when a script app is fully configured. Partial config is not enough."""
-    from config import cfg
-    return cfg.is_configured("reddit_client_id", "reddit_client_secret",
-                             "reddit_username", "reddit_password")
+    """True when at least one account is fully configured."""
+    return bool(reddit_accounts())
 
 
-def forget_reddit_token() -> None:
-    _REDDIT_TOKEN.update(value="", expires=0.0)
+def forget_reddit_token(account_id: str = "") -> None:
+    if account_id:
+        _REDDIT_TOKENS.pop(account_id, None)
+    else:
+        _REDDIT_TOKENS.clear()
 
 
-async def reddit_token() -> str:
-    """A cached OAuth access token, or "" when no app is configured.
+async def reddit_token(account: str = "") -> str:
+    """A cached OAuth access token for one account, or "" when none applies.
 
     Returning "" rather than raising is deliberate: the caller falls back to the
     public feeds, so a missing or broken login degrades the output instead of
-    failing the tool.
+    failing the tool. An *unknown* account is the exception — see reddit_auth_error.
     """
-    if not reddit_configured():
+    from core import reddit_accounts as ra
+
+    acct = ra.resolve(_SOCIAL_ROOT, account)
+    if not acct:
         return ""
-    from config import cfg
+    aid = acct["id"]
 
     now = asyncio.get_running_loop().time()
     async with _REDDIT_AUTH_GATE:
-        if _REDDIT_TOKEN["value"] and _REDDIT_TOKEN["expires"] - _TOKEN_EARLY_REFRESH > now:
-            return _REDDIT_TOKEN["value"]
+        cached = _REDDIT_TOKENS.get(aid)
+        if cached and cached["value"] and cached["expires"] - _TOKEN_EARLY_REFRESH > now:
+            return cached["value"]
         try:
             async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": UA}) as c:
                 r = await c.post(
                     "https://www.reddit.com/api/v1/access_token",
-                    auth=(cfg.reddit_client_id, cfg.reddit_client_secret),
+                    auth=(acct["client_id"], acct["client_secret"]),
                     data={"grant_type": "password",
-                          "username": cfg.reddit_username,
-                          "password": cfg.reddit_password},
+                          "username": acct["username"],
+                          "password": acct["password"]},
                 )
             r.raise_for_status()
             body = r.json()
         except Exception:
-            forget_reddit_token()
+            forget_reddit_token(aid)
             return ""
         token = str(body.get("access_token") or "")
         if not token:
-            forget_reddit_token()
+            forget_reddit_token(aid)
             return ""
-        _REDDIT_TOKEN.update(
-            value=token,
-            expires=now + float(body.get("expires_in") or 3600))
+        _REDDIT_TOKENS[aid] = {"value": token,
+                               "expires": now + float(body.get("expires_in") or 3600)}
         return token
+
+
+def reddit_auth_error(account: str) -> str:
+    """Why a named account could not be used, or "" when it is fine.
+
+    A typo'd account name must not silently fall back to the public feeds and a
+    different identity — that is exactly the "it said it worked" failure the
+    write path is supposed to make impossible.
+    """
+    from core import reddit_accounts as ra
+
+    if not (account or "").strip():
+        return ""
+    if ra.resolve(_SOCIAL_ROOT, account):
+        return ""
+    known = ", ".join(a["label"] for a in ra.public_accounts(_SOCIAL_ROOT)) or "none configured"
+    return f"No Reddit account matching '{account}'. Known accounts: {known}."
 
 
 def atom_entries(xml: str, limit: int) -> list[dict]:
@@ -218,11 +250,19 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         r.raise_for_status()
         return atom_entries(r.text, int(params.get("limit", 10)))
 
-    async def _reddit_api(path: str, params: dict | None = None) -> dict | list | None:
-        """Authenticated JSON from oauth.reddit.com, or None when not logged in."""
-        token = await reddit_token()
+    async def _reddit_api(path: str, params: dict | None = None,
+                          account: str = "") -> dict | list | None:
+        """Authenticated JSON from oauth.reddit.com, or None when not logged in.
+
+        ``account`` picks which login answers; empty uses the default one.
+        """
+        from core import reddit_accounts as ra
+
+        token = await reddit_token(account)
         if not token:
             return None
+        acct = ra.resolve(_SOCIAL_ROOT, account)
+        aid = acct["id"] if acct else ""
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
                                      headers={"User-Agent": UA,
                                               "Authorization": f"bearer {token}"}) as c:
@@ -231,8 +271,8 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             # The token expired early, or the app's password changed. One retry
             # with a fresh token beats surfacing an auth error for something the
             # user cannot see or act on.
-            forget_reddit_token()
-            token = await reddit_token()
+            forget_reddit_token(aid)
+            token = await reddit_token(account)
             if not token:
                 return None
             async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
@@ -412,11 +452,45 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                     "(https://www.reddit.com/prefs/apps) under Settings → Reddit: "
                     "client id, secret, your username and password.")
 
+    @mcp.tool(name="reddit_accounts", annotations={"readOnlyHint": True})
+    async def reddit_accounts_tool() -> str:
+        """List the Reddit accounts Plutus can act as.
+
+        Call this before any tool that takes an ``account`` when you need a
+        specific identity — passing a name that does not exist is refused rather
+        than quietly answered by the default account.
+        """
+        from core import reddit_accounts as ra
+
+        accounts = ra.public_accounts(_SOCIAL_ROOT)
+        if not accounts:
+            return _NEEDS_LOGIN
+        lines = [f"## Reddit accounts ({len(accounts)})", ""]
+        for a in accounts:
+            marks = []
+            if a["is_default"]:
+                marks.append("default")
+            if a["from_env"]:
+                marks.append("from .env")
+            suffix = f" — {', '.join(marks)}" if marks else ""
+            lines.append(f"- **{a['label']}** (u/{a['username']}) `{a['id']}`{suffix}")
+        lines += ["", "Pass `account` to reddit_me, reddit_my_subreddits, "
+                      "reddit_home_feed or reddit_my_posts to use one of these."]
+        return NL.join(lines)
+
+    class RedditWhoInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        account: str = Field(default="", max_length=80,
+                             description="Which Reddit account to check. Empty = the default.")
+
     @mcp.tool(name="reddit_me", annotations={"readOnlyHint": True})
-    async def reddit_me() -> str:
+    async def reddit_me(params: RedditWhoInput) -> str:
         """Who Plutus is logged in to Reddit as, with karma and account age."""
+        bad = reddit_auth_error(params.account)
+        if bad:
+            return f"Error: {bad}"
         try:
-            me = await _reddit_api("/api/v1/me")
+            me = await _reddit_api("/api/v1/me", account=params.account)
         except Exception as e:
             return _handle_error(e, "Reddit")
         if not isinstance(me, dict):
@@ -443,13 +517,16 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     class RedditLimitInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         limit: int = Field(default=25, ge=1, le=100)
+        account: str = Field(default="", max_length=80,
+                             description="Which Reddit account to use "
+                                         "(label, username or id). Empty = the default.")
 
     @mcp.tool(name="reddit_my_subreddits", annotations={"readOnlyHint": True})
     async def reddit_my_subreddits(params: RedditLimitInput) -> str:
         """List the subreddits this Reddit account subscribes to."""
         try:
             body = await _reddit_api("/subreddits/mine/subscriber",
-                                     {"limit": params.limit})
+                                     {"limit": params.limit}, account=params.account)
         except Exception as e:
             return _handle_error(e, "Reddit")
         if body is None:
@@ -470,7 +547,8 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     async def reddit_home_feed(params: RedditLimitInput) -> str:
         """This account's Reddit front page — posts from the subreddits it follows."""
         try:
-            body = await _reddit_api("/best", {"limit": params.limit})
+            body = await _reddit_api("/best", {"limit": params.limit},
+                                     account=params.account)
         except Exception as e:
             return _handle_error(e, "Reddit")
         if body is None:
@@ -484,6 +562,9 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         limit: int = Field(default=25, ge=1, le=100)
         kind: str = Field(default="saved", description="saved | upvoted | submitted")
+        account: str = Field(default="", max_length=80,
+                             description="Which Reddit account to use "
+                                         "(label, username or id). Empty = the default.")
 
     @mcp.tool(name="reddit_my_posts", annotations={"readOnlyHint": True})
     async def reddit_my_posts(params: RedditSavedInput) -> str:
@@ -492,12 +573,17 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         Saved posts are a research bookmark list an agent can actually work from.
         """
         kind = params.kind if params.kind in ("saved", "upvoted", "submitted") else "saved"
-        from config import cfg
-        user = (cfg.reddit_username or "").strip()
-        if not user:
+        # The *resolved* account's username, not cfg.reddit_username: with
+        # several logins the env one is rarely the one being asked about, and
+        # the old code would have fetched the wrong person's saved posts.
+        from core import reddit_accounts as ra
+        acct = ra.resolve(_SOCIAL_ROOT, params.account)
+        if not acct:
             return _NEEDS_LOGIN
+        user = acct["username"]
         try:
-            body = await _reddit_api(f"/user/{user}/{kind}", {"limit": params.limit})
+            body = await _reddit_api(f"/user/{user}/{kind}", {"limit": params.limit},
+                                     account=params.account)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 403:
                 return (f"Error: Reddit refused to show '{kind}' — the script app's "
