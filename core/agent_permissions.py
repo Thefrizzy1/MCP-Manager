@@ -46,6 +46,29 @@ WRITE: frozenset[str] = frozenset({
 })
 
 
+# Tools that put something in front of *other people*, or send a message. A
+# separate axis from write: an agent can be perfectly free to edit your library
+# and still have no business opening a public issue or emailing anyone.
+OUTWARD: frozenset[str] = frozenset({
+    "send_email", "ntfy_send", "n8n_trigger_webhook",
+    "nextcloud_share_file",
+    "github_create_issue", "github_comment", "github_create_pull",
+    "github_create_repo",
+    "jellyseerr_request",
+})
+
+# Naming conventions for the ones not yet written — reddit_submit_post,
+# mastodon_post, bluesky_publish. Only consulted for tools that are *already*
+# not read-only, which is what stops `reddit_post_comments` (a read) matching.
+_OUTWARD_MARKERS = ("submit", "publish", "share", "tweet", "toot", "upload_video")
+
+
+def is_outward(name: str, read_only: bool) -> bool:
+    if read_only:
+        return False          # a read can never publish
+    return name in OUTWARD or any(m in name for m in _OUTWARD_MARKERS)
+
+
 def normalize_level(level: str | None, default: str = DEFAULT_LEVEL) -> str:
     return level if level in LEVELS else default
 
@@ -93,3 +116,35 @@ def build_disallowed_from_annotations(tool_manager, level: str) -> list[str]:
         blocked = {n for n, a in amap.items() if a and a.destructiveHint}
         blocked |= DANGEROUS & live
     return sorted(f"mcp__plutus__{n}" for n in blocked if n in live)
+
+
+def capability_disallow(tool_manager, *, allow_write: bool = True,
+                        allow_publish: bool = False) -> list[str]:
+    """`mcp__plutus__…` patterns for what these two switches forbid.
+
+    Two independent axes, because they answer different questions:
+
+    - **write** — may this agent change anything at all? Off is a true audit
+      posture: every tool not annotated read-only is blocked.
+    - **publish** — may it put something in front of other people, or send a
+      message? Off by default even when write is on, because "edit my library"
+      and "open a public issue on my repo" are not the same permission and a
+      prompt-injected page can ask for either.
+
+    Fail-safe throughout: a missing or None annotation counts as *not* read-only,
+    so a tool that forgot to declare itself is treated as the dangerous case.
+    """
+    amap = _tool_annotations_map(tool_manager)
+    blocked: set[str] = set()
+    for name, ann in amap.items():
+        read_only = bool(ann and ann.readOnlyHint)
+        if not allow_write and not read_only:
+            blocked.add(name)
+        elif not allow_publish and is_outward(name, read_only):
+            blocked.add(name)
+    # The curated set is a floor, not a substitute: a tool whose annotation
+    # under-classifies it (ssh_run, ha_call_service) stays blocked when writes
+    # are off, whatever it claims about itself.
+    if not allow_write:
+        blocked |= (DANGEROUS | WRITE) & set(amap)
+    return sorted(f"mcp__plutus__{n}" for n in blocked)

@@ -144,7 +144,10 @@ class PlutusScheduler:
                                     # Scheduled on one provider's model; without
                                     # this the run silently fell back to whatever
                                     # the global config last held.
-                                    model=payload.get("model") or None)
+                                    model=payload.get("model") or None,
+                                    allow_write=payload.get("allow_write", True),
+                                    allow_publish=payload.get("allow_publish", False),
+                                    smart_fallback=payload.get("smart_fallback", True))
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "tool" and self._run_tool:

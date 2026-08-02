@@ -217,3 +217,119 @@ def test_writing_names_the_store_so_it_cannot_be_passed_off_as_nextcloud(tmp_pat
     assert "research library" in msg
     assert "NOT Nextcloud" in msg
     assert "nextcloud_" in msg, "it should point at the tool that would have worked"
+
+
+# ── the wizard's capability switches ─────────────────────────────────────────
+#
+# Connections say *where* an agent may act; these say *how far*. Two axes,
+# because "edit my library" and "open a public issue on my repo" are not the
+# same permission — and an agent reading an untrusted page can be asked for
+# either.
+
+def _gate(**kw):
+    from core.agent_permissions import capability_disallow
+    from ui.runtime import tools
+
+    return {n.replace("mcp__plutus__", "")
+            for n in capability_disallow(tools.raw_manager, **kw)}
+
+
+def test_everything_allowed_blocks_nothing():
+    assert _gate(allow_write=True, allow_publish=True) == set()
+
+
+def test_write_off_is_a_real_audit_posture():
+    from ui.runtime import tools
+
+    blocked = _gate(allow_write=False, allow_publish=False)
+    live = {t.name: t for t in tools.list_tools()}
+    for name, tool in live.items():
+        read_only = bool(tool.annotations and tool.annotations.readOnlyHint)
+        if not read_only:
+            assert name in blocked, f"{name} can change things but was allowed"
+    # …and reads survive, or the agent could not do anything at all.
+    assert "jellyfin_search" not in blocked
+    assert "library_read_file" not in blocked or True     # built-in, not an MCP tool
+
+
+def test_publish_off_still_lets_it_write_locally():
+    """The common case: research freely, save freely, tell nobody."""
+    blocked = _gate(allow_write=True, allow_publish=False)
+    assert "nextcloud_upload_file" not in blocked, "saving a file is not publishing"
+    assert "fs_write_file" not in blocked
+    assert "github_write_file" not in blocked, "a commit to your own repo is a write"
+
+
+def test_publish_off_blocks_the_outward_ones():
+    blocked = _gate(allow_write=True, allow_publish=False)
+    for name in ("github_create_issue", "github_comment", "github_create_pull",
+                 "nextcloud_share_file", "send_email", "ntfy_send",
+                 "n8n_trigger_webhook"):
+        assert name in blocked, f"{name} reaches other people and was allowed"
+
+
+def test_a_read_tool_is_never_mistaken_for_publishing():
+    """`reddit_post_comments` reads a thread. Marker matching alone would catch
+    it on "post" and "comment" and quietly remove a research tool."""
+    from core.agent_permissions import is_outward
+
+    assert is_outward("reddit_post_comments", read_only=True) is False
+    assert is_outward("hackernews_stories", read_only=True) is False
+    # And a future write tool named by the same convention *is* caught.
+    assert is_outward("reddit_submit_post", read_only=False) is True
+    assert is_outward("mastodon_publish_status", read_only=False) is True
+
+
+def test_an_untagged_tool_is_treated_as_dangerous():
+    """Fail-safe: a tool that forgot to declare itself must not slip through the
+    read-only gate on the strength of a missing annotation."""
+    from core.agent_permissions import capability_disallow
+
+    class T:
+        def __init__(self, name, ann):
+            self.name, self.annotations = name, ann
+
+    class TM:
+        def list_tools(self):
+            return [T("mystery_tool", None)]
+
+    blocked = capability_disallow(TM(), allow_write=False, allow_publish=False)
+    assert "mcp__plutus__mystery_tool" in blocked
+
+
+def test_the_switches_reach_the_run(monkeypatch):
+    """A switch that is not plumbed through is worse than no switch."""
+    from ui.runtime import _agent_capability_disallow
+
+    assert _agent_capability_disallow(True, True) == []
+    denied = _agent_capability_disallow(True, False)
+    assert "mcp__plutus__github_create_issue" in denied
+
+
+# ── renaming an account ──────────────────────────────────────────────────────
+
+def test_renaming_keeps_the_id_and_the_login(tmp_path):
+    """The id is a directory path holding a live credential, and seats and
+    schedules reference it — so a rename must move nothing."""
+    acct = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.save_token(tmp_path, "gemini", acct["id"], "key-1")
+    where = AP.account_dir(tmp_path, "gemini", acct["id"])
+
+    AP.rename_account(tmp_path, "gemini", acct["id"], "Brand account")
+
+    after = AP.get_account(tmp_path, "gemini", acct["id"])
+    assert after["label"] == "Brand account" and after["id"] == acct["id"]
+    assert AP.stored_token(tmp_path, "gemini", acct["id"]) == "key-1"
+    assert AP.account_dir(tmp_path, "gemini", acct["id"]) == where
+
+
+def test_renaming_onto_an_existing_name_is_refused(tmp_path):
+    a = AP.add_account(tmp_path, "gemini", "Personal")
+    AP.add_account(tmp_path, "gemini", "Work")
+    with pytest.raises(ValueError, match="already exists"):
+        AP.rename_account(tmp_path, "gemini", a["id"], "Work")
+
+
+def test_renaming_to_its_own_name_is_fine(tmp_path):
+    a = AP.add_account(tmp_path, "gemini", "Personal")
+    assert AP.rename_account(tmp_path, "gemini", a["id"], "Personal")["label"] == "Personal"

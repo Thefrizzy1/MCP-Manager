@@ -13,6 +13,7 @@ from core import agent_login, agent_runner, agent_tasks, ai_providers, schedule_
 from ui.api.deps import verify_auth
 from ui.runtime import (
     ROOT,
+    _agent_capability_disallow,
     _agent_queue,
     _agent_service_disallow,
     _enqueue_agent,
@@ -171,15 +172,25 @@ class AgentRunBody(BaseModel):
     # *global* agent config, so choosing Opus once made every later run — on every
     # provider — ask for a model its CLI had never heard of.
     model: str = Field(default="", max_length=80)
+    # What the agent may do, as opposed to where. Publishing is off by default:
+    # "edit my library" and "open a public issue on my repo" are not the same
+    # permission, and an agent reading an untrusted page can be asked for either.
+    allow_write: bool = True
+    allow_publish: bool = False
+    # Retry a rate limit and, if it persists, move to another account on the
+    # same provider rather than losing the run.
+    smart_fallback: bool = True
 
 
 @router.post("/api/v1/agent/run")
 async def api_v1_agent_run(body: AgentRunBody):
-    extra = _agent_service_disallow(body.mcp_services)
+    extra = sorted(set(_agent_service_disallow(body.mcp_services))
+                   | set(_agent_capability_disallow(body.allow_write, body.allow_publish)))
     ok = _enqueue_agent(body.prompt, body.label or "agent", force=True,
                         extra_disallowed=extra, mcp_services=body.mcp_services,
                         provider=body.provider, account_id=body.account_id,
-                        model=body.model or None)
+                        model=body.model or None,
+                        smart_fallback=body.smart_fallback)
     if not ok:
         return JSONResponse({"ok": False, "error": "Agent queue is full."}, status_code=429)
     return {"ok": True, "queued": agent_runner._current["running"]}

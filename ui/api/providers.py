@@ -83,6 +83,21 @@ async def api_add_account(pid: str, body: AccountBody):
             "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
 
 
+class RenameBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=60)
+
+
+@router.post("/api/v1/providers/{pid}/accounts/{aid}/rename")
+async def api_rename_account(pid: str, aid: str, body: RenameBody):
+    _known_account(pid, aid)
+    try:
+        account = ai_providers.rename_account(ROOT, pid, aid, body.label)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "account": account,
+            "providers": await asyncio.to_thread(ai_providers.all_status, ROOT)}
+
+
 @router.delete("/api/v1/providers/{pid}/accounts/{aid}")
 async def api_remove_account(pid: str, aid: str):
     _known_account(pid, aid)

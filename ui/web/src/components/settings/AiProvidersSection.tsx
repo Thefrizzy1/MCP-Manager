@@ -271,7 +271,18 @@ export function AiProvidersSection() {
                 return (
                   <div key={a.id} className="rounded-[var(--radius-sm)] bg-surface-2 px-2.5 py-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-[12.5px] text-ink">{a.label}</span>
+                      <button
+                        className="text-left text-[12.5px] text-ink hover:underline"
+                        title="Rename this account"
+                        onClick={async () => {
+                          const next = prompt('Account name', a.label)?.trim()
+                          if (!next || next === a.label) return
+                          await act(`/api/v1/providers/${p.id}/accounts/${a.id}/rename`,
+                                    'Renamed.', { label: next })
+                        }}
+                      >
+                        {a.label}
+                      </button>
                       <span className={'text-[11.5px] ' + (a.authenticated ? 'text-ok' : 'text-ink-3')}>
                         {a.authenticated ? 'linked' : 'not linked'}
                       </span>

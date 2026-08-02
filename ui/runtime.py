@@ -311,6 +311,7 @@ def _agent_queue_worker() -> None:
                 disallowed_tools=job.get("disallowed"), model=job.get("model") or None,
                 mcp_services=job.get("mcp_services"),
                 provider=job.get("provider") or "", account_id=job.get("account_id") or "",
+                smart_fallback=job.get("smart_fallback", True),
             )
             _maybe_notify_agent(rec)
         except Exception as exc:
@@ -340,6 +341,19 @@ def _agent_service_disallow(selected: list[str] | None) -> list[str]:
     return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
 
 
+def _agent_capability_disallow(allow_write: bool, allow_publish: bool) -> list[str]:
+    """What the wizard's write/post switches forbid, on top of the connection ACL.
+
+    A separate axis from connections: picking Nextcloud says *where* an agent may
+    act, these say *how far*. Read-only and may-not-publish are the two questions
+    people actually want to answer before letting something loose on a web page.
+    """
+    from core.agent_permissions import capability_disallow
+
+    return capability_disallow(tools.raw_manager, allow_write=allow_write,
+                               allow_publish=allow_publish)
+
+
 def _agent_profile_disallow(profile_name: str | None) -> list[str]:
     """Restrict an agent to a named MCP profile's tool subset: deny every Plutus
     tool the profile does not include. '' / None / unknown profile = no restriction.
@@ -364,7 +378,8 @@ def _enqueue_agent(prompt: str, label: str, *,
                    model: str | None = None, force: bool = False,
                    extra_disallowed: list[str] | None = None,
                    mcp_services: list[str] | None = None,
-                   provider: str = "", account_id: str = "") -> bool:
+                   provider: str = "", account_id: str = "",
+                   smart_fallback: bool = True) -> bool:
     """Queue an agent run.
 
     The connection selection is the *only* tool gate: picking a connection grants
@@ -378,7 +393,8 @@ def _enqueue_agent(prompt: str, label: str, *,
         _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
                                  "model": model, "force": force,
                                  "mcp_services": mcp_services,
-                                 "provider": provider, "account_id": account_id})
+                                 "provider": provider, "account_id": account_id,
+                                 "smart_fallback": smart_fallback})
         return True
     except queue.Full:
         log.warning("Agent queue full — dropping '%s'", label)
@@ -388,14 +404,19 @@ def _enqueue_agent(prompt: str, label: str, *,
 def _run_agent_bg(prompt: str, label: str = "agent", *,
                   model: str | None = None, force: bool = False,
                   mcp_services: list[str] | None = None, profile: str | None = None,
-                  provider: str = "", account_id: str = "") -> None:
+                  provider: str = "", account_id: str = "",
+                  allow_write: bool = True, allow_publish: bool = False,
+                  smart_fallback: bool = True) -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
     # callers and older schedules that never stored a selection). `profile` is no
     # longer offered in the UI; it stays here so schedules saved before it was
     # removed keep working.
-    extra = sorted(set(_agent_service_disallow(mcp_services)) | set(_agent_profile_disallow(profile)))
+    extra = sorted(set(_agent_service_disallow(mcp_services))
+                   | set(_agent_profile_disallow(profile))
+                   | set(_agent_capability_disallow(allow_write, allow_publish)))
     _enqueue_agent(prompt, label, model=model, force=force, extra_disallowed=extra,
-                   mcp_services=mcp_services, provider=provider, account_id=account_id)
+                   mcp_services=mcp_services, provider=provider, account_id=account_id,
+                   smart_fallback=smart_fallback)
 
 
 def _run_tool_scheduled(tool_name: str, params: dict):

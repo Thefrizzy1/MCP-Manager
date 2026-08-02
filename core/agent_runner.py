@@ -1227,7 +1227,8 @@ def _spare_account(root: Path, provider: str, used: str) -> str:
 def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: str,
                  model: str, cfg: dict, transcript: list[dict], *,
                  mcp_url: str = "", bearer_token: str = "",
-                 disallowed: list[str] | None = None) -> None:
+                 disallowed: list[str] | None = None,
+                 smart_fallback: bool = True) -> None:
     """An HTTP provider (Gemini), with Plutus's tools attached as functions.
 
     Gemini has no MCP support, so the equivalent is its function-calling loop:
@@ -1272,7 +1273,7 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                                         timeout=int(left),
                                         search=not decls)
             rec["model"] = res.get("model") or model
-            if not res["ok"] and ai_providers.is_rate_limited(res["error"]):
+            if not res["ok"] and smart_fallback and ai_providers.is_rate_limited(res["error"]):
                 # api_turn already backed off and retried. Still limited means
                 # this account is done for now, so move to another one rather
                 # than throwing away the work done so far.
@@ -1355,6 +1356,7 @@ def run_agent(
     mcp_services: list[str] | None = None,
     provider: str = "",
     account_id: str = "",
+    smart_fallback: bool = True,
 ) -> dict:
     """Run one headless agent call on the selected provider. Blocking; thread it.
 
@@ -1440,7 +1442,8 @@ def run_agent(
         if runtime == "api":
             _execute_api(root, rec, prompt, prov, aid, chosen_model, cfg, transcript,
                          mcp_url=mcp_url if give_tools else "",
-                         bearer_token=bearer_token, disallowed=disallowed_tools)
+                         bearer_token=bearer_token, disallowed=disallowed_tools,
+                         smart_fallback=smart_fallback)
         elif runtime == "cli":
             _execute_cli(root, rec, prompt, prov, aid, chosen_model, cfg, cwd, transcript)
         else:

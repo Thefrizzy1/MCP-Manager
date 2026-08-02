@@ -479,6 +479,36 @@ function ScheduleRow({
   )
 }
 
+/** A labelled checkbox with the consequence spelled out underneath.
+ *  These decide what an agent is allowed to do to things you care about, so the
+ *  cost of each is written next to it rather than left to a tooltip. */
+function Switch({
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean
+  onChange: (v: boolean) => void
+  label: string
+  hint: string
+}) {
+  return (
+    <label className="flex max-w-[240px] cursor-pointer items-start gap-2">
+      <input
+        type="checkbox"
+        className="mt-[3px]"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="min-w-0">
+        <span className="block text-[12.5px] text-ink">{label}</span>
+        <span className="block text-[11px] leading-snug text-ink-3">{hint}</span>
+      </span>
+    </label>
+  )
+}
+
 const isPublic = (s: Service) => (s.section || '').toLowerCase().includes('public')
 
 /** Self-hosted connections start on; public/internet ones start off, so an agent
@@ -510,6 +540,11 @@ function LaunchWizard({
   const [account, setAccount] = useState(
     initial?.provider && initial?.account_id ? `${initial.provider}/${initial.account_id}` : '',
   )
+  // What the agent may do, as opposed to where. Publishing starts off: editing
+  // your library and posting on your behalf are not the same permission.
+  const [allowWrite, setAllowWrite] = useState(true)
+  const [allowPublish, setAllowPublish] = useState(false)
+  const [smartFallback, setSmartFallback] = useState(true)
   const providersQ = useProviders()
   const linkedAccounts = toLinked(providersQ.data?.providers)
   // Which runtime this launch will use — the model menu follows it. With no
@@ -572,7 +607,11 @@ function LaunchWizard({
           cron: cronExpr,
           timezone: 'Europe/Berlin',
           enabled: true,
-          payload: { prompt: prompt.trim(), mcp_services: mcpServices, ...picked, model: model.trim() },
+          payload: {
+            prompt: prompt.trim(), mcp_services: mcpServices, ...picked,
+            model: model.trim(), allow_write: allowWrite,
+            allow_publish: allowPublish, smart_fallback: smartFallback,
+          },
         })
         onScheduled()
       } else {
@@ -582,6 +621,9 @@ function LaunchWizard({
           mcp_services: mcpServices,
           ...picked,
           model: model.trim(),
+          allow_write: allowWrite,
+          allow_publish: allowPublish,
+          smart_fallback: smartFallback,
         })
         onLaunched()
       }
@@ -679,6 +721,31 @@ function LaunchWizard({
             <ConnectionPicker connections={connections} selected={selected} onChange={setSelected} />
           </Field>
         )}
+        <Field
+          label="What this agent may do"
+          hint="Connections say where it can act; these say how far."
+        >
+          <div className="flex flex-wrap gap-x-5 gap-y-2 pt-1">
+            <Switch
+              checked={allowWrite}
+              onChange={setAllowWrite}
+              label="Let it write"
+              hint="Off = read-only. Every tool that changes anything is blocked."
+            />
+            <Switch
+              checked={allowPublish}
+              onChange={setAllowPublish}
+              label="Let it post"
+              hint="Public issues, shares, emails, notifications. Off by default."
+            />
+            <Switch
+              checked={smartFallback}
+              onChange={setSmartFallback}
+              label="Smart fallback"
+              hint="Retry a rate limit, then switch to another account on the same provider."
+            />
+          </div>
+        </Field>
         <div className="flex items-center gap-3">
           <Button variant="primary" size="sm" disabled={busy} onClick={launch}>
             Launch

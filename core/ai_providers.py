@@ -374,6 +374,29 @@ def add_account(root: Path, provider: str, label: str) -> dict:
     return rec
 
 
+def rename_account(root: Path, provider: str, account_id: str, label: str) -> dict:
+    """Change an account's display name, keeping its id and credentials.
+
+    The id is a filesystem path (data/providers/<provider>/<id>), so it stays put:
+    renaming must not move a directory holding a live login, and a room seat or a
+    saved schedule referencing the account must keep working.
+    """
+    _spec(provider)
+    label = (label or "").strip()[:60]
+    if not label:
+        raise ValueError("account label is required")
+    data = load_accounts(root)
+    rows = data.get(provider, [])
+    if any(a.get("label") == label and a.get("id") != account_id for a in rows):
+        raise ValueError(f"an account called {label!r} already exists")
+    for account in rows:
+        if account.get("id") == account_id:
+            account["label"] = label
+            _save_accounts(root, data)
+            return account
+    raise KeyError(account_id)
+
+
 def get_account(root: Path, provider: str, account_id: str) -> dict | None:
     return next((a for a in load_accounts(root).get(provider, [])
                  if a.get("id") == account_id), None)
