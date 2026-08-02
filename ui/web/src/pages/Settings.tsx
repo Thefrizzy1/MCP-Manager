@@ -8,6 +8,7 @@ import { Input, Textarea } from '@/components/ui/Input'
 import { Row } from '@/components/ui/Field'
 import { ClientExportModal } from '@/components/settings/ClientExportModal'
 import { AiProvidersSection } from '@/components/settings/AiProvidersSection'
+import { UsersSection } from '@/components/settings/UsersSection'
 import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
@@ -42,8 +43,6 @@ export function Settings() {
   const [oauthEnabled, setOauthEnabled] = useState(false)
   const [token, setToken] = useState('')
   const [city, setCity] = useState('')
-  const [user, setUser] = useState('')
-  const [pass, setPass] = useState('')
   const [ciText, setCiText] = useState('')
   const [ciMsg, setCiMsg] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
@@ -114,6 +113,8 @@ export function Settings() {
       />
       <PageBody>
         <div className="space-y-5">
+          <UsersSection />
+
           <Section title="MCP endpoint" subtitle="How clients reach the MCP server">
             <Row label="LAN URL">
               <code className="font-mono text-[12px] text-ink-2">{n?.http_local || '—'}</code>
@@ -197,24 +198,6 @@ export function Settings() {
             <Row label="Weather city">
               <Input value={city} onChange={(e) => setCity(e.target.value)} placeholder="Hamburg" />
               <Button variant="default" size="sm" onClick={() => save({ WEATHER_DEFAULT_LOCATION: city.trim() })}>
-                Save
-              </Button>
-            </Row>
-            <Row label="UI username">
-              <Input value={user} onChange={(e) => setUser(e.target.value)} />
-            </Row>
-            <Row label="New password" hint="blank = keep current">
-              <Input type="password" value={pass} onChange={(e) => setPass(e.target.value)} />
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => {
-                  const body: Record<string, string> = {}
-                  if (user.trim()) body.UI_USERNAME = user.trim()
-                  if (pass) body.UI_PASSWORD = pass
-                  if (Object.keys(body).length) save(body, 'Saved — restart to apply.')
-                }}
-              >
                 Save
               </Button>
             </Row>

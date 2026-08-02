@@ -26,6 +26,13 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     data = text
   }
   if (!res.ok) {
+    // A 401 on any dashboard API means the session is gone (expired, logged out,
+    // or never established). Send the browser to the login page rather than
+    // surfacing a raw error the SPA can't recover from. The login page is a
+    // separate server-rendered route, so this cannot loop.
+    if (res.status === 401 && !window.location.pathname.startsWith('/login')) {
+      window.location.assign('/login')
+    }
     const d = data as { detail?: unknown; error?: unknown } | null
     const raw = (d && (d.detail ?? d.error)) ?? `HTTP ${res.status}`
     throw new ApiError(typeof raw === 'string' ? raw : JSON.stringify(raw), res.status)

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { Sidebar } from './Sidebar'
+import { DefaultPasswordBanner } from './DefaultPasswordBanner'
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
   const [mobileNav, setMobileNav] = useState(false)
@@ -33,6 +34,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           </button>
           <span className="text-[14px] font-semibold text-ink">Plutus</span>
         </div>
+        <DefaultPasswordBanner />
         {children}
       </main>
     </div>

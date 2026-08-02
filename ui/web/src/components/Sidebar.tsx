@@ -1,6 +1,8 @@
+import { LogOut } from 'lucide-react'
 import { NAV_GROUPS, SETTINGS_ITEM, type NavItem } from '@/lib/nav'
 import { navigate } from '@/lib/router'
 import { cn } from '@/lib/cn'
+import { logout, useWhoami } from '@/lib/auth'
 import { ThemeToggle } from './ThemeToggle'
 
 function NavRow({ item, active, onNavigate }: { item: NavItem; active: boolean; onNavigate?: () => void }) {
@@ -26,6 +28,35 @@ function NavRow({ item, active, onNavigate }: { item: NavItem; active: boolean; 
       />
       <span>{item.label}</span>
     </button>
+  )
+}
+
+function AccountRow() {
+  const who = useWhoami()
+  const name = who.data?.username ?? '—'
+  const role = who.data?.role
+  const initial = (who.data?.username ?? '?').slice(0, 1).toUpperCase()
+  return (
+    <div className="flex items-center gap-2 px-2 py-1.5">
+      <div
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-weak text-[11px] font-semibold text-accent"
+        aria-hidden
+      >
+        {initial}
+      </div>
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-[12px] font-medium text-ink">{name}</div>
+        {role && <div className="text-[10px] uppercase tracking-wider text-ink-3">{role}</div>}
+      </div>
+      <button
+        onClick={() => logout()}
+        title="Sign out"
+        aria-label="Sign out"
+        className="ml-auto flex h-7 w-7 items-center justify-center rounded-[var(--radius-sm)] text-ink-3 hover:bg-surface-hover hover:text-ink"
+      >
+        <LogOut size={15} />
+      </button>
+    </div>
   )
 }
 
@@ -62,6 +93,9 @@ export function Sidebar({ route, onNavigate }: { route: string; onNavigate?: () 
         <div className="flex items-center justify-between px-2 pt-1">
           <span className="text-[11px] text-ink-3">Theme</span>
           <ThemeToggle />
+        </div>
+        <div className="mt-1 border-t border-border pt-1">
+          <AccountRow />
         </div>
       </div>
     </aside>

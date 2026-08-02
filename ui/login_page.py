@@ -30,7 +30,7 @@ def render_login_page(*, default_active: bool = False, error: str = "") -> str:
 <script>
   // Match the app's theme before first paint (no flash).
   try {{
-    var t = localStorage.getItem('plutus-theme') ||
+    var t = localStorage.getItem('plutus_theme') ||
       (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
     document.documentElement.dataset.theme = t;
   }} catch (e) {{ document.documentElement.dataset.theme = 'dark'; }}
