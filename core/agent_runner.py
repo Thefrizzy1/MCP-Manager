@@ -148,7 +148,10 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "",
             env["PLUTUS_MCP_TOKEN"] = token
         if disallowed:
             env["PLUTUS_MCP_DENY"] = ",".join(sorted(disallowed))
-        server = {"command": sys.executable or "python3",
+        # "type" stated rather than inferred from the presence of "command":
+        # the HTTP branch names its transport, so this one should too, and a
+        # config that says what it is survives a stricter schema.
+        server = {"type": "stdio", "command": sys.executable or "python3",
                   "args": [str(MCP_BRIDGE)], "env": env}
     conf = {"mcpServers": {"plutus": server}}
     path = _runs_dir(root).parent / "agent_mcp.json"

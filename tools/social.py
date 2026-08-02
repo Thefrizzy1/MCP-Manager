@@ -524,6 +524,9 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     @mcp.tool(name="reddit_my_subreddits", annotations={"readOnlyHint": True})
     async def reddit_my_subreddits(params: RedditLimitInput) -> str:
         """List the subreddits this Reddit account subscribes to."""
+        bad = reddit_auth_error(params.account)
+        if bad:
+            return f"Error: {bad}"
         try:
             body = await _reddit_api("/subreddits/mine/subscriber",
                                      {"limit": params.limit}, account=params.account)
@@ -546,6 +549,9 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     @mcp.tool(name="reddit_home_feed", annotations={"readOnlyHint": True})
     async def reddit_home_feed(params: RedditLimitInput) -> str:
         """This account's Reddit front page — posts from the subreddits it follows."""
+        bad = reddit_auth_error(params.account)
+        if bad:
+            return f"Error: {bad}"
         try:
             body = await _reddit_api("/best", {"limit": params.limit},
                                      account=params.account)
@@ -572,6 +578,9 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
         Saved posts are a research bookmark list an agent can actually work from.
         """
+        bad = reddit_auth_error(params.account)
+        if bad:
+            return f"Error: {bad}"
         kind = params.kind if params.kind in ("saved", "upvoted", "submitted") else "saved"
         # The *resolved* account's username, not cfg.reddit_username: with
         # several logins the env one is rarely the one being asked about, and

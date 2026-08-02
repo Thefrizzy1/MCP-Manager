@@ -118,6 +118,43 @@ def test_room_run_refuses_an_empty_room(monkeypatch, tmp_path):
     assert "no agents in it" in call("room_run", room_id=room["id"])
 
 
+def test_a_failure_starting_the_room_is_reported_promptly(monkeypatch, tmp_path):
+    """Resolving the MCP target sat outside the try/finally, so a failure there
+    skipped the gate release: the caller blocked for the full 20s timeout and was
+    then told the room had started."""
+    import time
+
+    import ui.runtime as R
+    from core import agent_runner
+
+    call = _room_tools(monkeypatch, tmp_path)
+    room = workforce.add_room(tmp_path, "Doomed")
+    workforce.add_seat(tmp_path, room["id"], role="researcher",
+                       provider="claude", account_id="acct")
+
+    monkeypatch.setattr(agent_runner, "busy", lambda: False)
+    monkeypatch.setattr(R, "_agent_mcp_target",
+                        lambda: (_ for _ in ()).throw(RuntimeError("no endpoint")))
+
+    began = time.monotonic()
+    out = call("room_run", room_id=room["id"])
+    elapsed = time.monotonic() - began
+
+    assert elapsed < 10, f"took {elapsed:.1f}s — the gate was not released on failure"
+    assert "Error" in out and "no endpoint" in out
+
+
+def test_the_mcp_path_takes_the_same_run_lock_as_the_dashboard():
+    """Two entry points, one answer to 'is a room running'."""
+    import inspect
+
+    import ui.api.workforce as api
+    import tools.rooms as R
+
+    assert "workforce.RUN_LOCK" in inspect.getsource(api.api_run_room)
+    assert "workforce.RUN_LOCK" in inspect.getsource(R.register_room_tools)
+
+
 def test_room_tools_reject_unknown_ids(monkeypatch, tmp_path):
     call = _room_tools(monkeypatch, tmp_path)
 
@@ -169,6 +206,36 @@ def test_first_run_generates_and_persists_a_password(tmp_path, monkeypatch):
     # Stable across boots: the second call reuses what it wrote.
     again, generated_again = env_store.ensure_ui_password(env)
     assert again == pw and not generated_again
+
+
+def test_first_run_does_not_reformat_a_hand_written_env(tmp_path, monkeypatch):
+    """Writing the password through update_env rewrote .env from the parsed dict
+    and dropped every comment. Acceptable when someone clicks Save; not as an
+    unprompted side effect of booting."""
+    monkeypatch.delenv("UI_PASSWORD", raising=False)
+    env = tmp_path / ".env"
+    original = ("# Plutus config - hand written\n"
+                "# Nextcloud lives on the NAS\n"
+                "NEXTCLOUD_URL=https://cloud.example.com\n"
+                "\n"
+                "# media stack\n"
+                "JELLYFIN_URL=http://192.168.1.5:8096\n")
+    env.write_text(original, encoding="utf-8")
+
+    pw, _ = env_store.ensure_ui_password(env)
+    after = env.read_text(encoding="utf-8")
+
+    assert after.startswith(original), "the existing file was rewritten, not appended to"
+    assert f"UI_PASSWORD={pw}\n" in after
+    assert after.count("# media stack") == 1
+
+
+def test_first_run_appends_cleanly_without_a_trailing_newline(tmp_path, monkeypatch):
+    monkeypatch.delenv("UI_PASSWORD", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("FOO=bar", encoding="utf-8")          # no newline at EOF
+    pw, _ = env_store.ensure_ui_password(env)
+    assert env.read_text(encoding="utf-8") == f"FOO=bar\nUI_PASSWORD={pw}\n"
 
 
 def test_no_shared_default_password_remains():

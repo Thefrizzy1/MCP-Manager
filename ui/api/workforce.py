@@ -18,9 +18,8 @@ from ui.runtime import ROOT, _agent_mcp_target
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
-# One room at a time. The agent runner takes a single run at a time anyway, so a
-# second concurrent room would only queue behind the first while looking active.
-_room_lock = threading.Lock()
+# One room at a time — the lock lives in core.workforce because rooms can also be
+# started over MCP, and a lock per entry point would not serialise the two.
 
 
 def _room_or_404(room_id: str) -> dict:
@@ -174,7 +173,7 @@ async def api_run_room(room_id: str, body: RunBody):
     slot_wait = max(60, agent_runner._timeout_min(acfg) * 60 + 120)
 
     def _work():
-        with _room_lock:
+        with workforce.RUN_LOCK:
             url, token = _agent_mcp_target()
 
             def _run(root, prompt, **kw):

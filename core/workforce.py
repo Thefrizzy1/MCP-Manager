@@ -314,6 +314,15 @@ def get_room_run(root: Path, run_id: str) -> dict | None:
 
 LIVE: dict = {"room_id": "", "run_id": "", "seat_id": "", "running": False}
 
+# One room at a time, across *every* way of starting one. It lives here rather
+# than in the HTTP layer because a room can now also be started over MCP: with a
+# lock per entry point, an HTTP room and an MCP room could both pass the
+# LIVE["running"] check and run at once, each overwriting the other's LIVE state.
+# The seats still serialise on the agent runner's slot, so the damage was a lying
+# progress indicator rather than corruption — but "is a room running" has to have
+# one answer.
+RUN_LOCK = threading.Lock()
+
 
 def _hand_off(root: Path, room: dict, room_id: str, brief: str, prior: list[dict],
               rec: dict, *, run_agent: Callable[..., dict], max_cost_usd: float,

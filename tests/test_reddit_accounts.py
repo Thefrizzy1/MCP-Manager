@@ -146,6 +146,36 @@ def test_an_unknown_account_is_refused_not_silently_defaulted(tmp_path, monkeypa
     assert "Main" in err, "the error lists what does exist"
 
 
+def test_every_account_taking_tool_guards_the_name(tmp_path, monkeypatch):
+    """The guard was wired into reddit_me only. The others still refused a bad
+    name — but reported it as "this needs a Reddit login", which sends you to
+    re-enter credentials that were never the problem."""
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    import tools.social as S
+
+    monkeypatch.setattr(S, "_SOCIAL_ROOT", tmp_path)
+    _add(tmp_path, "Main", "alice")
+
+    m = FastMCP("t")
+    S.register_social_tools(m)
+    tools = {t.name: t for t in m._tool_manager.list_tools()}
+
+    for name, args in (("reddit_me", {}),
+                       ("reddit_my_subreddits", {"limit": 5}),
+                       ("reddit_home_feed", {"limit": 5}),
+                       ("reddit_my_posts", {"limit": 5, "kind": "saved"})):
+        out = asyncio.run(m._tool_manager.call_tool(
+            name, {"params": {**args, "account": "carol"}}))
+        text = str(out)
+        assert "carol" in text, f"{name} did not name the account it could not find"
+        assert "Main" in text, f"{name} did not say which accounts exist"
+        assert "needs a Reddit login" not in text, (
+            f"{name} blamed the credentials for a bad account name")
+
+
 def test_reddit_configured_follows_the_accounts(tmp_path, monkeypatch):
     import tools.social as S
 

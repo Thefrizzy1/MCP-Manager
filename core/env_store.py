@@ -96,6 +96,33 @@ def _write_env_file(p: Path, content: str) -> None:
         os.fsync(f.fileno())
 
 
+def _append_env(path: Path, key: str, value: str) -> None:
+    """Add one key by appending, leaving the rest of the file byte-for-byte alone.
+
+    ``update_env`` rewrites .env from the parsed dict, which drops every comment
+    and blank line. That is acceptable when someone clicks Save in Settings — it
+    is their edit — but the first-run password is written *unprompted*, and
+    silently reformatting a file the operator hand-wrote is not a side effect a
+    boot should have. Appending keeps their comments.
+    """
+    if "\n" in value or "\r" in value:
+        raise ValueError(f"Values cannot contain newlines ({key})")
+    with _LOCK:
+        existing = ""
+        if path.exists():
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                existing = path.read_text(encoding="latin-1")
+        prefix = "" if (not existing or existing.endswith("\n")) else "\n"
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{prefix}{key}={value}\n")
+            f.flush()
+            os.fsync(f.fileno())
+    apply_live_env({key: value})
+    os.environ[key] = value
+
+
 def ensure_ui_password(path: Path | None = None) -> tuple[str, bool]:
     """Guarantee a UI password exists. Returns ``(password, generated_now)``.
 
@@ -115,7 +142,7 @@ def ensure_ui_password(path: Path | None = None) -> tuple[str, bool]:
         return existing, False
     pw = secrets.token_urlsafe(12)
     try:
-        update_env({"UI_PASSWORD": pw}, path=p)
+        _append_env(p, "UI_PASSWORD", pw)
     except Exception:
         # Keep it live in-process even when persistence fails, so the UI works
         # this session instead of 503-ing on a fresh box with a read-only mount.

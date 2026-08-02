@@ -229,22 +229,30 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         gate = threading.Event()
 
         def _work():
-            url, token = _agent_mcp_target()
-
-            def _run(root, prompt, **kw):
-                if not agent_runner.wait_for_slot(600):
-                    return {"ok": False, "cost_usd": 0.0, "result": "",
-                            "error": "another agent run held the runner for too long"}
-                return agent_runner.run_agent(root, prompt, mcp_url=url, bearer_token=token, **kw)
-
-            def _seen(rec: dict):
-                if not started:
-                    started.update(rec)
-                    gate.set()
-
+            # Everything that can fail sits inside the try: resolving the MCP
+            # target used to be above it, so a failure there skipped the finally
+            # and left the caller blocked on gate.wait for the full timeout —
+            # then answered as though the room had started.
             try:
-                workforce.run_room(_ROOT, params.room_id, params.brief,
-                                   run_agent=_run, max_cost_usd=cap, on_change=_seen)
+                # The same lock the dashboard takes, so an MCP-started room and an
+                # HTTP-started room cannot both be "the" running room.
+                with workforce.RUN_LOCK:
+                    url, token = _agent_mcp_target()
+
+                    def _run(root, prompt, **kw):
+                        if not agent_runner.wait_for_slot(600):
+                            return {"ok": False, "cost_usd": 0.0, "result": "",
+                                    "error": "another agent run held the runner for too long"}
+                        return agent_runner.run_agent(root, prompt, mcp_url=url,
+                                                      bearer_token=token, **kw)
+
+                    def _seen(rec: dict):
+                        if not started:
+                            started.update(rec)
+                            gate.set()
+
+                    workforce.run_room(_ROOT, params.room_id, params.brief,
+                                       run_agent=_run, max_cost_usd=cap, on_change=_seen)
             except Exception as exc:
                 started.setdefault("error", str(exc))
             finally:
