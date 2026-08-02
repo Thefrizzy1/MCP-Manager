@@ -72,6 +72,16 @@ from urllib.request import urlopen
 
 import uvicorn
 
+# The banner has emoji in it, and on Windows a redirected stdout defaults to
+# cp1252, which cannot encode them: `python main.py > log.txt` died on the very
+# first print with UnicodeEncodeError, before serving anything. Docker is already
+# UTF-8, so this is a no-op there.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass          # already fine, or not a reconfigurable stream
+
 from config import allow_empty_ui_password, cfg
 from core.recent_runs import ensure_data_dir
 from ui.api import build_ui_app
