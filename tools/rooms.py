@@ -18,7 +18,8 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 
-from core import ai_providers, workforce
+from config import cfg
+from core import agent_orchestrator, ai_providers, workforce
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -221,7 +222,6 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                     "you and could start itself again without end.")
 
         import threading
-        from ui.runtime import _agent_mcp_target
 
         acfg = agent_runner.load_agent_config(_ROOT)
         cap = float(acfg.get("max_cost_usd", 2.0) or 2.0) * 4
@@ -237,7 +237,7 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                 # The same lock the dashboard takes, so an MCP-started room and an
                 # HTTP-started room cannot both be "the" running room.
                 with workforce.RUN_LOCK:
-                    url, token = _agent_mcp_target()
+                    url, token = agent_orchestrator.mcp_target(cfg)
 
                     def _run(root, prompt, **kw):
                         if not agent_runner.wait_for_slot(600):

@@ -98,11 +98,20 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 ## 3. Agent / workforce execution (agent B)
 
 1. **Orchestration logic in the UI singleton** — High — `ui/runtime.py:245-478`.
-   Extract `core/agent_orchestrator.py`. `TODO`
-2. **Dependency inversion + triple-duplicated MCP target** — High — `tools/rooms.py:224`,
-   `tools/agents.py:26`, `ui/runtime.py:245`. One `agent_orchestrator.mcp_target`. `TODO`
-3. **Room connection scope never enforced** — High — `core/workforce.py:498`. Move
-   disallow computation to core and apply it in `run_room`. `TODO`
+   Extract `core/agent_orchestrator.py`. `DONE` — the execution engine (serial
+   queue, worker, run invocation, notify, skipped-run, mcp_target, service_disallow,
+   scheduled tool calls) now lives in `core/agent_orchestrator.py`, UI-free and
+   injectable; `ui.runtime` keeps thin wrappers for its own callers. Policy
+   composition (presets, profile/capability disallow) stays in `ui.runtime` because
+   its tests monkeypatch those seams there.
+2. **Dependency inversion + triple-duplicated MCP target** — High — `tools/rooms.py`,
+   `tools/agents.py`, `ui/runtime.py`. `DONE` — `tools/` no longer imports `ui` at
+   all; there is one `agent_orchestrator.mcp_target(cfg)`.
+3. **Room connection scope never enforced** — High — `core/workforce.py`. `DONE` —
+   `run_room` computes `service_disallow(root, room.mcp_services)` and enforces it on
+   every seat (new test `test_every_seat_is_scoped_to_the_rooms_connections`).
+   Follow-up: `core/dashboard_api.tool_to_service_map` still lazily imports
+   `ui.runtime.all_tool_names` — the tool-registry SSOT (Wave 4) removes that edge.
 4. **Cross-process single-slot guarantee is false** — High — `core/agent_runner.py:31`,
    `core/workforce.py:409`. Use a filesystem/OS lock; disk-backed "running" check. `TODO`
 5. **Room-to-room file handoff doesn't happen** — Med — `core/workforce.py:467`. Thread
@@ -160,10 +169,11 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
 - Delete dead code: `plutus_tool_slicer.apply` field, `spa.js`, unused ACL builders. (H / A#6/9)
 - Fix health cache: honour `force`, single atomically-updated record. (D#3/4)
 
-**Wave 2 — boundaries & dependency direction.**
-- Extract `core/agent_orchestrator.py`; kill the `ui.runtime` back-import and the triple
-  `mcp_target`; move disallow computation to core. (C-theme / B#1/2/9)
-- Enforce connection scope in `run_room` (closes the permission gap). (G / B#3)
+**Wave 2 — boundaries & dependency direction. `DONE`**
+- Extracted `core/agent_orchestrator.py`; killed the `tools → ui.runtime` back-import
+  and the triple `mcp_target`; moved the execution engine + service-scope helper to
+  core. (C-theme / B#1/2)
+- Enforced connection scope in `run_room` (closes the permission gap). (G / B#3)
 
 **Wave 3 — reliability.**
 - One structured result classifier; route smoke/batch/dashboard/regression through it;

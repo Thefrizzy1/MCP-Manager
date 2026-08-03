@@ -34,9 +34,10 @@ def _recording_runner(outputs=None):
     calls: list[dict] = []
     outs = list(outputs or [])
 
-    def run(root, prompt, *, label="", mcp_services=None, provider="", account_id="",
-            model=""):
+    def run(root, prompt, *, label="", mcp_services=None, disallowed_tools=None,
+            provider="", account_id="", model=""):
         calls.append({"prompt": prompt, "label": label, "mcp_services": mcp_services,
+                      "disallowed_tools": disallowed_tools,
                       "provider": provider, "account_id": account_id, "model": model})
         nxt = outs.pop(0) if outs else {}
         return {"id": f"run-{len(calls)}", "ok": nxt.get("ok", True),
@@ -106,6 +107,21 @@ def test_every_seat_inherits_the_rooms_connections(tmp_path, room):
     assert len(calls) == 3
     for c in calls:
         assert c["mcp_services"] == ["websearch", "nextcloud"]
+
+
+def test_every_seat_is_scoped_to_the_rooms_connections(tmp_path, room):
+    """A room's connections are its tool slice: each seat runs under the same
+    deny-list a single launch with those connections would get. Closes the gap
+    where room seats reached the full tool surface regardless of the room scope."""
+    from core.agent_orchestrator import service_disallow
+
+    run, calls = _recording_runner()
+    W.run_room(tmp_path, room["id"], "Investigate X", run_agent=run)
+
+    expected = service_disallow(tmp_path, room["mcp_services"])
+    assert expected, "the room's connections should deny at least some service tools"
+    for c in calls:
+        assert c["disallowed_tools"] == expected
 
 
 def test_each_seat_runs_on_its_own_provider_account(tmp_path, room):

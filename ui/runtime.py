@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import queue
 import threading
 import time
 from pathlib import Path
@@ -21,13 +20,14 @@ from pathlib import Path
 from config import cfg
 from core import agent_runner
 from core import agent_tasks
+from core.agent_orchestrator import AgentOrchestrator
 from core.capabilities import CapabilityCatalog
 from core.dashboard_health import gather_service_health
 from core.env_store import read_env, update_env
 from core.observability import Telemetry
 from core.recent_runs import ensure_data_dir
 from core.router import RouterRuntime
-from core.scheduler import PlutusScheduler, invoke_tool_sync
+from core.scheduler import PlutusScheduler
 from core.service_registry import all_services
 from core.profiles import load_profiles, resolve_tool_names, tool_filter
 from core.tool_cache import beta_cache_background_loop
@@ -242,105 +242,28 @@ def save_env(updates: dict):
     update_env(updates)
 
 
+# The agent execution engine (the serial queue + its worker + the run
+# invocation) now lives in core.agent_orchestrator, UI-free and injectable. This
+# module constructs the one instance and keeps thin wrappers for the callers that
+# still import these names from ui.runtime (ui.api.agents / workforce / providers).
+agent_orchestrator = AgentOrchestrator(ROOT, cfg, tools, log=log)
+_agent_queue = agent_orchestrator.queue
+
+
 def _agent_mcp_target() -> tuple[str, str]:
-    """(mcp_url, bearer_token) the agent uses to reach Plutus's own MCP tools."""
-    url = f"http://127.0.0.1:{cfg.mcp_port}/mcp"
-    token = ""
-    if cfg.mcp_require_bearer:
-        token = (read_env().get("MCP_BEARER_TOKEN", "") or "").strip()
-    return url, token
+    """(mcp_url, bearer_token) the agent uses to reach Plutus's own MCP tools.
+    Wrapper over the shared core helper; kept because ui.api imports it here."""
+    return agent_orchestrator.mcp_target()
 
 
-def _maybe_notify_agent(rec: dict) -> None:
-    cfg2 = agent_runner.load_agent_config(ROOT)
-    if not cfg2.get("notify_enabled"):
-        return
-    if cfg2.get("notify_on") == "error" and rec.get("ok"):
-        return
-    ok = "OK" if rec.get("ok") else "FAIL"
-    msg = f"{ok} agent '{rec.get('label')}' — ${rec.get('cost_usd')}"
-    if rec.get("error"):
-        msg += f" — {rec['error'][:120]}"
-    try:
-        invoke_tool_sync(tools.raw_manager, "ntfy_send", {"message": msg, "title": "Plutus agent"})
-    except Exception as exc:
-        log.warning("agent ntfy failed: %s", exc)
+_enqueue_agent = agent_orchestrator.enqueue
 
 
-def _record_skipped_run(label: str, cap: int) -> None:
-    """Leave a visible trace when the daily cap swallows a scheduled run."""
-    import datetime
-    import uuid as _uuid
-
-    now = datetime.datetime.now().astimezone()
-    try:
-        agent_runner.save_run(ROOT, {
-            "id": now.strftime("%Y%m%d-%H%M%S") + "-" + _uuid.uuid4().hex[:4],
-            "label": label, "prompt": "", "started": now.isoformat(),
-            "finished": now.isoformat(), "ok": False, "cost_usd": 0.0,
-            "skipped": True, "result": "",
-            "error": f"Skipped: the daily cap of {cap} runs is already used. "
-                     "Raise it in Settings → Agent, or wait for tomorrow.",
-            "log": [],
-        })
-    except Exception as exc:
-        log.warning("could not record a skipped run: %s", exc)
-
-
-_agent_queue: "queue.Queue" = queue.Queue(maxsize=6)
-
-
-def _agent_queue_worker() -> None:
-    """Single serial worker: runs one agent job at a time, honours the daily cap."""
-    while True:
-        job = _agent_queue.get()
-        try:
-            acfg = agent_runner.load_agent_config(ROOT)
-            cap = int(acfg.get("max_runs_per_day", 20) or 0)
-            if cap and not job.get("force") and agent_runner.runs_today(ROOT) >= cap:
-                # Recorded, not just logged. A scheduled run that vanishes because
-                # of the cap is indistinguishable from a scheduler that never
-                # fired — and the log is inside the container, where the person
-                # wondering "did my job run?" is not looking.
-                log.info("Agent daily run cap (%s) reached — skipping scheduled '%s'",
-                         cap, job.get("label"))
-                _record_skipped_run(job.get("label", "agent"), cap)
-                continue
-            url, token = _agent_mcp_target()
-            rec = agent_runner.run_agent(
-                ROOT, job["prompt"], label=job.get("label", "agent"),
-                mcp_url=url, bearer_token=token,
-                disallowed_tools=job.get("disallowed"), model=job.get("model") or None,
-                mcp_services=job.get("mcp_services"),
-                provider=job.get("provider") or "", account_id=job.get("account_id") or "",
-                smart_fallback=job.get("smart_fallback", True),
-            )
-            _maybe_notify_agent(rec)
-        except Exception as exc:
-            log.warning("Agent worker error: %s", exc)
-        finally:
-            _agent_queue.task_done()
-
-
-def _agent_service_disallow(selected: list[str] | None) -> list[str]:
-    """Per-connection ACL: deny tools that belong to a service the user did NOT
-    select. `None` = no restriction (back-compat for callers and older schedules
-    that never stored a selection).
-
-    Public services (web search/fetch, weather, maps, Wikipedia, …) are included
-    here. They used to be exempt and permanently available, which meant the
-    launch picker couldn't show them at all — there was no way to express "run
-    this agent without web access", and the tools it *could* reach didn't match
-    what the UI listed. They are now ordinary connections: listed, and off unless
-    ticked. Tools not tied to any service (filesystem, utilities) stay available.
-    """
-    if selected is None:
-        return []
-    from core.dashboard_api import tool_to_service_map
-    sel = set(selected)
-    conn_ids = {s["id"] for s in _services_live()}
-    tmap = tool_to_service_map()
-    return sorted(f"mcp__plutus__{t}" for t, svc in tmap.items() if svc in conn_ids and svc not in sel)
+def _agent_service_disallow(selected: "list[str] | None") -> list[str]:
+    """Per-connection ACL wrapper — the implementation is
+    core.agent_orchestrator.service_disallow. Kept here because ui.api and the
+    preset/scope tests import this name from ui.runtime."""
+    return agent_orchestrator.service_disallow(selected)
 
 
 def apply_preset(prompt: str, preset: str | None,
@@ -409,31 +332,8 @@ def _agent_profile_disallow(profile_name: str | None) -> list[str]:
     return sorted(f"mcp__plutus__{t}" for t in names if t not in allowed)
 
 
-def _enqueue_agent(prompt: str, label: str, *,
-                   model: str | None = None, force: bool = False,
-                   extra_disallowed: list[str] | None = None,
-                   mcp_services: list[str] | None = None,
-                   provider: str = "", account_id: str = "",
-                   smart_fallback: bool = True) -> bool:
-    """Queue an agent run.
-
-    The connection selection is the *only* tool gate: picking a connection grants
-    the agent read and write on that service's tools. The old read/write/strict
-    permission levels are gone — two overlapping gates (level + connections) made
-    it impossible to tell why a tool was unavailable. core.agent_permissions is
-    kept for the documented blast-radius sets, but no longer narrows a run.
-    """
-    disallowed = sorted(set(extra_disallowed or []))
-    try:
-        _agent_queue.put_nowait({"prompt": prompt, "label": label, "disallowed": disallowed,
-                                 "model": model, "force": force,
-                                 "mcp_services": mcp_services,
-                                 "provider": provider, "account_id": account_id,
-                                 "smart_fallback": smart_fallback})
-        return True
-    except queue.Full:
-        log.warning("Agent queue full — dropping '%s'", label)
-        return False
+# _enqueue_agent is agent_orchestrator.enqueue (bound above). The connection
+# selection, folded into extra_disallowed by the caller, is the only tool gate.
 
 
 def _run_agent_bg(prompt: str, label: str = "agent", *,
@@ -459,8 +359,7 @@ def _run_agent_bg(prompt: str, label: str = "agent", *,
                    smart_fallback=smart_fallback)
 
 
-def _run_tool_scheduled(tool_name: str, params: dict):
-    return invoke_tool_sync(tools.raw_manager, tool_name, params)
+_run_tool_scheduled = agent_orchestrator.run_tool_scheduled
 
 
 def _run_task_bg(task_id: str, *, force: bool = False) -> None:
@@ -555,7 +454,7 @@ async def ui_lifespan(_app):
         from core import ui_users
         ui_users.ensure_seed(ROOT)
     agent_tasks.seed_if_empty(ROOT)
-    threading.Thread(target=_agent_queue_worker, name="agent-queue", daemon=True).start()
+    agent_orchestrator.start_worker()
     loop_task = asyncio.create_task(
         beta_cache_background_loop(ROOT, lambda: tools.raw_manager, _services_live)
     )

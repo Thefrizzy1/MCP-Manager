@@ -24,15 +24,13 @@ def register_agent_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         return default_root()
 
     def _mcp_target() -> tuple[str, str]:
-        """Where a worker reaches Plutus's tools. Same endpoint the caller used."""
+        """Where a worker reaches Plutus's tools. Same endpoint the caller used —
+        resolved through the one shared helper (core.agent_orchestrator) rather
+        than a third private copy of the loopback URL + token logic."""
         try:
             from config import cfg
-            from core.env_store import read_env
-            url = f"http://127.0.0.1:{cfg.mcp_port}/mcp"
-            token = ""
-            if cfg.mcp_require_bearer:
-                token = (read_env().get("MCP_BEARER_TOKEN", "") or "").strip()
-            return url, token
+            from core.agent_orchestrator import mcp_target
+            return mcp_target(cfg)
         except Exception:
             return "", ""
 

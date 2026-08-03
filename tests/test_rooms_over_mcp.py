@@ -124,8 +124,7 @@ def test_a_failure_starting_the_room_is_reported_promptly(monkeypatch, tmp_path)
     then told the room had started."""
     import time
 
-    import ui.runtime as R
-    from core import agent_runner
+    from core import agent_orchestrator, agent_runner
 
     call = _room_tools(monkeypatch, tmp_path)
     room = workforce.add_room(tmp_path, "Doomed")
@@ -133,8 +132,10 @@ def test_a_failure_starting_the_room_is_reported_promptly(monkeypatch, tmp_path)
                        provider="claude", account_id="acct")
 
     monkeypatch.setattr(agent_runner, "busy", lambda: False)
-    monkeypatch.setattr(R, "_agent_mcp_target",
-                        lambda: (_ for _ in ()).throw(RuntimeError("no endpoint")))
+    # rooms.py resolves the MCP target through core.agent_orchestrator now, not by
+    # reaching back into ui.runtime — patch it where it actually lives.
+    monkeypatch.setattr(agent_orchestrator, "mcp_target",
+                        lambda cfg: (_ for _ in ()).throw(RuntimeError("no endpoint")))
 
     began = time.monotonic()
     out = call("room_run", room_id=room["id"])

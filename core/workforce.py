@@ -472,6 +472,14 @@ def run_room(root: Path, room_id: str, brief: str, *,
     except Exception:
         pass          # a missing folder is a worse room, not a failed one
 
+    # A room's connections are its tool slice — exactly like a single launch.
+    # Turn the selected services into the deny-list every seat runs under, so a
+    # room cannot reach tools outside what it declared. Previously mcp_services
+    # was handed to the runner for the record but never enforced, so every seat
+    # saw the full tool surface regardless of the room's connections.
+    from core.agent_orchestrator import service_disallow
+    seat_disallow = service_disallow(root, room.get("mcp_services"))
+
     rec = {
         "id": time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:4],
         "room_id": room_id, "room_label": room.get("label", ""),
@@ -499,6 +507,7 @@ def run_room(root: Path, room_id: str, brief: str, *,
                 root, prompt,
                 label=f"{room.get('label', 'room')} · {seat.get('label') or seat['role']}",
                 mcp_services=room.get("mcp_services"),
+                disallowed_tools=seat_disallow,
                 provider=seat.get("provider", ""), account_id=seat.get("account_id", ""),
                 model=seat.get("model") or "",
             )
