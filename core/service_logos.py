@@ -1,4 +1,11 @@
-"""Brand logos: local /icons/, Clearbit, Simple Icons, Google favicon fallback (chain via JS)."""
+"""Brand logos: local /icons/, Clearbit, Simple Icons, Google favicon fallback (chain via JS).
+
+Rendering only. The brand-logo *data* (domain + Simple-Icons slug per service id)
+is the single source of truth in ``core/builtin_services``, co-located with the
+service catalogue — it used to be a second, hand-maintained copy here that had
+drifted (duplicate keys, one of which silently changed a domain). The two names
+are kept as aliases so anything importing them from this module is unchanged.
+"""
 
 from __future__ import annotations
 
@@ -7,120 +14,10 @@ import json
 from pathlib import Path
 from urllib.parse import urlparse
 
-# Primary brand domains for https://logo.clearbit.com/<domain>
-CLEARBIT_DOMAIN_BY_ID: dict[str, str] = {
-    "jellyfin": "jellyfin.org",
-    "sonarr": "sonarr.tv",
-    "radarr": "radarr.video",
-    "lidarr": "lidarr.audio",
-    "jellyseerr": "jellyfin.org",
-    "qbittorrent": "qbittorrent.org",
-    "immich": "immich.app",
-    "homeassistant": "home-assistant.io",
-    "nextcloud": "nextcloud.com",
-    "habitica": "habitica.com",
-    "n8n": "n8n.io",
-    "ntfy": "ntfy.sh",
-    "syncthing": "syncthing.net",
-    "obsidian": "obsidian.md",
-    "uptime_kuma": "uptime-kuma.io",
-    "omv": "openmediavault.org",
-    "docker": "docker.com",
-    "comfyui": "github.com",
-    "tailscale": "tailscale.com",
-    "fail2ban": "fail2ban.org",
-    "fal": "fal.ai",
-    "weather": "wttr.in",
-    "maps": "openstreetmap.org",
-    "websearch": "duckduckgo.com",
-    "smtp": "proton.me",
-    "wikipedia": "wikipedia.org",
-    "currency": "frankfurter.app",
-    "google": "google.com",
-    "pub_network": "httpbin.org",
-    "pub_geo_time": "openstreetmap.org",
-    "pub_finance_crypto": "coingecko.com",
-    "pub_fun": "quotable.io",
-    "pub_education": "openlibrary.org",
-    "pub_games": "pokeapi.co",
-    "pub_space": "nasa.gov",
-    "pub_dev_culture": "github.com",
-    "audiobookshelf": "audiobookshelf.org",
-    "kavita": "kavitareader.com",
-    "paperless": "docs.paperless-ngx.com",
-    "vaultwarden": "vaultwarden.org",
-    "portainer": "portainer.io",
-    "gitea": "gitea.io",
-    "grafana": "grafana.com",
-    "prometheus": "prometheus.io",
-    "pihole": "pi-hole.net",
-    "adguard": "adguard.com",
-    "transmission": "transmissionbt.com",
-    "sabnzbd": "sabnzbd.org",
-    "bookstack": "bookstackapp.com",
-    "minio": "min.io",
-    "matrix_synapse": "matrix.org",
-    "ghost": "ghost.org",
-    "wikijs": "js.wiki",
-    # Public / dev services. Without an entry here a card falls all the way through
-    # to the Google-favicon guess, which for these renders nothing usable — so
-    # GitHub, GitLab and Hugging Face showed no logo at all.
-    "github": "github.com",
-    "gitlab": "gitlab.com",
-    "huggingface": "huggingface.co",
-    "youtube": "youtube.com",
-    "fal": "fal.ai",
-    "currency": "ecb.europa.eu",
-    "weather": "wttr.in",
-}
-
-# Simple Icons slug (jsDelivr) — fallback when raster/CDN logos fail
-SIMPLE_ICON_SLUG_BY_ID: dict[str, str] = {
-    "docker": "docker",
-    "jellyfin": "jellyfin",
-    "sonarr": "sonarr",
-    "radarr": "radarr",
-    "lidarr": "lidarr",
-    "immich": "immich",
-    "homeassistant": "homeassistant",
-    "nextcloud": "nextcloud",
-    "n8n": "n8n",
-    "syncthing": "syncthing",
-    "tailscale": "tailscale",
-    "qbittorrent": "qbittorrent",
-    "obsidian": "obsidian",
-    "postgres": "postgresql",
-    "comfyui": "comfyui",
-    "ntfy": "ntfy",
-    "maps": "openstreetmap",
-    "websearch": "duckduckgo",
-    "wikipedia": "wikipedia",
-    "google": "google",
-    "pub_network": "cloudflare",
-    "pub_geo_time": "openstreetmap",
-    "pub_finance_crypto": "coingecko",
-    "pub_fun": "steam",
-    "pub_education": "wikimediafoundation",
-    "pub_games": "nintendo",
-    "pub_space": "nasa",
-    "pub_dev_culture": "github",
-    "audiobookshelf": "audiobookshelf",
-    "vaultwarden": "bitwarden",
-    "portainer": "portainer",
-    "gitea": "gitea",
-    "grafana": "grafana",
-    "prometheus": "prometheus",
-    "pihole": "pi-hole",
-    "minio": "minio",
-    "ghost": "ghost",
-    # Simple Icons carries clean monochrome marks for all of these; they are the
-    # reliable fallback when Clearbit has no raster logo.
-    "github": "github",
-    "gitlab": "gitlab",
-    "huggingface": "huggingface",
-    "youtube": "youtube",
-    "currency": "eurostat",
-}
+from core.builtin_services import (
+    SERVICE_ICON_SLUG as SIMPLE_ICON_SLUG_BY_ID,
+    SERVICE_LOGO_DOMAIN as CLEARBIT_DOMAIN_BY_ID,
+)
 
 
 def _google_favicon_url(hostname: str) -> str:

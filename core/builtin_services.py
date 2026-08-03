@@ -449,3 +449,58 @@ OPEN_URL_BY_ID: dict[str, str] = {
     "comfyui": "comfyui_url",
 }
 
+
+# ── Brand-logo metadata (single source of truth) ──────────────────────────────
+# Canonical here, alongside the service catalogue, so a service is defined in one
+# module. These used to live in core/service_logos.py as two hand-maintained
+# dicts that had drifted — "fal"/"weather"/"currency" appeared twice, and the
+# duplicate "currency" key silently flipped the domain from frankfurter.app to
+# ecb.europa.eu. service_logos.py is now pure rendering and imports these.
+#
+# Ids split into two groups: those that are entries in SERVICES above, and the
+# dashboard-bookmark / public-API-aggregate ids that are not (they have no
+# SERVICES row but still render a card and need a mark).
+SERVICE_LOGO_DOMAIN: dict[str, str] = {
+    # — services in the catalogue —
+    "jellyfin": "jellyfin.org", "sonarr": "sonarr.tv", "radarr": "radarr.video",
+    "lidarr": "lidarr.audio", "jellyseerr": "jellyfin.org", "qbittorrent": "qbittorrent.org",
+    "immich": "immich.app", "homeassistant": "home-assistant.io", "nextcloud": "nextcloud.com",
+    "habitica": "habitica.com", "n8n": "n8n.io", "ntfy": "ntfy.sh", "syncthing": "syncthing.net",
+    "obsidian": "obsidian.md", "uptime_kuma": "uptime-kuma.io", "omv": "openmediavault.org",
+    "docker": "docker.com", "comfyui": "github.com", "tailscale": "tailscale.com",
+    "fail2ban": "fail2ban.org", "fal": "fal.ai", "weather": "wttr.in", "maps": "openstreetmap.org",
+    "websearch": "duckduckgo.com", "smtp": "proton.me", "wikipedia": "wikipedia.org",
+    # ECB, not frankfurter.app: this is the value that already won before the
+    # duplicate keys were removed, kept for parity.
+    "currency": "ecb.europa.eu", "google": "google.com",
+    "github": "github.com", "gitlab": "gitlab.com", "huggingface": "huggingface.co",
+    "youtube": "youtube.com",
+    # — dashboard bookmarks / public aggregates (no SERVICES row) —
+    "pub_network": "httpbin.org", "pub_geo_time": "openstreetmap.org",
+    "pub_finance_crypto": "coingecko.com", "pub_fun": "quotable.io",
+    "pub_education": "openlibrary.org", "pub_games": "pokeapi.co", "pub_space": "nasa.gov",
+    "pub_dev_culture": "github.com",
+    "audiobookshelf": "audiobookshelf.org", "kavita": "kavitareader.com",
+    "paperless": "docs.paperless-ngx.com", "vaultwarden": "vaultwarden.org",
+    "portainer": "portainer.io", "gitea": "gitea.io", "grafana": "grafana.com",
+    "prometheus": "prometheus.io", "pihole": "pi-hole.net", "adguard": "adguard.com",
+    "transmission": "transmissionbt.com", "sabnzbd": "sabnzbd.org", "bookstack": "bookstackapp.com",
+    "minio": "min.io", "matrix_synapse": "matrix.org", "ghost": "ghost.org", "wikijs": "js.wiki",
+}
+
+SERVICE_ICON_SLUG: dict[str, str] = {
+    "docker": "docker", "jellyfin": "jellyfin", "sonarr": "sonarr", "radarr": "radarr",
+    "lidarr": "lidarr", "immich": "immich", "homeassistant": "homeassistant",
+    "nextcloud": "nextcloud", "n8n": "n8n", "syncthing": "syncthing", "tailscale": "tailscale",
+    "qbittorrent": "qbittorrent", "obsidian": "obsidian", "postgres": "postgresql",
+    "comfyui": "comfyui", "ntfy": "ntfy", "maps": "openstreetmap", "websearch": "duckduckgo",
+    "wikipedia": "wikipedia", "google": "google", "currency": "eurostat",
+    "github": "github", "gitlab": "gitlab", "huggingface": "huggingface", "youtube": "youtube",
+    "pub_network": "cloudflare", "pub_geo_time": "openstreetmap", "pub_finance_crypto": "coingecko",
+    "pub_fun": "steam", "pub_education": "wikimediafoundation", "pub_games": "nintendo",
+    "pub_space": "nasa", "pub_dev_culture": "github",
+    "audiobookshelf": "audiobookshelf", "vaultwarden": "bitwarden", "portainer": "portainer",
+    "gitea": "gitea", "grafana": "grafana", "prometheus": "prometheus", "pihole": "pi-hole",
+    "minio": "minio", "ghost": "ghost",
+}
+

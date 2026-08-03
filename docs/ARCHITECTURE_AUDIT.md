@@ -154,8 +154,13 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 
 ## 5. Config / registry / state (agent D)
 
-1. **No single source of truth for service metadata (6–7 places)** — High. Introduce a
-   `ServiceDef` registry all layers derive from. `TODO`
+1. **No single source of truth for service metadata (6–7 places)** — High. Partly
+   `DONE` — brand-logo metadata (domain + Simple-Icons slug) is now canonical in
+   `core/builtin_services` (`SERVICE_LOGO_DOMAIN`/`SERVICE_ICON_SLUG`); `service_logos`
+   is pure rendering that imports it, and the duplicate-key bug (`currency`/`fal`/
+   `weather` defined twice) is gone. `TODO`: fold config fields + `.env.example`
+   generation + discovery fingerprints onto one `ServiceDef` too (the larger, riskier
+   part — `config.py` is read as `cfg.<svc>_url` everywhere).
 2. **`config.py` is a 111-field flat blob** — High. Generate cfg from the registry. `TODO`
 3. **Live env changes never reach the MCP tool process** — High — `config.py:315-366`.
    Resolve credentials at call time via `env_store`, or reload-signal the MCP process. `TODO`
@@ -199,9 +204,12 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
   smoke/batch/dashboard/regression, deterministic smoke inputs, and folding the
   three probe pipelines into one. (C#2/4/5/7) `TODO`
 
-**Wave 4 — single sources of truth (larger).**
-- `ServiceDef` registry → derive config, health, logos, discovery, tool ownership. (B / D#1/2/6/7/8)
-- One tool-metadata registry → slicer, profiles, agent ACLs, capabilities, annotations. (B / A#1)
+**Wave 4 — single sources of truth (larger). (started)**
+- Logo metadata consolidated into `core/builtin_services` as the canonical home;
+  `service_logos` is now pure rendering (dup-key bug fixed). `DONE`
+- Remaining: fold config fields, `.env.example`, discovery fingerprints, and
+  tool-ownership onto one `ServiceDef`; one tool-metadata registry feeding slicer/
+  profiles/ACLs/capabilities/annotations. (D#2/6/7/8, A#1) `TODO`
 
 **Wave 5 — the hard correctness fix.**
 - Live-config propagation across the process split (resolve creds at call time). (A / D#3)
