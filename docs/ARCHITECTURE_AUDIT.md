@@ -100,12 +100,14 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 7. **`resources.py` ignores `allow`** — Low — `tools/resources.py:46`. `TODO`
 8. **`prompts.py` allow-semantics mismatch** (names vs playbook ids) — Low —
    `tools/prompts.py:61`. `TODO`
-9. **Dead `spa.js` (58 KB) + unused ACL builders** — Low. `spa.js`/`spa.css` `DONE` —
-   removed (legacy framework-free SPA; the React build is what serves `/app`), plus the
-   CI `node --check` step that was linting the dead file and the stale docs. The
-   `agent_permissions.build_disallowed*` helpers are unused in production but still have
-   dedicated tests (they test the retired permission-level model); deleting them means
-   removing those tests too — `TODO`, deferred as a separate call.
+9. **Dead `spa.js` (58 KB) + unused ACL builders** — Low. `DONE` — `spa.js`/`spa.css`
+   removed (legacy framework-free SPA; the React build serves `/app`) plus the CI
+   `node --check` step and stale docs; and the retired permission-level model
+   (`build_disallowed*`, `blocked_tool_names`, `normalize_level`, `LEVELS`) removed from
+   `agent_permissions.py` along with its two test files (the live capability model is
+   covered by `test_limits_and_scope`/`test_rooms_over_mcp`). README + SECURITY docs
+   updated to the write/publish + connection-ACL model. (Follow-up doc drift: `docs/AGENTS.md`
+   still lists a `tool_permission` param, and CHANGELOG is historical.)
 
 ## 3. Agent / workforce execution (agent B)
 

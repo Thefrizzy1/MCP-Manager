@@ -114,7 +114,10 @@ def test_session_tamper_rejected(root):
     tok = U.sign_session(root, "admin")
     body, _, sig = tok.partition(".")
     assert U.verify_session(root, f"{body}x.{sig}") is None
-    assert U.verify_session(root, f"{body}.{sig[:-1]}0") is None
+    # Flip the last signature char to one that is guaranteed different (a plain
+    # "0" is a no-op ~1/16 of the time, when the hex sig already ends in 0).
+    flipped = "1" if sig[-1] != "1" else "2"
+    assert U.verify_session(root, f"{body}.{sig[:-1]}{flipped}") is None
     assert U.verify_session(root, "garbage") is None
 
 

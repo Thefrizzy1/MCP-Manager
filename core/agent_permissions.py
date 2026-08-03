@@ -1,26 +1,29 @@
-"""Tool-permission levels for the headless agent.
+"""Capability gating for the headless agent — the "how far may it go" axis.
 
 The agent runs with --dangerously-skip-permissions and can reach Plutus's tools
 while reading untrusted web pages, so a prompt-injection could try to trigger
-destructive actions. This module maps a permission level to a Claude Code
-`--disallowedTools` list (disallow wins over allow), giving three postures:
+destructive or outward-facing actions. A launch answers two independent questions,
+each mapped here to a Claude Code ``--disallowedTools`` list (disallow wins):
 
-- ``strict_read`` — reads only; every mutating tool blocked. For pure audits.
-- ``safe``  (default) — reads + note-writing (so playbooks can persist to the
-  library), but infrastructure/irreversible tools blocked.
-- ``all``   — nothing blocked (full access).
+- **write** — may it change anything at all? Off is a true audit posture: every
+  tool not annotated read-only is blocked.
+- **publish** — may it put something in front of other people, or send a message?
+  Off by default even when write is on — "edit my library" and "open a public
+  issue on my repo" are not the same permission.
 
-Classification is explicit here (not derived from the smoke-tester's exclude
-list, which has a different purpose — e.g. obsidian_write_note is excluded there
-but is exactly what a research playbook needs).
+(The *where* axis — which services an agent may touch — is separate:
+core/agent_orchestrator.service_disallow, driven by the connection picker.)
+
+The earlier ``strict_read``/``safe``/``all`` permission-*level* model was retired;
+its ``build_disallowed*`` helpers are gone. The curated blast-radius sets below
+remain as the reference for what counts as destructive/outward and as a safety
+floor for tools whose annotations under-classify them.
 """
 from __future__ import annotations
 
-LEVELS = ("strict_read", "safe", "all")
-DEFAULT_LEVEL = "safe"
-
-# Infrastructure control, deletion, sending, and costly generation — blocked in
-# both ``safe`` and ``strict_read``.
+# Infrastructure control, deletion, sending, and costly generation — the safety
+# floor blocked whenever writes are off, even if a tool's own annotation
+# under-claims it.
 DANGEROUS: frozenset[str] = frozenset({
     "docker_stop_container", "docker_restart_container", "docker_start_container",
     "qbittorrent_delete", "qbittorrent_pause", "qbittorrent_resume",
@@ -34,8 +37,8 @@ DANGEROUS: frozenset[str] = frozenset({
     "radarr_add_movie", "sonarr_add_series", "jellyseerr_request",
 })
 
-# Note / content writing — allowed in ``safe`` (playbooks must persist findings),
-# blocked only in ``strict_read``.
+# Note / content writing — part of the safety floor when writes are off, but not
+# destructive: with writes on, a research playbook must be able to persist here.
 WRITE: frozenset[str] = frozenset({
     "obsidian_write_note", "obsidian_append_to_note", "obsidian_create_daily_note",
     "fs_write_file",
@@ -69,53 +72,8 @@ def is_outward(name: str, read_only: bool) -> bool:
     return name in OUTWARD or any(m in name for m in _OUTWARD_MARKERS)
 
 
-def normalize_level(level: str | None, default: str = DEFAULT_LEVEL) -> str:
-    return level if level in LEVELS else default
-
-
-def blocked_tool_names(level: str) -> set[str]:
-    level = normalize_level(level)
-    if level == "all":
-        return set()
-    if level == "strict_read":
-        return set(DANGEROUS) | set(WRITE)
-    return set(DANGEROUS)  # "safe"
-
-
-def build_disallowed(tool_names, level: str) -> list[str]:
-    """`mcp__plutus__<tool>` disallow patterns for blocked tools that actually exist."""
-    blocked = blocked_tool_names(level)
-    live = set(tool_names or [])
-    return sorted(f"mcp__plutus__{n}" for n in blocked if n in live)
-
-
 def _tool_annotations_map(tool_manager) -> dict:
     return {t.name: t.annotations for t in tool_manager.list_tools()}
-
-
-def build_disallowed_from_annotations(tool_manager, level: str) -> list[str]:
-    """Derive the disallow list from tool annotations rather than a hand list.
-
-    - ``strict_read`` blocks every tool that is not read-only.
-    - ``safe`` blocks every destructive tool.
-
-    Each still unions the curated ``DANGEROUS``/``WRITE`` sets as a safety-net
-    override, so a tool the hints under-classify (ssh_run, ha_call_service, …)
-    stays blocked, and the derived list is always a superset of the old one.
-    Fail-safe: a missing/None annotation counts as *not* read-only.
-    """
-    level = normalize_level(level)
-    if level == "all":
-        return []
-    amap = _tool_annotations_map(tool_manager)
-    live = set(amap)
-    if level == "strict_read":
-        blocked = {n for n, a in amap.items() if not (a and a.readOnlyHint)}
-        blocked |= (DANGEROUS | WRITE) & live
-    else:  # safe
-        blocked = {n for n, a in amap.items() if a and a.destructiveHint}
-        blocked |= DANGEROUS & live
-    return sorted(f"mcp__plutus__{n}" for n in blocked if n in live)
 
 
 def capability_disallow(tool_manager, *, allow_write: bool = True,

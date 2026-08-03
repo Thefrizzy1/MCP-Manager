@@ -45,7 +45,7 @@ internet surface (see [§5](#5-exposure-posture)).
 | Env tampering | UI-writable env keys allowlisted; `PATH`/`LD_PRELOAD`/etc. blocked; newlines rejected; atomic writes | `config.py`, `core/env_store.py` |
 | Destructive actions | Docker writes gated by `DOCKER_WRITE_ENABLED` (default off); SSH hosts read-only by default | `tools/system.py`, `tools/ssh_smb.py` |
 | Input validation | All tool inputs are pydantic models with `extra="forbid"` | `tools/*` |
-| Agent blast-radius | Headless agent's tool access is capped by a permission level (`strict_read`/`safe`/`all`, default `safe`); destructive tools blocked via Claude Code `--disallowedTools` | `core/agent_permissions.py` |
+| Agent blast-radius | Two capability switches (**write**, **publish** — publish off by default) plus a per-connection ACL cap the agent's tools; destructive/outward tools blocked via Claude Code `--disallowedTools` | `core/agent_permissions.py`, `core/agent_orchestrator.py` |
 | Agent auth | Web login stores a session/OAuth token (`CLAUDE_CODE_OAUTH_TOKEN`), never an API key | `core/agent_login.py` |
 | Secrets at rest | `.env`, `data/` excluded from image & VCS | `.dockerignore`, `.gitignore` |
 
@@ -84,10 +84,12 @@ The headless agent runs with `--dangerously-skip-permissions` and, when research
 reads untrusted web pages. Treat any such page as capable of trying to steer the agent
 into destructive tool calls. Mitigations, layered:
 
-- **Permission level** (`core/agent_permissions.py`) caps which Plutus tools the agent may
-  invoke — default `safe` blocks docker control, deletes, `ssh_run`/`ssh_exec`, HA control,
-  `send_email`, torrent delete, `n8n_trigger_webhook`, and image generation, while still
-  allowing note-writing so research can persist. `strict_read` blocks all writes.
+- **Capability switches** (`core/agent_permissions.py`) cap what the agent may do: **write**
+  off is a true audit posture (every non-read-only tool blocked); **publish** off — the
+  default — blocks outward tools (`send_email`, `ntfy_send`, `n8n_trigger_webhook`, public
+  GitHub issues/PRs, share links) even when write is on. Curated `DANGEROUS`/`WRITE` sets are
+  a safety floor for tools whose annotations under-classify them. Which *services* an agent
+  may touch is the separate per-connection ACL (`core/agent_orchestrator.service_disallow`).
 - **Server-side gates** remain the backstop even at `all`: `DOCKER_WRITE_ENABLED=false`
   and SSH hosts `readonly: true` mean the most dangerous actions are refused by the tools
   themselves regardless of what the agent is talked into.

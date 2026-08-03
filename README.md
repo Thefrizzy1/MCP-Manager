@@ -141,11 +141,12 @@ containers"* or a nightly research playbook — with a live console, cost tracki
 and a serial run queue.
 
 - **Launch wizard**: name, model, schedule (run now / daily / weekly / cron),
-  **MCP access level**, and a **per-connection allow-list** of exactly which
-  services the agent may touch.
-- **Access levels** (enforced via Claude Code `--disallowedTools`):
-  `strict_read` (reads only) · `safe` (reads + note-writing, blocks
-  docker/deletes/ssh/HA/email — the default) · `all`.
+  **write / publish switches**, and a **per-connection allow-list** of exactly
+  which services the agent may touch.
+- **Capability switches** (enforced via Claude Code `--disallowedTools`):
+  **write** off = a read-only audit posture; **publish** off (the default)
+  blocks outward actions — email, ntfy, webhooks, public GitHub issues/PRs,
+  share links — even when write is on.
 - **Per-connection ACL**: unchecked homelab connections are blocked for that run;
   web/search/weather/file utilities always stay available so research still
   works. Both ad-hoc **and scheduled** runs carry their own permission + ACL —
