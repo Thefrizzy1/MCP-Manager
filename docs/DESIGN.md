@@ -63,7 +63,7 @@ mono 11.5–12.5px  endpoints, addresses, tool names, counts
   `Card` + `CardHeader`, `Stat`, `StatusDot` / `HealthBadge`, `Tag`, `Input` /
   `Textarea` / `Select`, `Field` / `Row`, `Modal`, `Drawer`, `Toast` (bottom-right,
   replaces native alert), `ServiceLogo`.
-- **Health states** (`lib/health.ts`): Online / Offline / Auth error / Rate limited /
+- **Health states** (`ui/web/src/lib/health.ts`): Online / Offline / Auth error / Rate limited /
   API error / Not configured / Disabled — each a tone (ok/warn/danger/muted).
 
 ## Anti-patterns (a change producing these is wrong)

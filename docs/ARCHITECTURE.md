@@ -46,12 +46,26 @@ Tool filtering is done at
 there is no list-time monkeypatch. Profiles/exposure are **restart-to-apply** (the MCP
 server is a separate process from the UI). The old global tool gate is gone.
 
-**Agent scoping is one dial, not three.** A launched agent is governed solely by the
-MCP connections ticked in the launch wizard: selecting a connection grants read *and*
-write on that service's tools. The permission levels (`strict_read`/`safe`/`all`) no
-longer narrow a run — two overlapping gates made it impossible to tell why a tool was
-missing. `core/agent_permissions.py` is retained for its documented blast-radius sets
-(`DANGEROUS`, `WRITE`), which are still the reference for what a destructive tool is.
+**Agent scoping is two axes, not a ladder.** They answer different questions and
+compose:
+
+- **Where** — the MCP connections ticked in the launch wizard
+  (`core/agent_orchestrator.service_disallow`). Selecting a connection grants read
+  *and* write on that service's tools; unticked services are denied.
+- **How far** — the write and publish switches
+  (`core/agent_permissions.capability_disallow`). Write off is a true read-only
+  run: every tool not annotated `readOnlyHint` is denied. Publish is off by
+  default even when write is on, because "edit my library" and "open a public
+  issue on my repo" are not the same permission, and an agent reading an
+  untrusted page can be talked into either.
+
+Both are fail-safe: a missing or `None` annotation counts as *not* read-only.
+
+The old `strict_read`/`safe`/`all` permission **levels** were retired — a level
+plus connections meant two overlapping gates and no way to tell why a tool was
+missing. `core/agent_permissions.py` keeps its documented blast-radius sets
+(`DANGEROUS`, `WRITE`, `OUTWARD`) as the reference for what counts as destructive
+or outward-facing.
 Profiles are likewise backend-only now: the API and `/mcp/p/<name>` endpoints remain,
 but the launch wizard and Settings no longer expose them. Public services (web search,
 weather, Wikipedia, …) are ordinary connections — listed, and **off by default**, so an
@@ -109,43 +123,111 @@ on restart, which is the documented contract.
 
 ## 2. Module map
 
+Grouped by job rather than listed flat — `core/` is ~60 modules and an alphabetical
+dump of them is not a map. Each module's own docstring is the detailed reference.
+
 ```
-main.py              Bootstrap, dependency check, FastMCP wiring, UI app + all HTTP
-                     endpoints, auth, process orchestration.
-config.py            Central env-driven configuration (singleton `cfg`) + the
-                     UI-writable env-key allowlist.
+main.py              Thin orchestrator: dependency check, the two-process launch,
+                     signals/lifecycle. The MCP surface and the app-wide singletons
+                     live in ui/runtime.py; every HTTP endpoint lives in ui/api/*.
+config.py            Env-driven configuration (singleton `cfg`) + the UI-writable
+                     env-key allowlist.
 client.py            Shared async HTTP helpers (arr_get/post, _handle_error with
                      redaction, fmt_size).
 
-core/                Cross-cutting logic, deliberately UI/transport-agnostic:
-  env_store.py         Canonical .env reader/writer (atomic, validated, cfg-sync).
-  path_guard.py        Boundary-aware path confinement for fs/SMB tools.
-  redact.py            Secret masking for file content surfaced to the model.
-  ssrf_guard.py        Outbound-URL screening for web_fetch.
-  rate_limit.py        Per-client login lockout.
-  mcp_bearer_middleware.py  Live bearer gate for the MCP transport.
-  mcp_export.py        Builds downloadable client configs (Connection Manager).
-  agent_runner.py      Headless Claude Code runner over Plutus's own MCP tools.
-  schedule_store.py    Persistent CRUD + cron validation for scheduled jobs.
-  scheduler.py         APScheduler runtime firing agent/tool schedules.
-  health_regression.py Tool-health baseline diff + alerting.
-  batch_health.py /
-  smoke_service_tools.py    In-app verification (zero-arg batch + round-trips).
-  result_status.py     Success/failure text classifier.
-  tool_registry.py /
-  tool_gate.py /
-  capabilities.py      Tool catalogue, slicing, per-tool gating.
-  dashboard_*.py       Dashboard payload + service health probing.
-  discover_services.py /
-  docker_wizard.py /
-  wizard_scan.py       LAN/Docker auto-discovery for the setup wizard.
-  observability.py     In-memory telemetry (route latency/status ring buffer).
+core/                Cross-cutting logic, deliberately UI/transport-agnostic.
+                     Nothing in tools/ may import ui.* — see the guard in
+                     tests/test_docs_and_layering.py.
+
+  Agents — execution
+    agent_orchestrator.py  The execution engine: serial queue, worker, run scoping.
+    agent_runner.py        Runs one agent through a provider CLI or HTTP API.
+    agent_permissions.py   The write/publish axis (capability_disallow) + the
+                           DANGEROUS / WRITE / OUTWARD blast-radius sets.
+    agent_presets.py       Named kinds of agent: folder, tool slice, how far it may go.
+    agent_tasks.py         Playbooks — saved prompts with template variables.
+    agent_skill.py         The system prompt / skill text an agent is launched with.
+    agent_tools.py         Tools the runner serves in-process (the library ones).
+    subagents.py           A coordinator handing work to cheaper models.
+    workforce.py           Rooms: a team of seats running in order on a shared brief,
+                           with room-to-room handoff and seat-to-seat redirection.
+
+  Agents — auth & storage
+    ai_providers.py        Providers (Claude/Codex/Gemini/…) with several accounts each.
+    provider_login.py /
+    agent_login.py         Interactive CLI login flows and credential adoption.
+    agent_db.py            A writable destination that cannot be taken away.
+    library.py             The research library — the app's own writable output dir.
+    recent_runs.py         Run history index.
+
+  Tool surface
+    tool_exposure.py       Category / per-tool switches for the served manifest.
+    profiles.py            Named tool subsets served at /mcp/p/<name>.
+    tool_registry.py /
+    tool_manager_adapter.py /
+    capabilities.py        Tool catalogue and the adapter over FastMCP's manager.
+    tool_annotations.py    Completes the four MCP annotation hints on every tool —
+                           the write/publish gate reads them, so a missing one is
+                           treated as the dangerous case.
+    router.py              Deterministic low-token dispatch.
+    tool_cache.py          Last tool outputs for dashboard inspection (beta).
+    invoke_tool.py         One place that calls a tool by name.
+
+  Services & config
+    builtin_services.py    Canonical built-in service + capability metadata.
+    service_defs.py        Typed single-source view over it (drift-guarded).
+    service_registry.py /
+    service_utils.py /
+    service_logos.py       Lookup, helpers, brand marks.
+    custom_integrations.py User-defined dashboard segments.
+    env_store.py           Canonical .env reader/writer (atomic, validated).
+    live_config.py         Keeps one process's cfg in sync with the other's edits.
+    atomic_json.py         Crash-safe JSON writes used by the stores above.
+
+  Safety
+    path_guard.py          Boundary-aware path confinement for fs/SMB tools.
+    ssrf_guard.py          Outbound-URL screening.
+    redact.py              Secret masking for content surfaced to the model.
+    rate_limit.py          Per-client login lockout.
+    mcp_bearer_middleware.py  Live bearer gate for the MCP transport.
+    ui_users.py            Multi-user store and signed sessions.
+    oauth_provider.py /
+    oauth_routes.py        OAuth 2.1 provider for browser-based MCP connectors.
+
+  Health & discovery
+    batch_health.py /
+    smoke_service_tools.py /
+    dashboard_health.py    The three probe pipelines (zero-arg, round-trip, HTTP).
+    result_status.py       Success/failure text classifier shared by them.
+    health_regression.py   Baseline diff + alerting.
+    discover_services.py /
+    docker_wizard.py /
+    wizard_scan.py         LAN/Docker auto-discovery for the setup wizard.
+    openapi_discover.py    Introspect a service's OpenAPI spec.
+    observability.py       In-memory route latency/status ring buffer.
+
+  Scheduling & misc
+    schedule_store.py      Persistent CRUD + cron validation.
+    scheduler.py           APScheduler runtime firing agent/tool schedules.
+    mcp_export.py          Downloadable client configs (Connection Manager).
+    mcp_client.py          Client for talking MCP to another server.
+    links.py               Client-facing URLs without hardcoded LAN IPs.
+    reddit_accounts.py     Several Reddit logins rather than one.
+    api_dialects.py        How each HTTP provider's chat API is shaped.
+    ui_prefs.py / version_info.py / updates_github.py / dashboard_api.py
 
 tools/               One module per domain, each exposing `register_*_tools(mcp)`:
   media.py personal.py photos.py system.py comfyui.py utilities.py obsidian.py
   monitoring.py nextcloud.py infrastructure.py fal_tools.py public_apis_bulk.py
-  ssh_smb.py
+  ssh_smb.py github.py gitlab.py youtube.py huggingface.py social.py scrape.py
+  agents.py rooms.py agent_db.py prompts.py resources.py apps.py
+  mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
+                        Plutus's own /mcp, applying the run's scope. This is how
+                        an agent CLI reaches these tools with only the tools that
+                        run is allowed to see.
 
+ui/runtime.py        The FastMCP instance, tool registration, app-wide singletons.
+ui/api/*.py          Every HTTP endpoint, one module per surface.
 ui/spa_page.py       Serves the built React shell (served at /app).
 ui/web/              React + Vite SPA source, built to ui/static/dist/.
 
@@ -163,9 +245,15 @@ startup; each uses the FastMCP `@mcp.tool(...)` decorator with a pydantic input 
 annotations that drive the safety model (see [TESTING.md](TESTING.md)). User-supplied
 tools can be added without forking via `extensions/__init__.py::register(mcp)`.
 
-A **tool gate** (`core/tool_gate.py`, persisted in `data/plutus_tool_gate.json`) and a
-**tool slicer** let you shrink the manifest an MCP client sees — by section, by
-individual tool, or by a free-text "intent" — without removing code.
+Two mechanisms shrink the manifest an MCP client sees, without removing code:
+**tool exposure** (`core/tool_exposure.py`, persisted in `data/tool_exposure.json`)
+switches whole categories or individual tools off globally, and **profiles**
+(`core/profiles.py`) serve a named subset at `/mcp/p/<name>`. A fresh install is
+seeded lean — novelty categories off — by `ensure_exposure_seed`.
+
+This matters for cost, not just tidiness: every tool's schema is re-sent on every
+request of every agent turn, so the manifest is usually the largest fixed item in
+an agent's prompt.
 
 ---
 
