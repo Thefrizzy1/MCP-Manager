@@ -162,6 +162,7 @@ def build_mcp_asgi_app():
 
     from starlette.applications import Starlette
 
+    from core.live_config import LiveConfigMiddleware
     from core.mcp_bearer_middleware import MCPBearerGateMiddleware
     from core.oauth_routes import oauth_routes
     from core.tool_exposure import resolve_exposed
@@ -214,6 +215,10 @@ def build_mcp_asgi_app():
 
     app = Starlette(routes=routes, lifespan=_lifespan)
     app.add_middleware(MCPBearerGateMiddleware)
+    # Outermost (added last): refresh cfg from .env before the bearer check and
+    # the tools run, so a credential set in the UI reaches the MCP tool process
+    # without a restart. See core/live_config (docs/ARCHITECTURE_AUDIT.md §5).
+    app.add_middleware(LiveConfigMiddleware)
     return app
 
 ICONS_DIR = ROOT / "icons"

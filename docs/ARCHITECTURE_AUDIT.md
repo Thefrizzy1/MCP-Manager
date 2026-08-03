@@ -162,8 +162,13 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
    generation + discovery fingerprints onto one `ServiceDef` too (the larger, riskier
    part — `config.py` is read as `cfg.<svc>_url` everywhere).
 2. **`config.py` is a 111-field flat blob** — High. Generate cfg from the registry. `TODO`
-3. **Live env changes never reach the MCP tool process** — High — `config.py:315-366`.
-   Resolve credentials at call time via `env_store`, or reload-signal the MCP process. `TODO`
+3. **Live env changes never reach the MCP tool process** — High — `config.py`. `DONE` —
+   `core/live_config.LiveConfigMiddleware` refreshes the MCP process's `cfg` from
+   `.env` on the request path (mtime-gated + TTL, lazy/inert until `.env` actually
+   changes after boot), so a credential set in the UI reaches the tools within
+   seconds without a restart. Adds/changes/clears all propagate. No per-tool
+   rewrite needed — `cfg` is a shared singleton, so refreshing it centrally is
+   enough. Tests in `test_live_config.py`.
 4. **Naive JSON writers (corruption/lost-update)** — Med — `core/recent_runs.py`,
    `core/custom_integrations.py`, `core/ui_prefs.py`. `DONE` — all routed through
    `core/atomic_json.py` (tmp+fsync+replace, per-path lock, bind-mount fallback).
@@ -211,8 +216,10 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
   tool-ownership onto one `ServiceDef`; one tool-metadata registry feeding slicer/
   profiles/ACLs/capabilities/annotations. (D#2/6/7/8, A#1) `TODO`
 
-**Wave 5 — the hard correctness fix.**
-- Live-config propagation across the process split (resolve creds at call time). (A / D#3)
+**Wave 5 — the hard correctness fix. `DONE`**
+- Live-config propagation across the process split: `core/live_config` refreshes the
+  MCP process's cfg from `.env` on the request path (mtime-gated), so UI credential
+  edits reach the tools without a restart. (A / D#3)
 
 **Wave 6 — manifest reduction (the token cost). (partly `DONE`)**
 - Profile↔slice composition (A#2) and the dead `apply` field removal (A#6) — `DONE`.
