@@ -127,16 +127,23 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 ## 4. Smoke / health reliability (agent C)
 
 1. **Classifier verdict depends on error phrasing, not state** — High —
-   `core/result_status.py:6-23`. Classify on structured signals (is_error/HTTP). `TODO`
-2. **Smoke fires live queries then greps live content** — High — `core/tool_registry.py:112-170`.
-   Assert on shape, or use fixed inputs. `TODO`
+   `core/result_status.py`. `DONE` — `text_looks_successful` now scans only the
+   output's head, not the whole body, so a working tool whose *content* mentions
+   "traceback"/"typeerror"/"validation error" is no longer flipped to FAIL. This
+   was the primary flakiness engine (and the likely cause of the CI live-test
+   failure). A full structured (is_error/HTTP) classifier is the larger Wave 4 item.
+2. **Smoke fires live queries then greps live content** — High — `core/tool_registry.py`.
+   Partially mitigated by #1 (content no longer false-fails). Deterministic/shape-based
+   smoke inputs still `TODO`.
 3. **`force=True` silently ignored under lock contention** — High — `ui/runtime.py:497-498`. `DONE`
 4. **`_health_cache`/`_health_states` drift; five writers** — Med — `ui/runtime.py:509`.
    One atomically-updated record owned only by `get_health`. `TODO`
 5. **Three divergent probe pipelines; regression uses the weakest** — Med/High —
    `core/health_regression.py:107` diffs `batch_health` (no transient handling). `TODO`
-6. **Zero-param batch runs serially, 120s/tool** — Med — `core/batch_health.py:22-37`.
-   `asyncio.gather` + short per-tool timeout. `TODO`
+6. **Zero-param batch runs serially, 120s/tool** — Med — `core/batch_health.py`. `DONE` —
+   probes now run under a bounded `asyncio.gather` (default 8), so one hung tool no
+   longer stalls the whole batch past the caller's deadline. Order preserved; new
+   deterministic tests cover concurrency + the bound.
 7. **`looks_like_missing_service_config` over-matches** — Med — `core/tool_registry.py:13-38`. `TODO`
 8. **Mutation smoke timing edges** (time-keyed titles, midnight window) — Low/Med. `TODO`
 9. **Tests import flakiness** (subprocess skip-on-timeout; DNS assumption) — Med. `TODO`
@@ -181,9 +188,12 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
   core. (C-theme / B#1/2)
 - Enforced connection scope in `run_room` (closes the permission gap). (G / B#3)
 
-**Wave 3 — reliability.**
-- One structured result classifier; route smoke/batch/dashboard/regression through it;
-  deterministic smoke inputs; parallel batch. (D-theme / C#1/2/5/6/7)
+**Wave 3 — reliability. (partly `DONE`)**
+- Classifier no longer prose-greps the whole body (C#1) and the batch runs
+  concurrently under a bound (C#6) — the two biggest flakiness sources. `DONE`
+- Remaining: a fully structured (is_error/HTTP) classifier routed through
+  smoke/batch/dashboard/regression, deterministic smoke inputs, and folding the
+  three probe pipelines into one. (C#2/4/5/7) `TODO`
 
 **Wave 4 — single sources of truth (larger).**
 - `ServiceDef` registry → derive config, health, logos, discovery, tool ownership. (B / D#1/2/6/7/8)
