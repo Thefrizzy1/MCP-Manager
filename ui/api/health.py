@@ -1,8 +1,6 @@
 """Service/tool health surface: refresh, full report, regression check."""
 from __future__ import annotations
 
-import time
-
 from fastapi import APIRouter, Depends, Request
 
 from config import cfg
@@ -20,9 +18,7 @@ router = APIRouter(dependencies=[Depends(verify_auth)])
 async def health_refresh():
     async with runtime._health_lock:
         cache, rows = await gather_service_health(_services_live(), cfg)
-        runtime._health_cache = cache
-        runtime._health_states = {r["id"]: r.get("state") for r in rows}
-        runtime._health_ts = time.time()
+        runtime._set_health(cache, rows)
     return cache
 
 
@@ -31,9 +27,7 @@ async def health_full_report():
     """Refresh service probes, run zero-arg tool batch, return markdown + structured rows."""
     async with runtime._health_lock:
         cache, svc_rows = await gather_service_health(_services_live(), cfg)
-        runtime._health_cache = cache
-        runtime._health_states = {r["id"]: r.get("state") for r in svc_rows}
-        runtime._health_ts = time.time()
+        runtime._set_health(cache, svc_rows)
     tool_rows = await run_health_batch_for_ui(tools.raw_manager)
     md = build_health_report_markdown(svc_rows, tool_rows)
     return {"health": cache, "services": svc_rows, "tools": tool_rows, "markdown": md}

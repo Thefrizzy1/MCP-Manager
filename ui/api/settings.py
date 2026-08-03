@@ -279,7 +279,7 @@ async def env_save(request: Request):
     # next dashboard fetch re-probes with the new cfg — a service that was
     # 'unconfigured' flips to its real state instead of lingering for 60s.
     async with runtime._health_lock:
-        runtime._health_cache, runtime._health_states, runtime._health_ts = {}, {}, 0.0
+        runtime.invalidate_health()
     return {"ok": True}
 
 
@@ -306,7 +306,7 @@ async def api_v1_settings_reset(body: SettingsResetBody):
     if "beta_cache" in scopes:
         save_prefs(ROOT, dict(BETA_CACHE_DEFAULT_PREFS))
     async with runtime._health_lock:
-        runtime._health_cache, runtime._health_ts = {}, 0.0
+        runtime.invalidate_health()
     return {"ok": True, "scopes": sorted(scopes)}
 
 

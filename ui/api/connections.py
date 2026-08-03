@@ -25,8 +25,7 @@ async def test_service(sid: str):
     # table reflects the new state immediately (not just on a full Test-all).
     state = service_state_from_row(row)
     async with runtime._health_lock:
-        runtime._health_cache[sid] = row.get("ok")
-        runtime._health_states[sid] = state
+        runtime.set_service_health(sid, row.get("ok"), state)
     o = row.get("ok")
     detail = (row.get("detail") or "").strip()
     summary = (row.get("summary") or "").strip()

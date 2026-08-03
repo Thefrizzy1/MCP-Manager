@@ -391,6 +391,30 @@ def _run_task_bg(task_id: str, *, force: bool = False) -> None:
 _HEALTH_TTL = 60.0
 
 
+def _set_health(cache: dict, rows: list[dict]) -> None:
+    """The one place a fresh gather is written into the cache — cache, state map
+    and timestamp set together so they can never drift. Caller holds _health_lock."""
+    global _health_cache, _health_states, _health_ts
+    _health_cache = cache
+    _health_states = {r["id"]: r.get("state") for r in rows}
+    _health_ts = time.time()
+
+
+def invalidate_health() -> None:
+    """Drop the cached health so the next read re-probes. Resets all three fields
+    together — earlier ad-hoc resets left _health_states stale, and system.py reads
+    it. Caller holds _health_lock."""
+    global _health_cache, _health_states, _health_ts
+    _health_cache, _health_states, _health_ts = {}, {}, 0.0
+
+
+def set_service_health(sid: str, ok, state) -> None:
+    """Update one service's cached health after a targeted re-probe — both the
+    cache and the state map, so they stay in step. Caller holds _health_lock."""
+    _health_cache[sid] = ok
+    _health_states[sid] = state
+
+
 async def get_health(force=False):
     """Cached service health.
 
@@ -418,8 +442,6 @@ async def get_health(force=False):
             cache, rows = await asyncio.wait_for(
                 gather_service_health(_services_live(), cfg), timeout=120.0
             )
-            _health_cache = cache
-            _health_states = {r["id"]: r.get("state") for r in rows}
         except Exception as exc:
             # Stamp the clock even on failure. Without this a persistently failing
             # probe left _health_ts stale, so every subsequent request immediately
@@ -429,7 +451,7 @@ async def get_health(force=False):
             if _health_cache:
                 return _health_cache
             raise
-        _health_ts = time.time()
+        _set_health(cache, rows)
         return _health_cache
 
 

@@ -30,6 +30,6 @@ async def settings_custom_integrations_post(request: Request):
     except json.JSONDecodeError:  # invalid JSON body from client
         raise HTTPException(400, "Body must be valid JSON")
     async with runtime._health_lock:
-        runtime._health_cache, runtime._health_ts = {}, 0.0
+        runtime.invalidate_health()
     capabilities.invalidate()
     return {"ok": True}

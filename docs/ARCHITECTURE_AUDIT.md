@@ -148,8 +148,12 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
    Partially mitigated by #1 (content no longer false-fails). Deterministic/shape-based
    smoke inputs still `TODO`.
 3. **`force=True` silently ignored under lock contention** — High — `ui/runtime.py:497-498`. `DONE`
-4. **`_health_cache`/`_health_states` drift; five writers** — Med — `ui/runtime.py:509`.
-   One atomically-updated record owned only by `get_health`. `TODO`
+4. **`_health_cache`/`_health_states` drift; five writers** — Med — `ui/runtime.py`. `DONE` —
+   the cache now has one owner: `_set_health` / `invalidate_health` / `set_service_health`
+   move cache+state+timestamp together, and every writer (health.py, catalog.py,
+   settings.py ×2, connections.py) routes through them. Fixes the two resets that
+   cleared the cache but left `_health_states` stale (which `system.py` then read).
+   Test: `test_health_cache.py`.
 5. **Three divergent probe pipelines; regression uses the weakest** — Med/High —
    `core/health_regression.py:107` diffs `batch_health` (no transient handling). `TODO`
 6. **Zero-param batch runs serially, 120s/tool** — Med — `core/batch_health.py`. `DONE` —
