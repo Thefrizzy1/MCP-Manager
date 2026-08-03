@@ -187,6 +187,12 @@ def build_mcp_asgi_app():
     apps = [_serve_at(mcp if exposed is None else build_mcp("plutus", exposed), "/mcp")]
     for prof in load_profiles(ROOT):
         allow = resolve_tool_names(prof, names)
+        # A profile is a subset; the global slicer is a ceiling over every
+        # endpoint. Compose them so a category disabled to save tokens also
+        # shrinks the profile endpoints, instead of a profile silently serving
+        # tools the operator turned off globally. (ALWAYS_EXPOSED stays in both.)
+        if exposed is not None:
+            allow = allow & exposed
         sub = build_mcp(f"plutus-{prof['name']}", allow)
         apps.append(_serve_at(sub, f"/mcp/p/{prof['name']}"))
 

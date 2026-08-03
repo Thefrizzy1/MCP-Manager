@@ -79,8 +79,10 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 1. **Three narrowing mechanisms on 4+ taxonomies** — High — `core/profiles.py:79`,
    `core/capabilities.py:14`, `core/tool_annotations.py:22`, `core/tool_registry.py:51`,
    `ui/runtime.py:325-409`. Unify behind one tool-metadata source. `TODO`
-2. **Slicer and profiles don't compose** — Med — `ui/runtime.py:188-191`. Intersect
-   profile allow-sets with the global exposure set. `TODO`
+2. **Slicer and profiles don't compose** — Med — `ui/runtime.py`. `DONE` —
+   `build_mcp_asgi_app` now intersects each profile's allow-set with the global
+   exposure ceiling, so a category disabled to save tokens also shrinks the
+   `/mcp/p/<name>` endpoints. Test: `test_profile_composes_with_the_global_slicer`.
 3. **Default manifest is the full 209 tools** — High — `core/tool_exposure.py:117-125`.
    Ship a lean default slice (novelty/trivia/crypto off) or make profiles the norm. `TODO`
 4. **Slicer only removes whole tools** — Med — no description compaction/dedupe; `pub_`
@@ -88,7 +90,9 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 5. **Restart-to-apply inconsistent + per-profile full rebuild** — Med —
    `ui/runtime.py:186-191`. Build a registered superset once, derive views, hot re-slice. `TODO`
 6. **`plutus_tool_slicer.apply` is dead + stale field on every manifest** — Med —
-   `tools/infrastructure.py:551-567`. Delete field, trim docstring. `TODO` (quick token win)
+   `tools/infrastructure.py`. `DONE` — the dead `apply` field and the docstring's
+   category dump are gone; `plutus_tool_slicer` is ALWAYS_EXPOSED, so this trims
+   tokens from *every* served manifest. Test: `test_slicer_dropped_the_dead_apply_field`.
 7. **`resources.py` ignores `allow`** — Low — `tools/resources.py:46`. `TODO`
 8. **`prompts.py` allow-semantics mismatch** (names vs playbook ids) — Low —
    `tools/prompts.py:61`. `TODO`
@@ -202,8 +206,12 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
 **Wave 5 — the hard correctness fix.**
 - Live-config propagation across the process split (resolve creds at call time). (A / D#3)
 
-**Wave 6 — manifest reduction (the token cost).**
-- Lean default slice; profile↔slice composition; description compaction/dedupe. (E / A#2/3/4)
+**Wave 6 — manifest reduction (the token cost). (partly `DONE`)**
+- Profile↔slice composition (A#2) and the dead `apply` field removal (A#6) — `DONE`.
+- Remaining: a lean default slice (novelty categories off by default) and
+  description compaction / near-duplicate-tool dedupe (A#3/4). A lean default is a
+  behaviour change (agents lose niche tools until re-enabled) — left as a decision
+  for the operator via the existing exposure UI. `TODO`
 
 **Parallel track — UX the maintainer asked for.**
 - Multi-user auth + real split-screen login page (form + session, admin panel, remember-me,

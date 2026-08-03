@@ -171,3 +171,40 @@ def test_profile_endpoint_serves_at_its_advertised_path(tmp_path, monkeypatch):
                         headers={"Accept": "application/json, text/event-stream"},
                         follow_redirects=False)
         assert r.status_code == 200, f"/mcp/p/web returned {r.status_code}"
+
+
+def test_profile_composes_with_the_global_slicer(tmp_path):
+    """A category disabled globally must also shrink profile endpoints, not just
+    /mcp — the profile is a subset, the slicer a ceiling over both. This mirrors
+    the composition build_mcp_asgi_app now performs (allow & exposed)."""
+    from core.profiles import resolve_tool_names
+    from core.tool_exposure import resolve_exposed, save_exposure
+    from ui.runtime import all_tool_names
+
+    names = all_tool_names()
+    prof = {"name": "media-web", "sections": ["media", "search"]}
+    full_allow = resolve_tool_names(prof, names)
+    assert any(n.startswith("jellyfin_") for n in full_allow), "profile should include media tools"
+
+    save_exposure(tmp_path, ["media"])          # disable media globally
+    exposed = resolve_exposed(tmp_path, names)
+    assert exposed is not None
+    composed = full_allow & exposed
+    assert not any(n.startswith("jellyfin_") for n in composed), "media disabled globally must drop from the profile"
+    assert any(n.startswith(("web_", "wikipedia_")) for n in composed), "search tools should remain"
+
+
+def test_slicer_dropped_the_dead_apply_field():
+    """`apply` did nothing but rode every manifest — dropping it is a per-request
+    token saving on an always-exposed tool."""
+    from ui.runtime import tools
+
+    import json as _json
+
+    slicer = next((t for t in tools.raw_manager.list_tools() if t.name == "plutus_tool_slicer"), None)
+    assert slicer is not None
+    # FastMCP wraps the pydantic model under `params`/$defs, so scan the whole
+    # input schema rather than only its top-level properties.
+    blob = _json.dumps(getattr(slicer, "parameters", None) or {})
+    assert '"apply"' not in blob, "the dead apply field is still in the manifest"
+    assert '"intent"' in blob

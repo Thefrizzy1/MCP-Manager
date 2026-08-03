@@ -544,16 +544,8 @@ Then configure n8n SMTP node with host=127.0.0.1, port=1025.
         intent: str = Field(
             "",
             description=(
-                "Comma- or space-separated category names (calendar, tasks, files, media, "
-                "ai, system_ops, monitoring, …) and/or free-text keywords. Empty = no filter."
-            ),
-        )
-        apply: bool = Field(
-            False,
-            description=(
-                "If true, persist `intent` as the active server-wide intent so the MCP "
-                "tools/list response is actually shrunk to the matching subset. Reconnect "
-                "your MCP client after applying for the new manifest to take effect."
+                "Category names (calendar, tasks, files, media, ai, system_ops, …) "
+                "and/or free-text keywords, comma/space separated. Empty = no filter."
             ),
         )
 
@@ -561,14 +553,8 @@ Then configure n8n SMTP node with host=127.0.0.1, port=1025.
     async def plutus_tool_slicer(params: PlutusToolSlicerInput) -> str:
         """Preview which tools match an intent, grouped by category.
 
-        Read-only discovery aid. Global tool-gating was replaced by profiles: to
-        actually serve a subset, create a profile (POST /api/v1/profiles) and it
-        gets its own `/mcp/p/<name>` endpoint. The `apply` flag is accepted for
-        backward compatibility but no longer changes anything.
-
-        Available categories: calendar, tasks, contacts, notes, files, home, automation,
-        notifications, monitoring, system_ops, ai, weather, search, finance, media,
-        photos, trivia, ip_network, crypto, meta.
+        Read-only discovery aid. To actually serve a subset, create a profile
+        (POST /api/v1/profiles); it gets its own `/mcp/p/<name>` endpoint.
         """
         from core.profiles import build_tool_slice
 
