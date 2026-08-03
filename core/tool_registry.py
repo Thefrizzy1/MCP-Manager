@@ -11,10 +11,17 @@ from config import cfg
 
 
 def looks_like_missing_service_config(message: str) -> bool:
-    """True when a tool exited early because integration / host deps are absent."""
+    """True when a tool exited early because integration / host deps are absent.
+
+    Scans only the head of the message: a "not configured" notice always leads
+    (it's the first thing a tool says before doing anything). Scanning the whole
+    body let a long, unrelated failure that merely mentioned "add … in settings"
+    be miscategorised as *unset* rather than *fail* — which hides a real breakage
+    from the regression check. Config notices are short, so the head is enough.
+    """
     if not message:
         return False
-    t = message.strip().lower()
+    t = message.strip().lower()[:300]
     if "not configured" in t:
         return True
     if "not set up" in t:

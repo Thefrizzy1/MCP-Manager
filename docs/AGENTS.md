@@ -246,7 +246,6 @@ that the run log names how many were left out, and narrowing connections is the 
 | `skip_permissions` | `true` | Headless `--dangerously-skip-permissions` |
 | `timeout_min` | `20` | Per-run wall-clock cap |
 | `max_cost_usd` | `2.0` | Over-budget flag threshold |
-| `tool_permission` | `"safe"` | Blast-radius control: `strict_read` / `safe` / `all` (see below) |
 | `max_runs_per_day` | `20` | Scheduled/queued runs are refused past this (manual runs override) |
 | `output_mode` | `"obsidian"` | Where the library lives: `obsidian` or `filesystem` |
 | `obsidian_folder` | `"research"` | Vault-relative folder when `output_mode=obsidian` |
@@ -295,18 +294,19 @@ playbook flow through), or `tool` (a single Plutus tool call).
 ## 4b. Tool permissions (blast-radius control)
 
 The agent runs headless (skip-permissions) and can reach Plutus's tools while reading
-untrusted web pages — a prompt-injection route to destructive actions. A permission
-level (Settings → *Tool permission*, or per-playbook) decides what it may touch:
+untrusted web pages — a prompt-injection route to destructive actions. Two axes, chosen
+per launch in the wizard (not a stored config field), decide what a run may touch:
 
-| Level | The agent can… |
+| Axis | Off blocks… |
 |---|---|
-| `strict_read` | read only — no writes at all (pure audits) |
-| `safe` *(default)* | read **and** write notes to your library, but **not** infrastructure/irreversible tools (docker stop/restart, deletes, `ssh_run`/`ssh_exec`, HA control, `send_email`, torrent delete, `n8n_trigger_webhook`, image gen) |
-| `all` | everything — full access |
+| **write** | every tool not annotated read-only — a true read-only audit posture |
+| **publish** *(off by default)* | outward tools even when write is on: `send_email`, `ntfy_send`, `n8n_trigger_webhook`, public GitHub issues/PRs, `nextcloud_share_file` |
+| **connections** | any service not ticked in the launch picker (the *where* axis) |
 
-Enforced via Claude Code `--disallowedTools`. Per-playbook `permission` overrides the
-global default. Server-side gates (`DOCKER_WRITE_ENABLED` off, SSH read-only) remain the
-backstop. See [SECURITY.md](SECURITY.md).
+Enforced via Claude Code `--disallowedTools` — `core/agent_permissions` for write/publish,
+`core/agent_orchestrator.service_disallow` for connections. Curated `DANGEROUS`/`WRITE`
+sets are a safety floor. Server-side gates (`DOCKER_WRITE_ENABLED` off, SSH read-only)
+remain the backstop. See [SECURITY.md](SECURITY.md).
 
 Other controls: a **Stop** button cancels the running agent; the Run tab shows
 **runs today / daily cap** and **queue depth**; **Preview** shows a playbook's fully

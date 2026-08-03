@@ -46,3 +46,22 @@ def test_error_shaped_head_still_fails():
     """The head is still scanned, so a real error on the first line is caught."""
     assert text_looks_successful("TypeError: bad thing\n  at line 3") is False
     assert text_looks_successful("2 validation errors for Input\ntitle\n  field required") is False
+
+
+# ── the "unconfigured" detector is head-anchored too (C#7) ───────────────────
+
+def test_missing_config_notice_is_detected_at_the_head():
+    from core.tool_registry import looks_like_missing_service_config
+
+    assert looks_like_missing_service_config("Error: Jellyfin not configured.")
+    assert looks_like_missing_service_config(
+        "This needs a GitHub token. Add GITHUB_TOKEN in Settings → GitHub")
+
+
+def test_config_phrase_deep_in_a_long_body_is_not_miscategorised():
+    """A real failure that merely mentions a config phrase far down its body must
+    stay a failure — not be hidden from the regression check as 'unset'."""
+    from core.tool_registry import looks_like_missing_service_config
+
+    body = "Request failed: upstream returned HTTP 500.\n" + ("x" * 400) + "\nadd it in settings"
+    assert looks_like_missing_service_config(body) is False
