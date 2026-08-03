@@ -165,7 +165,14 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
    `weather` defined twice) is gone. `TODO`: fold config fields + `.env.example`
    generation + discovery fingerprints onto one `ServiceDef` too (the larger, riskier
    part — `config.py` is read as `cfg.<svc>_url` everywhere).
-2. **`config.py` is a 111-field flat blob** — High. Generate cfg from the registry. `TODO`
+2. **`config.py` is a 111-field flat blob** — High. Partly addressed: `core/service_defs`
+   is now a typed `ServiceDef` registry assembled from the canonical sources, and
+   `tests/test_service_defs.py` makes config.py ↔ SERVICES drift a CI failure (a service
+   env key with no backing cfg field, or a bogus `configured_keys` attr, now fails). The
+   stale `.env.example` `MCP_SECRET` (read by nothing) is removed. **Deferred with reason:**
+   *generating* the pydantic fields dynamically is the single highest-blast-radius change
+   in the audit (`cfg.<svc>_url` is read everywhere), so the drift guard is the safe win;
+   full generation stays a separate, carefully-tested step. `TODO`
 3. **Live env changes never reach the MCP tool process** — High — `config.py`. `DONE` —
    `core/live_config.LiveConfigMiddleware` refreshes the MCP process's `cfg` from
    `.env` on the request path (mtime-gated + TTL, lazy/inert until `.env` actually
