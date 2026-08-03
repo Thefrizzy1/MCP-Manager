@@ -130,3 +130,95 @@ def test_a_scheduled_room_failure_is_not_swallowed():
 
     src = inspect.getsource(rt._run_room_bg)
     assert "raise" in src
+
+
+# ── the research room setup script ───────────────────────────────────────────
+
+def _fake_accounts(root, providers: dict):
+    import json
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "ai_accounts.json").write_text(json.dumps(providers), encoding="utf-8")
+
+
+def _run_setup(root, monkeypatch, argv=("setup",)):
+    import sys
+
+    import scripts.setup_research_room as S
+
+    monkeypatch.setattr(S, "ROOT", root)
+    monkeypatch.setattr(sys, "argv", list(argv))
+    return S.main()
+
+
+def test_setup_refuses_without_a_provider_account(tmp_path, monkeypatch, capsys):
+    _fake_accounts(tmp_path, {})
+    assert _run_setup(tmp_path, monkeypatch) == 1
+    assert "No provider accounts" in capsys.readouterr().out
+
+
+def test_setup_spreads_seats_across_every_account(tmp_path, monkeypatch):
+    """Six seats on one account burns that account's limit six times a night."""
+    _fake_accounts(tmp_path, {
+        "claude": [{"id": "a1", "label": "one"}, {"id": "a2", "label": "two"}],
+        "gemini": [{"id": "g1", "label": "three"}],
+    })
+    assert _run_setup(tmp_path, monkeypatch) == 0
+
+    room = workforce.load_rooms(tmp_path)[0]
+    used = {f"{s['provider']}/{s['account_id']}" for s in room["seats"]}
+    assert len(room["seats"]) == 6
+    assert len(used) == 3, f"seats did not spread across accounts: {used}"
+
+
+def test_setup_is_idempotent(tmp_path, monkeypatch):
+    _fake_accounts(tmp_path, {"claude": [{"id": "a1", "label": "one"}]})
+    _run_setup(tmp_path, monkeypatch)
+    _run_setup(tmp_path, monkeypatch)
+    assert len(workforce.load_rooms(tmp_path)) == 1
+    assert len(schedule_store.load_schedules(tmp_path)) == 1
+    assert len(workforce.load_rooms(tmp_path)[0]["seats"]) == 6
+
+
+def test_setup_schedules_the_room_nightly(tmp_path, monkeypatch):
+    _fake_accounts(tmp_path, {"claude": [{"id": "a1", "label": "one"}]})
+    _run_setup(tmp_path, monkeypatch)
+
+    sc = schedule_store.load_schedules(tmp_path)[0]
+    room = workforce.load_rooms(tmp_path)[0]
+    assert sc["kind"] == "room"
+    assert sc["payload"]["room_id"] == room["id"]
+    assert sc["enabled"] is True
+
+
+def test_the_room_gets_research_tools_and_no_homelab_control(tmp_path, monkeypatch):
+    """The connection list is also the tool slice. This team reads and writes
+    files; it has no business restarting containers or opening SSH."""
+    _fake_accounts(tmp_path, {"claude": [{"id": "a1", "label": "one"}]})
+    _run_setup(tmp_path, monkeypatch)
+
+    services = set(workforce.load_rooms(tmp_path)[0]["mcp_services"])
+    assert {"websearch", "github", "huggingface", "comfyui", "agent_db"} <= services
+    assert not (services & {"docker", "ssh", "omv", "homeassistant", "tailscale"})
+
+
+def test_every_connection_the_room_asks_for_actually_exists(tmp_path, monkeypatch):
+    """A typo'd connection id grants nothing silently — the ACL denies by id."""
+    from ui.runtime import _services_live
+
+    _fake_accounts(tmp_path, {"claude": [{"id": "a1", "label": "one"}]})
+    _run_setup(tmp_path, monkeypatch)
+
+    known = {s["id"] for s in _services_live()}
+    asked = set(workforce.load_rooms(tmp_path)[0]["mcp_services"])
+    assert asked <= known, f"unknown connection ids: {sorted(asked - known)}"
+
+
+def test_the_brief_pins_output_to_a_dated_folder(tmp_path, monkeypatch):
+    """Without this every night overwrites the last one — the room's working
+    folder is fixed per room, not per run."""
+    _fake_accounts(tmp_path, {"claude": [{"id": "a1", "label": "one"}]})
+    _run_setup(tmp_path, monkeypatch)
+
+    brief = workforce.load_rooms(tmp_path)[0]["brief"]
+    assert "TODAY'S DATE" in brief
+    assert "dashboard.html" in brief and "scripts/" in brief
