@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from 'react'
+import { useIsFetching } from '@tanstack/react-query'
 import { Menu } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { DefaultPasswordBanner } from './DefaultPasswordBanner'
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
   const [mobileNav, setMobileNav] = useState(false)
+  const fetching = useIsFetching()
   return (
     <div className="flex h-full">
       {/* Desktop sidebar */}
@@ -22,7 +24,9 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
         </div>
       )}
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        {/* Subtle liveness: a thin bar rides the top while any query is in flight. */}
+        {fetching > 0 && <span className="plutus-activity-bar" aria-hidden />}
         {/* Mobile top bar */}
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 md:hidden">
           <button

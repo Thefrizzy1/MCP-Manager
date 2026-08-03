@@ -226,7 +226,7 @@ export function Connections() {
                       <tr key={s.id} className={`border-b border-border last:border-0 hover:bg-surface-hover ${s.ignored ? 'opacity-45' : ''}`}>
                         <td className="px-3 py-2.5">
                           <button className="flex items-center gap-2.5 text-left" onClick={() => setDrawer(s)}>
-                            <ServiceLogo id={s.id} label={s.label} domain={s.logo_domain} />
+                            <ServiceLogo id={s.id} label={s.label} domain={s.logo_domain} emoji={s.icon} />
                             <span className="min-w-0">
                               <span className="block truncate font-medium text-ink">{s.label}</span>
                               <span className="block truncate text-[11.5px] text-ink-3">{s.id}</span>
