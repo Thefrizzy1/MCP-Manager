@@ -96,8 +96,12 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 7. **`resources.py` ignores `allow`** — Low — `tools/resources.py:46`. `TODO`
 8. **`prompts.py` allow-semantics mismatch** (names vs playbook ids) — Low —
    `tools/prompts.py:61`. `TODO`
-9. **Dead `spa.js` (58 KB) + unused ACL builders** — Low — `ui/static/spa.js`,
-   `core/agent_permissions.build_disallowed*`. `TODO`
+9. **Dead `spa.js` (58 KB) + unused ACL builders** — Low. `spa.js`/`spa.css` `DONE` —
+   removed (legacy framework-free SPA; the React build is what serves `/app`), plus the
+   CI `node --check` step that was linting the dead file and the stale docs. The
+   `agent_permissions.build_disallowed*` helpers are unused in production but still have
+   dedicated tests (they test the retired permission-level model); deleting them means
+   removing those tests too — `TODO`, deferred as a separate call.
 
 ## 3. Agent / workforce execution (agent B)
 

@@ -146,8 +146,8 @@ tools/               One module per domain, each exposing `register_*_tools(mcp)
   monitoring.py nextcloud.py infrastructure.py fal_tools.py public_apis_bulk.py
   ssh_smb.py
 
-ui/spa_page.py       Minimal HTML shell for the SPA (served at /app).
-ui/static/           spa.css, spa.js (framework-free single-page console).
+ui/spa_page.py       Serves the built React shell (served at /app).
+ui/web/              React + Vite SPA source, built to ui/static/dist/.
 
 tests/               Offline pytest suite (no network).
 docs/                This documentation set.
