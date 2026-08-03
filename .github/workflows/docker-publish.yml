@@ -51,7 +51,17 @@ jobs:
         run: python -m pyflakes main.py config.py core/*.py tools/*.py ui/*.py
 
       - name: Run offline test suite
-        run: python -m pytest -q
+        # Deterministic gate: every offline test, no network. The `live` tests are
+        # deselected here on purpose — they hit third-party public APIs whose
+        # output/availability changes independently of this repo, so gating the
+        # Docker publish on them made a green build depend on someone else's uptime.
+        run: python -m pytest -q -m "not live"
+
+      - name: Live public smoke (informational — never blocks the build)
+        # Still run against the open internet so a real breakage is visible, but
+        # continue-on-error so an external API change cannot block a deploy.
+        continue-on-error: true
+        run: python -m pytest -q -m live
 
       - name: Set up Node
         uses: actions/setup-node@v4
