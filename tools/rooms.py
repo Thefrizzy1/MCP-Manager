@@ -12,6 +12,7 @@ never stops. So room_run refuses while a run is in flight and says why. Building
 inspecting and reading results stay available at all times — those are the parts
 an agent mid-run actually wants.
 """
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -221,48 +222,23 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                     "finish and report instead; a room started from here would wait on "
                     "you and could start itself again without end.")
 
-        import threading
-
         acfg = agent_runner.load_agent_config(_ROOT)
         cap = float(acfg.get("max_cost_usd", 2.0) or 2.0) * 4
-        started: dict = {}
-        gate = threading.Event()
+        res = agent_orchestrator.launch_room(_ROOT, cfg, params.room_id, params.brief)
+        if not res["ok"]:
+            return f"Error: {res['error']}"
 
-        def _work():
-            # Everything that can fail sits inside the try: resolving the MCP
-            # target used to be above it, so a failure there skipped the finally
-            # and left the caller blocked on gate.wait for the full timeout —
-            # then answered as though the room had started.
-            try:
-                # The same lock the dashboard takes, so an MCP-started room and an
-                # HTTP-started room cannot both be "the" running room.
-                with workforce.RUN_LOCK:
-                    url, token = agent_orchestrator.mcp_target(cfg)
+        # The run id is assigned by the worker thread a moment after it starts,
+        # and it is published to disk for exactly this reason — the tool may be
+        # answering from a different process than the one running the room.
+        rid = ""
+        for _ in range(40):
+            live = workforce.read_live(_ROOT)
+            if live.get("running") and live.get("room_id") == params.room_id:
+                rid = live.get("run_id", "")
+                break
+            time.sleep(0.25)
 
-                    def _run(root, prompt, **kw):
-                        if not agent_runner.wait_for_slot(600):
-                            return {"ok": False, "cost_usd": 0.0, "result": "",
-                                    "error": "another agent run held the runner for too long"}
-                        return agent_runner.run_agent(root, prompt, mcp_url=url,
-                                                      bearer_token=token, **kw)
-
-                    def _seen(rec: dict):
-                        if not started:
-                            started.update(rec)
-                            gate.set()
-
-                    workforce.run_room(_ROOT, params.room_id, params.brief,
-                                       run_agent=_run, max_cost_usd=cap, on_change=_seen)
-            except Exception as exc:
-                started.setdefault("error", str(exc))
-            finally:
-                gate.set()
-
-        threading.Thread(target=_work, name=f"mcp-room-{params.room_id}", daemon=True).start()
-        gate.wait(20)          # long enough to get the run id, short enough to answer
-        if started.get("error") and not started.get("id"):
-            return f"Error: the room could not start: {started['error']}"
-        rid = started.get("id", "")
         return (f"✓ Started **{room.get('label')}** with {len(room['seats'])} seat(s), "
                 f"budget ${cap:.2f}.\n\n"
                 f"- run id: `{rid or '(assigning)'}`\n"

@@ -70,13 +70,16 @@ class PlutusScheduler:
         self._run_agent: Callable[..., None] | None = None
         self._run_tool: Callable[[str, dict], object] | None = None
         self._run_task: Callable[[str], None] | None = None
+        self._run_room: Callable[[str, str], None] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     def start(self, *, run_agent: Callable[..., None], run_tool: Callable[[str, dict], object],
-              run_task: Callable[[str], None] | None = None) -> bool:
+              run_task: Callable[[str], None] | None = None,
+              run_room: Callable[[str, str], None] | None = None) -> bool:
         self._run_agent = run_agent
         self._run_tool = run_tool
         self._run_task = run_task
+        self._run_room = run_room
         try:
             from apscheduler.schedulers.background import BackgroundScheduler
         except Exception as e:  # dependency missing
@@ -150,6 +153,12 @@ class PlutusScheduler:
                                     smart_fallback=payload.get("smart_fallback", True))
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
+                elif kind == "room" and self._run_room:
+                    # Everything the room needs — seats, their provider accounts,
+                    # the room's connections, the chain — is stored on the room
+                    # itself, so a scheduled room only names it. An empty brief
+                    # means "use the room's own".
+                    self._run_room(payload.get("room_id", ""), payload.get("brief", ""))
                 elif kind == "tool" and self._run_tool:
                     self._run_tool(payload.get("tool", ""), payload.get("params", {}))
                 else:

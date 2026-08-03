@@ -146,14 +146,21 @@ def test_a_failure_starting_the_room_is_reported_promptly(monkeypatch, tmp_path)
 
 
 def test_the_mcp_path_takes_the_same_run_lock_as_the_dashboard():
-    """Two entry points, one answer to 'is a room running'."""
+    """Two entry points, one answer to 'is a room running'.
+
+    Both used to hold the lock themselves. They now share one launcher that
+    holds it, which is the same guarantee with one copy instead of two — so
+    assert the delegation and the lock, not the lock inline in each caller.
+    """
     import inspect
 
-    import ui.api.workforce as api
     import tools.rooms as R
+    import ui.api.workforce as api
+    from core import agent_orchestrator
 
-    assert "workforce.RUN_LOCK" in inspect.getsource(api.api_run_room)
-    assert "workforce.RUN_LOCK" in inspect.getsource(R.register_room_tools)
+    assert "launch_room" in inspect.getsource(api.api_run_room)
+    assert "launch_room" in inspect.getsource(R.register_room_tools)
+    assert "RUN_LOCK" in inspect.getsource(agent_orchestrator.launch_room)
 
 
 def test_room_tools_reject_unknown_ids(monkeypatch, tmp_path):

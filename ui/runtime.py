@@ -373,6 +373,21 @@ def _run_agent_bg(prompt: str, label: str = "agent", *,
 _run_tool_scheduled = agent_orchestrator.run_tool_scheduled
 
 
+def _run_room_bg(room_id: str, brief: str = "") -> None:
+    """Fire a scheduled room. Everything else about it is stored on the room.
+
+    This is what makes "research every night" possible without somebody clicking
+    Run: seats, their provider accounts, the room's connections and any handoff
+    are already saved, so a schedule only has to name the room.
+    """
+    res = agent_orchestrator.launch_room(ROOT, cfg, room_id, brief)
+    if not res["ok"]:
+        # Raised rather than swallowed so the scheduler records the failure
+        # against the schedule — a nightly room that silently never starts is
+        # indistinguishable from one that ran and found nothing.
+        raise RuntimeError(res["error"])
+
+
 def _run_task_bg(task_id: str, *, force: bool = False) -> None:
     """Resolve a playbook to its (rendered) prompt and run it as an agent."""
     task = agent_tasks.get_task(ROOT, task_id)
@@ -494,7 +509,8 @@ async def ui_lifespan(_app):
     loop_task = asyncio.create_task(
         beta_cache_background_loop(ROOT, lambda: tools.raw_manager, _services_live)
     )
-    agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled, run_task=_run_task_bg)
+    agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled,
+                          run_task=_run_task_bg, run_room=_run_room_bg)
     yield
     agent_scheduler.shutdown()
     loop_task.cancel()

@@ -42,6 +42,65 @@ def mcp_target(cfg) -> tuple[str, str]:
     return url, token
 
 
+def launch_room(root: Path, cfg, room_id: str, brief: str = "", *,
+                block: bool = False) -> dict:
+    """Start a room on a background thread. The one way a room gets run.
+
+    There were three near-identical copies of this — the dashboard endpoint, the
+    MCP ``room_run`` tool, and (nearly) the scheduler — each re-deriving the MCP
+    target, the budget and the slot wait. They drifted: only one of them took the
+    shared run lock. One definition instead.
+
+    Returns ``{"ok": bool, "error": str}``; ``block=True`` waits for the room to
+    finish, which only tests want — a caller on a request path must not hold a
+    connection open for several agent runs.
+    """
+    import threading
+
+    from core import agent_runner, workforce
+
+    room = workforce.get_room(root, room_id)
+    if not room:
+        return {"ok": False, "error": f"no room with id '{room_id}'"}
+    if not (room.get("seats") or []):
+        return {"ok": False, "error": f"room '{room.get('label')}' has no agents in it yet"}
+    if workforce.LIVE.get("running"):
+        return {"ok": False, "error": "a room is already running"}
+
+    acfg = agent_runner.load_agent_config(root)
+    cap = float(acfg.get("max_cost_usd", 2.0) or 2.0) * 4   # a room is several runs
+    slot_wait = max(60, agent_runner._timeout_min(acfg) * 60 + 120)
+    outcome: dict = {"ok": True, "error": ""}
+
+    def _work() -> None:
+        # One lock for every entry point, or a scheduled room and a hand-started
+        # one both believe they are the room that is running.
+        with workforce.RUN_LOCK:
+            try:
+                url, token = mcp_target(cfg)
+
+                def _run(r, prompt, **kw):
+                    # "Refuses" is not "queues": run_agent returns an error the
+                    # instant another run holds the slot, so a room launched
+                    # while the queue was busy used to die on its first seat.
+                    if not agent_runner.wait_for_slot(slot_wait):
+                        return {"ok": False, "cost_usd": 0.0, "result": "",
+                                "error": "another agent run held the runner for too long"}
+                    return agent_runner.run_agent(r, prompt, mcp_url=url,
+                                                  bearer_token=token, **kw)
+
+                workforce.run_room(root, room_id, brief, run_agent=_run, max_cost_usd=cap)
+            except Exception as exc:                 # the record carries the detail
+                outcome.update(ok=False, error=str(exc))
+                log.warning("room %s failed to run: %s", room_id, exc)
+
+    t = threading.Thread(target=_work, name=f"room-{room_id}", daemon=True)
+    t.start()
+    if block:
+        t.join()
+    return outcome
+
+
 def service_disallow(root: Path, selected: "list[str] | None") -> list[str]:
     """Per-connection ACL: deny every tool that belongs to a service the caller
     did NOT select. ``None`` = no restriction (back-compat for callers and older

@@ -14,7 +14,7 @@ import time
 import uuid
 from pathlib import Path
 
-VALID_KINDS = ("agent", "tool", "task")
+VALID_KINDS = ("agent", "tool", "task", "room")
 
 # Structural 5-field cron check (offline). APScheduler does the authoritative
 # parse when a job is scheduled; this catches obvious mistakes early.
@@ -75,6 +75,13 @@ def _normalize(entry: dict) -> dict:
     elif kind == "task":
         if not str(payload.get("task_id", "")).strip():
             raise ValueError("task schedule requires payload.task_id")
+    elif kind == "room":
+        # A room is several agent runs in order. Scheduling one is how "research
+        # every night" works without somebody clicking Run — the seats, their
+        # accounts and the room's connections are already stored on the room, so
+        # the payload only has to name it and optionally override the brief.
+        if not str(payload.get("room_id", "")).strip():
+            raise ValueError("room schedule requires payload.room_id")
     return {
         "id": entry.get("id") or uuid.uuid4().hex[:12],
         "name": (entry.get("name") or "").strip() or f"{kind} schedule",

@@ -6,15 +6,12 @@ the normal run history with its own transcript and cost.
 """
 from __future__ import annotations
 
-import asyncio
-import threading
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core import agent_runner, workforce
+from core import agent_orchestrator, workforce
 from ui.api.deps import verify_auth
-from ui.runtime import ROOT, _agent_mcp_target
+from ui.runtime import ROOT
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
@@ -168,31 +165,11 @@ async def api_run_room(room_id: str, body: RunBody):
     if not (room.get("seats") or []):
         raise HTTPException(400, "this room has no agents in it yet — drag one in first")
 
-    acfg = agent_runner.load_agent_config(ROOT)
-    cap = float(acfg.get("max_cost_usd", 2.0) or 2.0) * 4  # a room is several runs
-    slot_wait = max(60, agent_runner._timeout_min(acfg) * 60 + 120)
+    from config import cfg
 
-    def _work():
-        with workforce.RUN_LOCK:
-            url, token = _agent_mcp_target()
-
-            def _run(root, prompt, **kw):
-                # "Refuses" is not "queues": run_agent returns an error the
-                # instant another run holds the slot, so a room launched while
-                # the agent queue was busy used to fail on its first seat. Wait
-                # the slot out — up to one full run's timeout, since that is the
-                # longest the thing ahead of us can legitimately take.
-                if not agent_runner.wait_for_slot(slot_wait):
-                    return {"ok": False, "cost_usd": 0.0, "result": "",
-                            "error": "another agent run held the runner for too long"}
-                return agent_runner.run_agent(root, prompt, mcp_url=url, bearer_token=token, **kw)
-
-            try:
-                workforce.run_room(ROOT, room_id, body.brief, run_agent=_run, max_cost_usd=cap)
-            except Exception:
-                pass          # the record already carries the error
-
-    threading.Thread(target=_work, name=f"room-{room_id}", daemon=True).start()
+    res = agent_orchestrator.launch_room(ROOT, cfg, room_id, body.brief)
+    if not res["ok"]:
+        raise HTTPException(400, res["error"])
     return {"ok": True, "started": True}
 
 
