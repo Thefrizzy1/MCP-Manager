@@ -85,6 +85,27 @@ def save_exposure(root: Path, disabled_categories: list[str] | None = None, *,
     return payload
 
 
+# A fresh, un-tuned install serves the full ~209-tool manifest — the dominant
+# per-request token cost. Seed a lean default on first boot instead: the novelty
+# public APIs (jokes, trivia, crypto tickers, IP lookups — the ~58 pub_* tools in
+# these three categories) are off until the operator turns them on in Settings.
+# Only applied when no exposure choice exists yet; any saved choice fully governs.
+DEFAULT_DISABLED_CATEGORIES: tuple[str, ...] = ("trivia", "crypto", "ip_network")
+
+
+def ensure_exposure_seed(root: Path) -> bool:
+    """Seed the lean default exposure on a fresh install (no file yet).
+
+    Idempotent and non-destructive: if an exposure choice was ever saved, this
+    does nothing. Returns True iff it wrote the seed. Call once at boot, before
+    the MCP app resolves what to serve.
+    """
+    if exposure_path(root).is_file():
+        return False
+    save_exposure(root, list(DEFAULT_DISABLED_CATEGORIES))
+    return True
+
+
 def is_tool_exposed(name: str, disabled: set[str], disabled_tools: set[str] | None = None) -> bool:
     """A tool stays exposed unless it is switched off individually, or *every*
     category it belongs to is disabled.

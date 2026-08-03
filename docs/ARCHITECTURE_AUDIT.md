@@ -83,8 +83,12 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
    `build_mcp_asgi_app` now intersects each profile's allow-set with the global
    exposure ceiling, so a category disabled to save tokens also shrinks the
    `/mcp/p/<name>` endpoints. Test: `test_profile_composes_with_the_global_slicer`.
-3. **Default manifest is the full 209 tools** — High — `core/tool_exposure.py:117-125`.
-   Ship a lean default slice (novelty/trivia/crypto off) or make profiles the norm. `TODO`
+3. **Default manifest is the full 209 tools** — High — `core/tool_exposure.py`. `DONE` —
+   `ensure_exposure_seed` (called at boot in main.py) seeds a lean default on a fresh
+   install: the novelty categories (`trivia`, `crypto`, `ip_network` — ~57 `pub_*` tools)
+   are off until turned on in Settings. Idempotent and non-destructive — any saved
+   exposure choice fully governs, and `resolve_exposed`'s "no file → None (full)" contract
+   is unchanged (the seed is a real, editable file, not baked into resolution).
 4. **Slicer only removes whole tools** — Med — no description compaction/dedupe; `pub_`
    ×58, github/gitlab mirrors, currency/crypto overlaps. `TODO`
 5. **Restart-to-apply inconsistent + per-profile full rebuild** — Med —
@@ -234,10 +238,10 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
 
 **Wave 6 — manifest reduction (the token cost). (partly `DONE`)**
 - Profile↔slice composition (A#2) and the dead `apply` field removal (A#6) — `DONE`.
-- Remaining: a lean default slice (novelty categories off by default) and
-  description compaction / near-duplicate-tool dedupe (A#3/4). A lean default is a
-  behaviour change (agents lose niche tools until re-enabled) — left as a decision
-  for the operator via the existing exposure UI. `TODO`
+- Lean default slice (A#3) `DONE` — a fresh install boots with novelty categories
+  off (see §2.3); reversible in Settings.
+- Remaining: description compaction / near-duplicate-tool dedupe (A#4) — trims the
+  verbose per-tool descriptions and collapses github/gitlab + currency overlaps. `TODO`
 
 **Parallel track — UX the maintainer asked for.**
 - Multi-user auth + real split-screen login page (form + session, admin panel, remember-me,

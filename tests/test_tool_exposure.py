@@ -64,3 +64,23 @@ def test_disabling_everything_still_keeps_meta(tmp_path):
     exposed = te.resolve_exposed(tmp_path, NAMES)
     assert exposed is not None
     assert ALWAYS_EXPOSED <= exposed, "the slicer must never strip its own meta tools"
+
+
+def test_fresh_install_seeds_a_lean_default(tmp_path):
+    assert not te.exposure_path(tmp_path).is_file()
+    assert te.ensure_exposure_seed(tmp_path) is True
+    assert te.exposure_path(tmp_path).is_file()
+    # Idempotent: a second call (or any prior saved choice) never overwrites.
+    assert te.ensure_exposure_seed(tmp_path) is False
+    assert set(te.load_exposure(tmp_path)["disabled_categories"]) == set(te.DEFAULT_DISABLED_CATEGORIES)
+
+
+def test_lean_default_drops_novelty_but_keeps_core(tmp_path):
+    te.ensure_exposure_seed(tmp_path)
+    exposed = te.resolve_exposed(tmp_path, NAMES)
+    assert exposed is not None
+    for novelty in ("pub_official_joke", "pub_coingecko_price", "pub_ipify"):
+        if novelty in NAMES:
+            assert novelty not in exposed, f"{novelty} should be off by default"
+    assert "web_search" in exposed, "core tools must stay in the default manifest"
+    assert ALWAYS_EXPOSED <= exposed

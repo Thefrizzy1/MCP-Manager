@@ -223,6 +223,11 @@ def _start_ui_watchdog(ui_proc: "multiprocessing.Process") -> None:
 if __name__ == "__main__":
     ensure_data_dir(ROOT)
     _sweep_stale_tmp()
+    # Lean default manifest on a fresh install: novelty public-API categories are
+    # off until turned on in Settings, so an un-tuned server doesn't ship all
+    # ~209 tool schemas every request. Idempotent; any saved exposure choice wins.
+    from core.tool_exposure import ensure_exposure_seed
+    ensure_exposure_seed(ROOT)
     # Seed the user store before forking the UI child: it re-imports config and
     # reads the store file, so seeding here guarantees a known credential exists
     # in both processes. The store (not a minted .env password) is the source of
