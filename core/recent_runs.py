@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 from pathlib import Path
 from typing import Any
+
+from core.atomic_json import read_json, write_json
 
 _RECENT_LIMIT = 25
 log = logging.getLogger(__name__)
@@ -21,29 +22,18 @@ def recent_path(root: Path) -> Path:
 
 
 def append_recent(root: Path, entry: dict[str, Any]) -> None:
+    # Written on the tool-call hot path, so the naive read-truncate-write it used
+    # to do could tear the file on a crash and lose entries under concurrency.
+    # atomic_json is tmp+fsync+replace with a per-path lock.
     path = recent_path(root)
     entry["ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    rows: list[dict[str, Any]] = []
-    if path.exists():
-        try:
-            rows = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(rows, list):
-                rows = []
-        except Exception as exc:
-            log.warning("Failed to load recent runs from %s: %s", path, exc)
-            rows = []
+    rows = read_json(path, [])
+    if not isinstance(rows, list):
+        rows = []
     rows.insert(0, entry)
-    rows = rows[:_RECENT_LIMIT]
-    path.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    write_json(path, rows[:_RECENT_LIMIT])
 
 
 def load_recent(root: Path) -> list[dict[str, Any]]:
-    path = recent_path(root)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception as exc:
-        log.warning("Failed to read recent runs from %s: %s", path, exc)
-        return []
+    data = read_json(recent_path(root), [])
+    return data if isinstance(data, list) else []

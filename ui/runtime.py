@@ -393,8 +393,11 @@ async def get_health(force=False):
     if fresh and not force:
         return _health_cache
 
-    if _health_lock.locked() and _health_cache:
-        return _health_cache          # a refresh is already in flight — serve stale
+    if not force and _health_lock.locked() and _health_cache:
+        # A refresh is already in flight — serve stale. But a caller that asked to
+        # force must not be fobbed off with stale data; it queues on the lock below
+        # and gets a genuinely fresh gather.
+        return _health_cache
 
     async with _health_lock:
         # Someone may have refreshed while we waited for the lock.

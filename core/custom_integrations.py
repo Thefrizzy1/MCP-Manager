@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 from pathlib import Path
 from typing import Any
+
+from core.atomic_json import read_json, write_json
 
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 
@@ -16,13 +17,7 @@ def integrations_path(root: Path) -> Path:
 
 
 def load_raw(root: Path) -> dict[str, Any]:
-    p = integrations_path(root)
-    if not p.is_file():
-        return {"version": 1, "integrations": []}
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"version": 1, "integrations": []}
+    data = read_json(integrations_path(root), None)
     if not isinstance(data, dict):
         return {"version": 1, "integrations": []}
     data.setdefault("version", 1)
@@ -95,9 +90,7 @@ def validate_and_normalize(data: dict[str, Any]) -> dict[str, Any]:
 
 def save_raw(root: Path, data: dict[str, Any]) -> None:
     normalized = validate_and_normalize(data)
-    p = integrations_path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(normalized, indent=2) + "\n", encoding="utf-8")
+    write_json(integrations_path(root), normalized)
 
 
 def _health_url_factory(url_env: str, health_path: str):

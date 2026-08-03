@@ -130,7 +130,7 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
    `core/result_status.py:6-23`. Classify on structured signals (is_error/HTTP). `TODO`
 2. **Smoke fires live queries then greps live content** — High — `core/tool_registry.py:112-170`.
    Assert on shape, or use fixed inputs. `TODO`
-3. **`force=True` silently ignored under lock contention** — High — `ui/runtime.py:497-498`. `TODO`
+3. **`force=True` silently ignored under lock contention** — High — `ui/runtime.py:497-498`. `DONE`
 4. **`_health_cache`/`_health_states` drift; five writers** — Med — `ui/runtime.py:509`.
    One atomically-updated record owned only by `get_health`. `TODO`
 5. **Three divergent probe pipelines; regression uses the weakest** — Med/High —
@@ -148,8 +148,9 @@ served; `agent_permissions.build_disallowed*` are unused. _(A#6/9)_
 2. **`config.py` is a 111-field flat blob** — High. Generate cfg from the registry. `TODO`
 3. **Live env changes never reach the MCP tool process** — High — `config.py:315-366`.
    Resolve credentials at call time via `env_store`, or reload-signal the MCP process. `TODO`
-4. **Naive JSON writers (corruption/lost-update)** — Med — `core/recent_runs.py:37`,
-   `core/custom_integrations.py:96`, `core/ui_prefs.py:37,72`. One `atomic_write_json`. `TODO`
+4. **Naive JSON writers (corruption/lost-update)** — Med — `core/recent_runs.py`,
+   `core/custom_integrations.py`, `core/ui_prefs.py`. `DONE` — all routed through
+   `core/atomic_json.py` (tmp+fsync+replace, per-path lock, bind-mount fallback).
 5. **All locks are `threading.Lock` — useless cross-process** — Med. Advisory file lock. `TODO`
 6. **Custom integrations are a parallel config path, never expose tools** — Med. Fold
    onto `ServiceDef` with `source: builtin|custom`. `TODO`
@@ -165,9 +166,14 @@ Sequenced for leverage × safety. Verify `pytest -m "not live"` green after each
 
 **Wave 1 — safe structural wins + token savings (low risk).**
 - `core/atomic_json.py` single atomic writer (tmp+fsync+replace+lock); route the naive
-  stores through it. (F / D#4/5)
-- Delete dead code: `plutus_tool_slicer.apply` field, `spa.js`, unused ACL builders. (H / A#6/9)
-- Fix health cache: honour `force`, single atomically-updated record. (D#3/4)
+  stores through it. (F / D#4/5) `DONE` — `recent_runs`, `ui_prefs`, and
+  `custom_integrations` now write through `atomic_json` (shipped alongside the auth
+  work). Cross-process file locking (D#5) deferred with Wave 4.
+- Fix health cache: honour `force`. (C#3) `DONE` — a forced refresh no longer serves
+  stale under lock contention; it queues for a genuine gather. (Single-record state
+  drift, C#4, still `TODO`.)
+- Delete dead code: `plutus_tool_slicer.apply` field, `spa.js`, unused ACL builders.
+  (H / A#6/9) `TODO`
 
 **Wave 2 — boundaries & dependency direction. `DONE`**
 - Extracted `core/agent_orchestrator.py`; killed the `tools → ui.runtime` back-import
