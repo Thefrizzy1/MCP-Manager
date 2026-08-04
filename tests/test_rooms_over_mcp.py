@@ -349,3 +349,43 @@ def test_new_categories(name, category):
     from core.profiles import infer_tool_categories
 
     assert category in infer_tool_categories(name)
+
+
+# ── the disallow list must not blow the command line ─────────────────────────
+
+def _cmd_with(monkeypatch, disallowed, http_mode=False):
+    from core import agent_runner
+
+    if http_mode:
+        monkeypatch.setenv("PLUTUS_CLAUDE_MCP_HTTP", "1")
+    else:
+        monkeypatch.delenv("PLUTUS_CLAUDE_MCP_HTTP", raising=False)
+    return agent_runner.build_agent_cmd("do the thing", {}, disallowed_tools=disallowed)
+
+
+def test_plutus_tools_are_not_repeated_on_the_command_line(monkeypatch):
+    """The bridge already withheld them. Repeating hundreds of names enforced
+    nothing and blew the ~32k Windows argv limit — the run died with "The
+    command line is too long" before the model saw the prompt."""
+    many = [f"mcp__plutus__tool_{i}" for i in range(300)]
+    cmd = _cmd_with(monkeypatch, many)
+    assert "--disallowedTools" not in cmd
+    assert len(" ".join(cmd)) < 4000, "argv is still enormous"
+
+
+def test_non_plutus_tools_are_still_named(monkeypatch):
+    """Claude's own built-ins are not bridge-covered, so they must survive."""
+    cmd = _cmd_with(monkeypatch, ["mcp__plutus__fs_write_file", "Bash", "WebFetch"])
+    joined = " ".join(cmd)
+    assert "--disallowedTools" in cmd
+    assert "Bash" in joined and "WebFetch" in joined
+    assert "mcp__plutus__fs_write_file" not in joined
+
+
+def test_the_http_escape_hatch_keeps_the_full_disallow_list(monkeypatch):
+    """With no bridge in the path this list is the only enforcement — dropping
+    the Plutus entries there would silently grant every tool."""
+    cmd = _cmd_with(monkeypatch, ["mcp__plutus__fs_write_file", "Bash"], http_mode=True)
+    joined = " ".join(cmd)
+    assert "--disallowedTools" in cmd
+    assert "mcp__plutus__fs_write_file" in joined and "Bash" in joined

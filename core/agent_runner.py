@@ -121,6 +121,16 @@ def save_agent_config(root: Path, updates: dict) -> dict:
     return cfg
 
 
+def _claude_uses_http_mcp() -> bool:
+    """True when the escape hatch points Claude straight at /mcp, no bridge.
+
+    One reader for the flag, because two things depend on it and they must agree:
+    which transport the config names, and whether the disallow list still has to
+    be repeated on the command line.
+    """
+    return str(os.getenv("PLUTUS_CLAUDE_MCP_HTTP", "")).strip().lower() in ("1", "true", "yes")
+
+
 def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "",
                             disallowed: list[str] | None = None) -> str:
     """Write an mcp.json that points Claude Code at Plutus's own MCP tools.
@@ -138,7 +148,7 @@ def write_plutus_mcp_config(root: Path, *, mcp_url: str, token: str = "",
     the same tool surface either way — only the transport and the token bill
     differ — but a transport change deserves a way back that is not a redeploy.
     """
-    if str(os.getenv("PLUTUS_CLAUDE_MCP_HTTP", "")).strip().lower() in ("1", "true", "yes"):
+    if _claude_uses_http_mcp():
         server: dict = {"type": "http", "url": mcp_url}
         if token:
             server["headers"] = {"Authorization": f"Bearer {token}"}
@@ -509,7 +519,21 @@ def build_agent_cmd(prompt: str, cfg: dict, *, mcp_config_path: str | None = Non
     if tools:
         cmd += ["--allowedTools", ",".join(tools)]
     if disallowed_tools:
-        cmd += ["--disallowedTools", ",".join(disallowed_tools)]
+        names = list(disallowed_tools)
+        if not _claude_uses_http_mcp():
+            # Going through the bridge, which already removed every out-of-scope
+            # Plutus tool from tools/list and refuses it on tools/call. Repeating
+            # those names here enforces nothing, and there are hundreds of them:
+            # on Windows the argv blew the ~32k command-line limit and the run
+            # died with "The command line is too long" before the model saw the
+            # prompt. Claude's own built-ins are not bridge-covered, so anything
+            # that is not a Plutus tool still has to be named.
+            #
+            # Only safe *because* the bridge is in the path. With the HTTP escape
+            # hatch on there is no bridge, and this list is the sole enforcement.
+            names = [t for t in names if not t.startswith("mcp__plutus__")]
+        if names:
+            cmd += ["--disallowedTools", ",".join(names)]
     if mcp_config_path:
         cmd += ["--mcp-config", mcp_config_path]
     chosen_model = model or cfg.get("model")

@@ -80,6 +80,11 @@ export function Rooms() {
     queryKey: ['rooms'],
     queryFn: () => api.get<RoomsResp>('/api/v1/rooms'),
     refetchInterval: 4000,
+    // The floor is meant to be watchable — the live desk breathes so you can
+    // leave a running room up on a second monitor. React Query stops interval
+    // refetches while the document is hidden, so without this the floor freezes
+    // the moment you look at another window and lies until you come back.
+    refetchIntervalInBackground: true,
   })
   const conns = useQuery({
     queryKey: ['agent-conns'],
@@ -198,8 +203,10 @@ export function Rooms() {
                   `${room.label} started.`,
                 )
               }
-              onDropAgent={(room) => {
-                if (dragging) dropIntoRoom(room, dragging, 'researcher')
+              onDropAgent={(room, role) => {
+                // Dropped on a desk? take that desk's role — hiring onto the
+                // Engineer desk should give you a developer. Open floor defaults.
+                if (dragging) dropIntoRoom(room, dragging, role || 'researcher')
                 setDragging(null)
               }}
               onReorder={(room, fromId, toId) => reorder(room, fromId, toId)}

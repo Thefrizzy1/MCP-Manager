@@ -42,12 +42,15 @@ export interface FloorLive {
 
 /** Role → the single letter on the desk plate. Initials, not icons: five roles
  *  read faster as letters than as five glyphs a viewer has to learn. */
-const ROLE_INITIAL: Record<string, string> = {
-  manager: 'M',
-  researcher: 'R',
-  developer: 'D',
-  reviewer: 'V',
-  writer: 'W',
+/** Two letters, not one. Researcher and reviewer both start with R, so single
+ *  initials forced one of them onto an unrelated letter ("V" for reviewer),
+ *  which is a thing the reader has to be taught rather than can read. */
+const ROLE_PLATE: Record<string, string> = {
+  manager: 'Mg',
+  researcher: 'Rs',
+  developer: 'Dv',
+  reviewer: 'Rv',
+  writer: 'Wr',
 }
 
 /** Rooms grouped into the chains they form via next_room.
@@ -85,27 +88,50 @@ export function chainsOf(rooms: FloorRoom[]): FloorRoom[][] {
 function Desk({
   seat,
   index,
+  total,
   live,
   onDragStart,
+  onDragEnd,
   onDrop,
   onOpen,
+  onMove,
 }: {
   seat: FloorSeat
   index: number
+  total: number
   live: boolean
   onDragStart: () => void
+  onDragEnd: () => void
   onDrop: (e: React.DragEvent) => void
   onOpen: () => void
+  onMove: (delta: -1 | 1) => void
 }) {
+  const position = `${index + 1} of ${total}`
   return (
     <button
       type="button"
       draggable
       onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       onClick={onOpen}
-      title={`${seat.label || seat.role} — ${seat.goal || 'no specific goal set'}`}
+      onKeyDown={(e) => {
+        // Order is the whole handoff model, and it was reachable by mouse only.
+        // Alt+Arrow moves a seat without a pointer; plain arrows still scroll.
+        if (!e.altKey) return
+        if (e.key === 'ArrowUp' && index > 0) {
+          e.preventDefault()
+          onMove(-1)
+        } else if (e.key === 'ArrowDown' && index < total - 1) {
+          e.preventDefault()
+          onMove(1)
+        }
+      }}
+      title={`${seat.label || seat.role} — ${seat.goal || 'no specific goal set'}\nRuns ${position}. Alt+↑/↓ to move.`}
+      aria-label={`${seat.label || seat.role}, ${seat.role}, runs ${position}${
+        live ? ', working now' : ''
+      }`}
       className={cn(
         'group relative flex w-full items-center gap-2 rounded-[var(--radius-sm)] border px-2 py-1.5 text-left',
         'cursor-grab active:cursor-grabbing',
@@ -116,12 +142,12 @@ function Desk({
     >
       <span
         className={cn(
-          'grid h-6 w-6 shrink-0 place-items-center rounded-[var(--radius-sm)] font-mono text-[11.5px] font-semibold',
+          'grid h-6 w-7 shrink-0 place-items-center rounded-[var(--radius-sm)] font-mono text-[10.5px] font-semibold',
           live ? 'bg-accent text-white' : 'bg-surface-2 text-ink-2',
         )}
         aria-hidden
       >
-        {ROLE_INITIAL[seat.role] ?? seat.role.slice(0, 1).toUpperCase()}
+        {ROLE_PLATE[seat.role] ?? seat.role.slice(0, 2)}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[12.5px] leading-tight text-ink">
@@ -131,7 +157,9 @@ function Desk({
           {live ? 'working now' : seat.provider}
         </span>
       </span>
-      <span className="shrink-0 font-mono text-[10.5px] text-ink-3">{index + 1}</span>
+      <span className="shrink-0 font-mono text-[10.5px] text-ink-3" aria-hidden>
+        {index + 1}
+      </span>
     </button>
   )
 }
@@ -172,7 +200,10 @@ export function Floor({
   draggingAgent: boolean
   onSelect: (roomId: string) => void
   onRun: (room: FloorRoom) => void
-  onDropAgent: (room: FloorRoom, beforeSeatId?: string) => void
+  /** ``role`` is the role of the desk the agent was dropped on, so dropping
+   *  someone onto the Engineer desk hires a developer. Dropping on open floor
+   *  passes nothing and the caller picks a default. */
+  onDropAgent: (room: FloorRoom, role?: string) => void
   onReorder: (room: FloorRoom, fromSeatId: string, toSeatId: string) => void
 }) {
   const chains = chainsOf(rooms)
@@ -181,13 +212,27 @@ export function Floor({
   // moving would silently become a no-op on drop.
   const dragSeat = useRef<string | null>(null)
 
+  // A chain has to stay on one line to read as a pipeline, but a floor of
+  // twenty unchained rooms as twenty one-room rows is a list again with extra
+  // steps. Singles flow and wrap; chains get their own line.
+  const singles = chains.filter((c) => c.length === 1)
+  const pipelines = chains.filter((c) => c.length > 1)
+
   return (
     <div className="floor-canvas overflow-x-auto rounded-[var(--radius)] border border-border p-4">
       <div className="flex min-w-fit flex-col gap-4">
-        {chains.map((chain) => (
-          <div key={chain[0].id} className="flex items-stretch">
+        {[...pipelines, ...(singles.length ? [singles.flat()] : [])].map((chain, ci) => (
+          <div
+            key={chain[0].id}
+            className={cn(
+              'flex items-stretch',
+              // the singles row is the only one allowed to wrap
+              ci === pipelines.length && 'flex-wrap gap-3',
+            )}
+          >
             {chain.map((room, i) => {
               const isLive = Boolean(live?.running && live.room_id === room.id)
+              const liveIndex = isLive ? room.seats.findIndex((s) => s.id === live?.seat_id) : -1
               const selected = selectedId === room.id
               const nextLive = Boolean(
                 live?.running && chain[i + 1] && live.room_id === chain[i + 1].id,
@@ -260,29 +305,55 @@ export function Floor({
                             key={seat.id}
                             seat={seat}
                             index={si}
+                            total={room.seats.length}
                             live={Boolean(isLive && live?.seat_id === seat.id)}
                             onDragStart={() => {
                               dragSeat.current = seat.id
                             }}
+                            // Without this, releasing a desk over open floor left
+                            // the id set, and the next agent dragged in from the
+                            // bench was misread as that reorder — the agent was
+                            // never hired and an unrelated seat moved instead.
+                            onDragEnd={() => {
+                              dragSeat.current = null
+                            }}
                             onDrop={(e) => {
                               e.stopPropagation()
                               const from = dragSeat.current
-                              if (from && from !== seat.id) onReorder(room, from, seat.id)
-                              else if (draggingAgent) onDropAgent(room, seat.id)
                               dragSeat.current = null
+                              if (from) {
+                                if (from !== seat.id) onReorder(room, from, seat.id)
+                              } else if (draggingAgent) {
+                                // Adopt the desk's role: dropping someone onto the
+                                // Engineer desk should hire a developer, not
+                                // silently a researcher.
+                                onDropAgent(room, seat.role)
+                              }
                             }}
                             onOpen={() => onSelect(room.id)}
+                            onMove={(delta) => {
+                              const to = room.seats[si + delta]
+                              if (to) onReorder(room, seat.id, to.id)
+                            }}
                           />
                         ))
                       )}
                     </div>
 
                     <footer className="flex items-center gap-2 border-t border-border px-2.5 py-1.5 text-[11px] text-ink-3">
-                      <span>
-                        {room.seats.length === 0
-                          ? 'no one yet'
-                          : `${room.seats.length} ${room.seats.length === 1 ? 'seat' : 'seats'}`}
-                      </span>
+                      {liveIndex >= 0 ? (
+                        // During a run the seat count is the wrong thing to show —
+                        // what you want to know is how far along it is.
+                        <span className="font-medium text-accent">
+                          seat {liveIndex + 1} of {room.seats.length}
+                        </span>
+                      ) : (
+                        <span>
+                          {room.seats.length === 0
+                            ? 'no one yet'
+                            : `${room.seats.length} ${room.seats.length === 1 ? 'seat' : 'seats'}`}
+                        </span>
+                      )}
                       <span aria-hidden>·</span>
                       <span className="truncate">
                         {room.mcp_services.length === 0
@@ -292,7 +363,12 @@ export function Floor({
                     </footer>
                   </section>
 
-                  {i < chain.length - 1 && <Corridor active={isLive || nextLive} />}
+                  {/* Only a real pipeline gets corridors. The singles row is a
+                      flattened collection of unrelated rooms — an arrow between
+                      two of them would assert a handoff that does not exist. */}
+                  {ci < pipelines.length && i < chain.length - 1 && (
+                    <Corridor active={isLive || nextLive} />
+                  )}
                 </div>
               )
             })}

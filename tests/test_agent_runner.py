@@ -14,10 +14,16 @@ def test_build_cmd_basic():
     assert cmd[-1] == "do the thing"  # prompt is last
 
 
-def test_build_cmd_disallowed_and_model_override():
+def test_build_cmd_disallowed_and_model_override(monkeypatch):
+    monkeypatch.delenv("PLUTUS_CLAUDE_MCP_HTTP", raising=False)
     cmd = ar.build_agent_cmd("hi", {"skip_permissions": True, "allowed_tools": ["mcp__plutus"], "model": "sonnet"},
-                             disallowed_tools=["mcp__plutus__docker_stop_container"], model="opus")
-    assert "--disallowedTools" in cmd and "mcp__plutus__docker_stop_container" in cmd
+                             disallowed_tools=["Bash", "mcp__plutus__docker_stop_container"], model="opus")
+    # Non-Plutus tools still have to be named: the bridge does not cover Claude's
+    # own built-ins. Plutus tools are withheld by the bridge instead, and naming
+    # hundreds of them again overflowed the Windows command line.
+    assert "--disallowedTools" in cmd
+    assert "Bash" in " ".join(cmd)
+    assert "mcp__plutus__docker_stop_container" not in " ".join(cmd)
     # explicit model arg overrides the config model
     assert cmd[cmd.index("--model") + 1] == "opus"
 
