@@ -176,6 +176,24 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
 }
 TOOL_SMOKE_DEFAULTS.update(_PUB_DEFS)
 
+# Reads that *can* be smoke-tested, once they are given the argument they
+# require. Without these the connections page showed a red failure for a tool
+# that works perfectly — the harness simply never passed it a query. The values
+# are deliberately boring and long-lived: a well-known public project, a common
+# search term, a model that has been on the Hub for years.
+TOOL_SMOKE_DEFAULTS.update({
+    "bluesky_search": {"query": "selfhosted", "limit": 3},
+    "db_search_notes": {"query": "plutus", "limit": 3},
+    "gitlab_project_info": {"project": "gitlab-org/gitlab"},
+    "gitlab_list_issues": {"project": "gitlab-org/gitlab", "limit": 3},
+    "gitlab_list_merge_requests": {"project": "gitlab-org/gitlab", "limit": 3},
+    "gitlab_search_projects": {"query": "kubernetes", "limit": 3},
+    "hackernews_search": {"query": "homelab", "limit": 3},
+    "huggingface_model_info": {"model_id": "bert-base-uncased"},
+    "huggingface_search_models": {"query": "llama", "limit": 3},
+    "stackexchange_search": {"query": "docker", "limit": 3},
+})
+
 # Never run these from the dashboard smoke tester (side effects, cost, or destructive).
 SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
     {
@@ -244,7 +262,59 @@ TOOL_SAFETY_LEVELS: dict[str, int] = {
     "github_create_branch": 2,
     "github_create_pull": 2,
     "github_create_repo": 2,
+
+    # ── these were level 0, and were being *fired* by the smoke runner ───────
+    #
+    # They only failed to do anything because their payload was missing a
+    # required field, so every one showed up on the connections page as a red
+    # failure. The obvious fix — give them a payload, as was done for the GitHub
+    # reads — would have turned the Test button into something that restarts
+    # containers, mounts shares, deletes rooms and spends model tokens. The
+    # missing payload was an accident, not a safeguard. Classify them instead.
+    "agent_delegate": 2,           # spends real tokens on a real model
+    "agent_delegate_batch": 2,
+    "room_run": 2,                 # starts a whole room: many runs, real money
+    "room_create": 1,
+    "room_update": 1,
+    "room_add_seat": 1,
+    "room_advise": 1,
+    "room_remove_seat": 2,
+    "room_delete": 2,
+    "db_write_note": 1,
+    "db_delete_note": 2,
+    "fs_move_file": 2,
+    "nextcloud_upload_file": 1,
+    "nextcloud_complete_task": 1,
+    "nextcloud_move_file": 2,
+    "nextcloud_share_file": 2,     # creates a public link — outward, not just write
+    "ssh_add_host": 1,
+    "ssh_remove_host": 2,
+    "ssh_run": 2,                  # docker_restart is on its allowlist
+    "smb_add_share": 2,            # mounts a filesystem
 }
+
+
+# Tools that need an identifier only the user's own system has: a note id, an
+# album, a Home Assistant entity, a share name. There is no generic value that
+# works, so they cannot be smoke-tested — and reporting them as *failures*, which
+# is what a missing payload did, says the tool is broken when nothing is wrong.
+# "Not tested" is the honest answer.
+NEEDS_LOCAL_ID: frozenset[str] = frozenset({
+    "db_read_note",
+    "fs_read_file",
+    "ha_get_entity",
+    "immich_get_album",
+    "immich_search_by_person",
+    "nextcloud_read_file",
+    "nextcloud_read_note",
+    "smb_autodiscover",
+    "smb_browse",
+    "ssh_exec",
+    "ssh_test_host",
+    # A specific Reddit thread. Any permalink hard-coded here is one deletion
+    # away from a false failure.
+    "reddit_post_comments",
+})
 
 
 def tool_safety_level(tool_name: str) -> int:

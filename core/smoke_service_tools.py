@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from core.invoke_tool import invoke_mcp_tool_fn, schema_audit_for_payload
 from core.result_status import text_looks_successful
 from core.tool_registry import (
+    NEEDS_LOCAL_ID,
     is_tool_environment_ready,
     looks_like_missing_service_config,
     merged_smoke_payload,
@@ -49,6 +50,7 @@ async def run_service_smoke_tools(
     # of those times as a complaint.
     deliberate: list[str] = []
     unconfigured: list[str] = []
+    needs_id: list[str] = []
 
     for tdef in tool_entries:
         tn = tdef["name"]
@@ -57,6 +59,13 @@ async def run_service_smoke_tools(
             results.append(_result(tn, "skipped", "safety",
                                    "Not tested: this tool changes real data."))
             deliberate.append(tn)
+            skipped += 1
+            continue
+
+        if tn in NEEDS_LOCAL_ID:
+            results.append(_result(tn, "skipped", "identifier",
+                                   "Not tested: needs an id from your own system."))
+            needs_id.append(tn)
             skipped += 1
             continue
 
@@ -125,6 +134,9 @@ async def run_service_smoke_tools(
         notes.append(f"_Not tested — these change real data: {', '.join(deliberate)}._")
     if unconfigured:
         notes.append(f"_Not tested — not configured: {', '.join(unconfigured)}._")
+    if needs_id:
+        notes.append("_Not tested — these need an id only your system has "
+                     f"(a note, an album, an entity, a share): {', '.join(needs_id)}._")
 
     parts = [f"Summary: {passed} ok | {failed} failed"]
     if warnings:
