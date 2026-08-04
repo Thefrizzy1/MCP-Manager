@@ -1,4 +1,5 @@
 import { useRoute } from '@/lib/router'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Shell } from '@/components/Shell'
 import { Dashboard } from '@/pages/Dashboard'
 import { Connections } from '@/pages/Connections'
@@ -33,7 +34,26 @@ function renderPage(route: string) {
   }
 }
 
+const TITLES: Record<string, string> = {
+  dashboard: 'The dashboard',
+  connections: 'Connections',
+  discover: 'Discover',
+  agents: 'Agents',
+  rooms: 'Rooms',
+  builder: 'The builder',
+  files: 'Files',
+  settings: 'Settings',
+}
+
 export function App() {
   const route = useRoute()
-  return <Shell route={route}>{renderPage(route)}</Shell>
+  return (
+    <Shell route={route}>
+      {/* Keyed by route: the boundary resets when you navigate away, so a page
+          that threw once does not latch and break every page after it. */}
+      <ErrorBoundary key={route} label={TITLES[route]}>
+        {renderPage(route)}
+      </ErrorBoundary>
+    </Shell>
+  )
 }

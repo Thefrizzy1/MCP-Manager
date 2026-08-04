@@ -52,3 +52,38 @@ def test_the_real_repo_build_is_wired_to_the_spa_mount():
     out = SP.render_spa()
     assert "/spa/assets/" in out
     assert "/static/spa.js" not in out
+
+
+# ── one broken card must not take the app with it ────────────────────────────
+#
+# There is no JS test runner in this repo, so this is a structural guard rather
+# than a render test. It is worth having anyway: the failure it protects against
+# is a blank white page whose only trace is a console warning, and it came back
+# the moment a component read a field a service had not returned.
+
+def _src(rel: str) -> str:
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "ui" / "web" / "src" / rel).read_text(encoding="utf-8")
+
+
+def test_pages_render_inside_an_error_boundary():
+    app = _src("App.tsx")
+    assert "ErrorBoundary" in app, "a page throw would unmount the whole root"
+    # Keyed by route, or the boundary latches and every page after the broken
+    # one renders the error instead of itself.
+    assert "key={route}" in app
+
+
+def test_the_shell_itself_has_a_backstop():
+    """The per-page boundary lives inside App and cannot catch a throw above it."""
+    assert "ErrorBoundary" in _src("main.tsx")
+
+
+def test_the_boundary_reports_the_real_error():
+    """On a self-hosted box the person seeing this is the person who can fix it,
+    so "something went wrong" is worth less than the actual message."""
+    boundary = _src("components/ErrorBoundary.tsx")
+    assert "error.message" in boundary
+    assert "getDerivedStateFromError" in boundary
+    # Recoverable without a page reload.
+    assert "Try again" in boundary

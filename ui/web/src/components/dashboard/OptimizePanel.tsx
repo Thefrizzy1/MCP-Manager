@@ -33,17 +33,21 @@ export function OptimizePanel() {
   const [msg, setMsg] = useState('')
 
   useEffect(() => {
-    if (data) setDisabled(new Set(data.disabled_categories))
+    if (data) setDisabled(new Set(data.disabled_categories ?? []))
   }, [data])
 
+  // Every read of the report is guarded. The error boundary above will catch a
+  // throw, but a card that blanks its own page because one field was missing is
+  // still the wrong behaviour — the numbers it cannot compute should read zero
+  // and the rest of the dashboard should carry on.
   const cats = useMemo(
-    () => (data ? Object.entries(data.categories).sort((a, b) => b[1].tokens - a[1].tokens) : []),
+    () => Object.entries(data?.categories ?? {}).sort((a, b) => b[1].tokens - a[1].tokens),
     [data],
   )
   const dirty = useMemo(() => {
     if (!data) return false
     const a = [...disabled].sort().join(',')
-    const b = [...data.disabled_categories].sort().join(',')
+    const b = [...(data.disabled_categories ?? [])].sort().join(',')
     return a !== b
   }, [disabled, data])
 
@@ -52,7 +56,7 @@ export function OptimizePanel() {
     if (!data) return null
     let savedTokens = 0
     let hiddenTools = 0
-    for (const [name, info] of Object.entries(data.categories)) {
+    for (const [name, info] of Object.entries(data.categories ?? {})) {
       if (disabled.has(name)) {
         savedTokens += info.tokens
         hiddenTools += info.tools
@@ -78,9 +82,10 @@ export function OptimizePanel() {
 
   if (!data) return <Card className="p-4 text-[13px] text-ink-3">Loading optimization…</Card>
 
-  const saved = dirty ? livePreview!.savedTokens : data.tokens_saved_est
-  const pct = dirty ? livePreview!.pct : data.percent_saved
-  const exposed = dirty ? data.total_tools - livePreview!.hiddenTools : data.exposed_tools
+  const total = data.total_tools ?? 0
+  const saved = (dirty ? livePreview!.savedTokens : data.tokens_saved_est) ?? 0
+  const pct = (dirty ? livePreview!.pct : data.percent_saved) ?? 0
+  const exposed = dirty ? total - livePreview!.hiddenTools : (data.exposed_tools ?? 0)
 
   return (
     <Card>
@@ -93,7 +98,7 @@ export function OptimizePanel() {
               ~{saved.toLocaleString()} <span className="text-[12px] font-normal text-ink-3">tokens saved</span>
             </div>
             <div className="text-[11.5px] text-ink-3">
-              {exposed}/{data.total_tools} tools · {pct}% smaller
+              {exposed}/{total} tools · {pct}% smaller
             </div>
           </div>
         }
