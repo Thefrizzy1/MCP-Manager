@@ -542,3 +542,41 @@ def test_the_write_tools_are_never_smoke_tested():
     from core.tool_registry import tool_safety_level
     assert tool_safety_level("reddit_submit") == 2
     assert tool_safety_level("reddit_comment") == 2
+
+
+# ── instances that will not answer anonymously ───────────────────────────────
+
+def test_the_default_instance_is_one_that_serves_anonymous_reads():
+    """mastodon.social is the obvious default and the wrong one: it sets
+    DISALLOW_UNAUTHENTICATED_API_ACCESS, so the public timeline 422s for
+    everybody. A default that cannot answer is not a default."""
+    assert S.DEFAULT_MASTODON != "mastodon.social"
+    assert S.DEFAULT_MASTODON in ("mstdn.social", "fosstodon.org", "mas.to")
+
+
+def test_an_instance_that_needs_a_login_says_which_ones_do_not(monkeypatch):
+    """"HTTP 422" sends someone hunting for a bug in their own arguments."""
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    class Resp:
+        status_code = 422
+
+        def json(self):
+            return {"error": "This method requires an authenticated user"}
+
+        def raise_for_status(self):
+            raise httpx.HTTPStatusError("boom", request=None, response=self)
+
+    class Client:
+        def __init__(self, *a, **kw): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, *a, **kw): return Resp()
+
+    monkeypatch.setattr(S.httpx, "AsyncClient", Client)
+    out = str(asyncio.run(invoke_mcp_tool_fn(
+        _tool("mastodon_timeline"), payload={"instance": "mastodon.social", "limit": 3})))
+
+    assert out.startswith("Error:")
+    assert "without an account" in out
+    assert "mstdn.social" in out          # names one that works

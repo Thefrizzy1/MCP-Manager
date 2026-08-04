@@ -62,6 +62,15 @@ def _effective_weather_city() -> str:
     return cfg.weather_default_location or "Hamburg"
 
 
+
+# Wikimedia enforces its robot policy on the User-Agent and now answers 403 to
+# anything without a contact URL in it — verified live: the same request with
+# "PlutusMCP/1.0 (utilities; contact: local)" gets 403 and with the repo URL gets
+# 200. So `wikipedia_summary` was broken for every user, and Wikipedia is in the
+# research room's default connections.
+WIKIMEDIA_UA = "PlutusMCP/1.0 (https://github.com/Thefrizzy1/MCP-Manager)"
+
+
 def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     from core.profiles import tool_filter
     mcp = tool_filter(mcp, allow)
@@ -475,7 +484,7 @@ def register_utility_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                         "explaintext": "1",
                         "titles": title,
                     },
-                    headers={"User-Agent": "PlutusMCP/1.0 (utilities; contact: local)"},
+                    headers={"User-Agent": WIKIMEDIA_UA},
                 )
                 r.raise_for_status()
                 data = r.json()

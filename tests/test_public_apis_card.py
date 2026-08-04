@@ -130,3 +130,14 @@ def test_exposure_report_counts_per_tool_savings(tmp_path):
     assert after["tokens_saved_est"] > 0
     assert after["exposed_tools"] == before["exposed_tools"] - 3
     assert after["disabled_tools"] == sorted(names[:3])
+
+
+def test_wikipedia_identifies_itself_the_way_wikimedia_requires():
+    """Wikimedia enforces its robot policy on the User-Agent: without a contact
+    URL the API answers 403. Verified live — the old
+    "PlutusMCP/1.0 (utilities; contact: local)" got 403, the repo URL got 200 —
+    so this is what stood between wikipedia_summary and working at all."""
+    from tools.utilities import WIKIMEDIA_UA
+
+    assert "http" in WIKIMEDIA_UA, "the UA must carry a contact URL"
+    assert "contact: local" not in WIKIMEDIA_UA

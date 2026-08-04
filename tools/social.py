@@ -28,8 +28,12 @@ assumed:
   parallel set. Nothing requires it; everything is better with it.
 - **Bluesky** serves `searchPosts` from `api.bsky.app`. The obvious-looking
   `public.api.bsky.app` returns 403 for that endpoint.
-- **Hacker News**, **Lemmy**, **Mastodon** and **Stack Exchange** answer plain
-  unauthenticated JSON.
+- **Hacker News**, **Lemmy** and **Stack Exchange** answer plain unauthenticated
+  JSON.
+- **Mastodon** depends on the instance. mastodon.social — the obvious default —
+  now sets DISALLOW_UNAUTHENTICATED_API_ACCESS and answers 422 to an anonymous
+  timeline read, as does infosec.exchange; mstdn.social, fosstodon.org and mas.to
+  still serve it. Hence the default instance here is *not* the biggest one.
 
 Instagram, TikTok, X/Twitter, Facebook, LinkedIn, Threads and Pinterest are
 deliberately absent: every one of them now requires a registered OAuth app (and in
@@ -56,7 +60,12 @@ UA = "PlutusMCP/1.0 (homelab MCP server)"
 
 # Lemmy and Mastodon are federated: the host is a parameter, not a constant.
 DEFAULT_LEMMY = "lemmy.world"
-DEFAULT_MASTODON = "mastodon.social"
+# NOT mastodon.social. It — and a growing number of large instances — now set
+# DISALLOW_UNAUTHENTICATED_API_ACCESS, so the public timeline answers 422
+# {"error":"This method requires an authenticated user"} to everyone. Verified
+# live: mastodon.social and infosec.exchange 422; mstdn.social, fosstodon.org and
+# mas.to still serve it. A default that cannot answer is not a default.
+DEFAULT_MASTODON = "mstdn.social"
 
 NL = "\n"
 
@@ -914,6 +923,15 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             posts = await _get_json(url, {"limit": params.limit}, screen=True)
         except PermissionError as e:
             return f"Error: {e}"
+        except httpx.HTTPStatusError as e:
+            # 422 here is not a bad request — it is the instance saying it does
+            # not serve anonymous reads. "HTTP 422" sends someone hunting for a
+            # bug in their arguments instead of changing one field.
+            if e.response is not None and e.response.status_code in (401, 422):
+                return (f"Error: {host} does not allow reading its timeline without an "
+                        f"account. Set `instance` to one that does — mstdn.social, "
+                        f"fosstodon.org and mas.to all work.")
+            return _handle_error(e, "Mastodon")
         except Exception as e:
             return _handle_error(e, "Mastodon")
         if not posts:
