@@ -141,3 +141,32 @@ def test_wikipedia_identifies_itself_the_way_wikimedia_requires():
 
     assert "http" in WIKIMEDIA_UA, "the UA must carry a contact URL"
     assert "contact: local" not in WIKIMEDIA_UA
+
+
+def test_an_in_url_query_string_survives_the_helper():
+    """httpx *replaces* the URL's query whenever `params` is passed, so the old
+    `params or {}` silently erased one written into the URL — which is how
+    `api.ipify.org?format=json` became a plain-text response and a
+    JSONDecodeError blamed on ipify."""
+    import inspect
+
+    from tools import public_apis_bulk as P
+
+    for fn in (P._get_json, P._get_text):
+        assert "params or None" in inspect.getsource(fn), fn.__name__
+
+    import httpx
+    assert "format=json" in str(httpx.Request("GET", "https://x/?format=json", params=None).url)
+    assert "format=json" not in str(httpx.Request("GET", "https://x/?format=json", params={}).url)
+
+
+def test_no_tool_still_points_at_a_host_that_stopped_resolving():
+    """These were all verified dead by hand: the connection is refused, not a
+    404. A tool that can never answer is manifest weight plus a guaranteed
+    failed call, so it is either repointed or gone."""
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "tools" / "public_apis_bulk.py").read_text(encoding="utf-8")
+    for host in ("worldtimeapi.org", "api.coincap.io", "api.quotable.io",
+                 "swapi.dev", "numbersapi.com", "shibe.online", "animechan.xyz"):
+        assert host not in src, f"{host} no longer resolves"

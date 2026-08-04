@@ -19,16 +19,21 @@ from client import TIMEOUT, _handle_error
 _UA = {"User-Agent": "PlutusMCP/2.0 (public bulk; local homelab)"}
 
 
+# `params or {}` looks harmless and is not: httpx *replaces* the URL's query
+# string whenever `params` is passed, so an empty dict silently erased a query
+# already written into the URL. That is what turned `api.ipify.org?format=json`
+# into `api.ipify.org`, which answers plain text — reported as a JSONDecodeError
+# that pointed at ipify rather than at us. `None` leaves the URL alone.
 async def _get_json(url: str, *, params: dict[str, Any] | None = None) -> Any:
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, headers=_UA) as client:
-        r = await client.get(url, params=params or {})
+        r = await client.get(url, params=params or None)
         r.raise_for_status()
         return r.json()
 
 
 async def _get_text(url: str, *, params: dict[str, Any] | None = None, limit: int = 8000) -> str:
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True, headers=_UA) as client:
-        r = await client.get(url, params=params or {})
+        r = await client.get(url, params=params or None)
         r.raise_for_status()
         t = r.text.strip()
         return t if len(t) <= limit else t[:limit] + "…"
@@ -166,19 +171,14 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
         """Current time for an IANA zone e.g. Europe/Berlin."""
         try:
             z = params.query.strip().replace(" ", "_")
-            d = await _get_json(f"https://worldtimeapi.org/api/timezone/{z}")
-            return f"## WorldTime `{z}`\n\n```json\n{json.dumps(d, indent=2)[:4000]}\n```"
+            # worldtimeapi.org stopped resolving entirely. timeapi.io serves the
+            # same thing keylessly; the tool name stays so nothing downstream
+            # has to change.
+            d = await _get_json("https://timeapi.io/api/time/current/zone",
+                                params={"timeZone": z})
+            return f"## Time in `{z}`\n\n```json\n{json.dumps(d, indent=2)[:4000]}\n```"
         except Exception as e:
-            return _handle_error(e, "worldtime")
-
-    @mcp.tool(name="pub_worldtime_ip", annotations={"readOnlyHint": True})
-    async def pub_worldtime_ip(params: Empty) -> str:
-        """WorldTimeAPI client-ip endpoint."""
-        try:
-            d = await _get_json("https://worldtimeapi.org/api/ip")
-            return f"## WorldTime (IP)\n\n```json\n{json.dumps(d, indent=2)[:4000]}\n```"
-        except Exception as e:
-            return _handle_error(e, "worldtime ip")
+            return _handle_error(e, "timeapi")
 
     @mcp.tool(name="pub_restcountries_region", annotations={"readOnlyHint": True})
     async def pub_restcountries_region(params: RestRegion) -> str:
@@ -267,9 +267,16 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
     async def pub_coincap_assets(params: Empty) -> str:
         """Top CoinCap assets page (sample)."""
         try:
-            d = await _get_json("https://api.coincap.io/v2/assets", params={"limit": 15})
-            rows = [f"- **{a.get('name')}** ({a.get('symbol')}): ${float(a.get('priceUsd', 0)):,.4f}" for a in d.get("data", [])]
-            return "## CoinCap (top 15)\n\n" + "\n".join(rows)
+            # CoinCap's free v2 API was retired. CoinGecko's markets endpoint is
+            # the keyless equivalent and returns the same top-N-by-market-cap.
+            d = await _get_json("https://api.coingecko.com/api/v3/coins/markets",
+                                params={"vs_currency": "usd", "per_page": 15, "page": 1})
+            # CoinGecko returns a bare list; CoinCap wrapped it in {"data": [...]}
+            # and named the price field priceUsd.
+            rows = [f"- **{a.get('name')}** ({str(a.get('symbol', '')).upper()}): "
+                    f"${float(a.get('current_price') or 0):,.4f}"
+                    for a in (d if isinstance(d, list) else [])]
+            return "## Top crypto by market cap\n\n" + "\n".join(rows)
         except Exception as e:
             return _handle_error(e, "coincap")
 
@@ -279,8 +286,14 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
     async def pub_quotable_random(params: Empty) -> str:
         """Random quote (Quotable)."""
         try:
-            d = await _get_json("https://api.quotable.io/random")
-            return f"## Quote\n\n**{d.get('content')}**\n— _{d.get('author')}_"
+            # api.quotable.io no longer resolves. This community mirror is up and
+            # serves the same corpus, but not the same envelope: the quote sits
+            # under "quote" and the author is an object, not a string.
+            body = await _get_json("https://api.quotable.kurokeita.dev/api/quotes/random")
+            d = (body or {}).get("quote") or body or {}
+            author = d.get("author")
+            who = author.get("name") if isinstance(author, dict) else (author or "Unknown")
+            return f"## Quote\n\n**{d.get('content')}**\n— _{who}_"
         except Exception as e:
             return _handle_error(e, "quotable")
 
@@ -423,7 +436,9 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
     async def pub_swapi_person(params: IdNum) -> str:
         """Star Wars person by SWAPI id."""
         try:
-            d = await _get_json(f"https://swapi.dev/api/people/{params.id}/")
+            # swapi.dev stopped resolving; swapi.info is the maintained mirror
+            # (same paths, no trailing slash).
+            d = await _get_json(f"https://swapi.info/api/people/{params.id}")
             return f"## SWAPI person {params.id}\n\n```json\n{json.dumps(d, indent=2)[:4000]}\n```"
         except Exception as e:
             return _handle_error(e, "swapi")
@@ -448,25 +463,6 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
             return str(d)
         except Exception as e:
             return _handle_error(e, "breakingbad")
-
-    @mcp.tool(name="pub_numbers_trivia", annotations={"readOnlyHint": True})
-    async def pub_numbers_trivia(params: IdNum) -> str:
-        """Number trivia (Numbers API)."""
-        try:
-            t = await _get_text(f"http://numbersapi.com/{params.id}/trivia")
-            return f"## Trivia ({params.id})\n\n{t}"
-        except Exception as e:
-            return _handle_error(e, "numbersapi")
-
-    @mcp.tool(name="pub_numbers_year", annotations={"readOnlyHint": True})
-    async def pub_numbers_year(params: IdNum) -> str:
-        """Year fact (Numbers API)."""
-        try:
-            y = min(max(params.id, 1), 2026)
-            t = await _get_text(f"http://numbersapi.com/{y}/year")
-            return f"## Year {y}\n\n{t}"
-        except Exception as e:
-            return _handle_error(e, "numbersapi")
 
     @mcp.tool(name="pub_opentrivia_questions", annotations={"readOnlyHint": True})
     async def pub_opentrivia_questions(params: TriviaOpts) -> str:
@@ -643,10 +639,16 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
 
     @mcp.tool(name="pub_animechan_quote", annotations={"readOnlyHint": True})
     async def pub_animechan_quote(params: Empty) -> str:
-        """Random anime quote (animechan.xyz)."""
+        """Random anime quote (animechan)."""
         try:
-            d = await _get_json("https://animechan.xyz/api/random")
-            return f"## Anime quote\n\n**{d.get('quote', d)}**\n— _{d.get('character')}_ ({d.get('anime')})"
+            # animechan.xyz -> api.animechan.io/v1, and the payload gained an
+            # envelope: {status, data: {content, anime: {name}, character: {name}}}.
+            body = await _get_json("https://api.animechan.io/v1/quotes/random")
+            d = (body or {}).get("data") or {}
+            quote = d.get("content") or str(body)
+            who = (d.get("character") or {}).get("name", "?")
+            show = (d.get("anime") or {}).get("name", "?")
+            return f"## Anime quote\n\n**{quote}**\n— _{who}_ ({show})"
         except Exception as e:
             return _handle_error(e, "animechan")
 
@@ -685,16 +687,6 @@ def register_public_apis_bulk(mcp: FastMCP, *, allow: "set[str] | None" = None) 
             return f"## Cloudflare trace\n\n```\n{t}\n```"
         except Exception as e:
             return _handle_error(e, "cloudflare trace")
-
-    @mcp.tool(name="pub_shibe_image", annotations={"readOnlyHint": True})
-    async def pub_shibe_image(params: Empty) -> str:
-        """Random Shiba Inu image URL (shibe.online)."""
-        try:
-            d = await _get_json("https://shibe.online/api/shibes?count=1")
-            u = d[0] if isinstance(d, list) and d else str(d)
-            return f"## Shibe\n\n`{u}`\n\n![]({u})"
-        except Exception as e:
-            return _handle_error(e, "shibe.online")
 
     @mcp.tool(name="pub_blockchain_btc_ticker", annotations={"readOnlyHint": True})
     async def pub_blockchain_btc_ticker(params: Empty) -> str:
@@ -749,8 +741,6 @@ PUBLIC_TOOL_DEFAULTS: dict[str, dict] = {
     "pub_openlibrary_search": {"query": "foundation asimov"},
     "pub_swapi_person": {"id": 1},
     "pub_rick_morty_character": {"id": 1},
-    "pub_numbers_trivia": {"id": 42},
-    "pub_numbers_year": {"id": 1969},
     "pub_deck_draw": {"id": 3},
     "pub_pokemon": {"name": "pikachu"},
     "pub_binance_ticker": {"symbol": "BTCUSDT"},
@@ -762,7 +752,6 @@ PUBLIC_TOOL_DEFAULTS: dict[str, dict] = {
     "pub_bored_activity": {},
     "pub_nationalize_name": {"name": "maria"},
     "pub_cloudflare_trace": {},
-    "pub_shibe_image": {},
     "pub_blockchain_btc_ticker": {},
     "pub_official_joke": {},
     "pub_ipwho": {},
@@ -784,14 +773,14 @@ def _public_service(row: tuple) -> dict:
 
 _PUBLIC_SERVICE_ROWS = [
     ("pub_network", "Public · Network & DNS", "utilities", "IPs, DNS-over-HTTPS, httpbin helpers — no keys", [("pub_unix_timestamp", "Unix timestamp", []), ("pub_httpbin_ip", "Your IP (httpbin)", []), ("pub_httpbin_uuid", "Random UUID", []), ("pub_ipify", "IP (ipify)", []), ("pub_ip_api_lookup", "Geo IP lookup", [("query", "IP or blank", "text")]), ("pub_dns_resolve", "DNS A lookup", [("query", "hostname", "text")]), ("pub_uuid_v4_local", "UUID v4 (local)", [])]),
-    ("pub_geo_time", "Public · Time & places", "utilities", "WorldTime, REST Countries, postal codes, geocode, weather", [("pub_worldtime_timezone", "Time by IANA zone", [("query", "Europe/Berlin", "text")]), ("pub_worldtime_ip", "Time for your IP", []), ("pub_restcountries_region", "Countries in region", [("region", "Europe", "text")]), ("pub_restcountries_name", "Country by name", [("name", "Germany", "text")]), ("pub_zippopotam", "Postal lookup", [("country_code", "de", "text"), ("postal_code", "10115", "text")]), ("pub_nominatim_search", "OSM search", [("query", "city", "text")]), ("pub_open_meteo_forecast", "Weather forecast", [("latitude", "53.55", "number"), ("longitude", "9.99", "number")])]),
+    ("pub_geo_time", "Public · Time & places", "utilities", "WorldTime, REST Countries, postal codes, geocode, weather", [("pub_worldtime_timezone", "Time by IANA zone", [("query", "Europe/Berlin", "text")]), ("pub_restcountries_region", "Countries in region", [("region", "Europe", "text")]), ("pub_restcountries_name", "Country by name", [("name", "Germany", "text")]), ("pub_zippopotam", "Postal lookup", [("country_code", "de", "text"), ("postal_code", "10115", "text")]), ("pub_nominatim_search", "OSM search", [("query", "city", "text")]), ("pub_open_meteo_forecast", "Weather forecast", [("latitude", "53.55", "number"), ("longitude", "9.99", "number")])]),
     ("pub_finance_crypto", "Public · Crypto tickers", "finance", "CoinGecko, Binance, CoinCap — rate limits apply", [("pub_coingecko_price", "BTC/ETH/SOL prices", []), ("pub_binance_ticker", "Binance ticker", [("symbol", "BTCUSDT", "text")]), ("pub_coincap_assets", "CoinCap top assets", []), ("pub_er_api_latest", "FX vs USD (ER API)", [])]),
     ("pub_fun", "Public · Quotes & fun", "personal", "Quotes, jokes, animals, demographics toys", [("pub_quotable_random", "Random quote", []), ("pub_zenquotes_today", "ZenQuotes today", []), ("pub_chuck_joke", "Chuck Norris joke", []), ("pub_joke_any", "Random joke", []), ("pub_cat_fact", "Cat fact", []), ("pub_dog_image", "Dog photo URL", []), ("pub_agify_name", "Age from name", [("name", "Alex", "text")]), ("pub_genderize_name", "Gender guess", [("name", "Alex", "text")]), ("pub_random_user", "Random user JSON", []), ("pub_anime_random", "Random anime (Jikan)", []), ("pub_kanye_quote", "Kanye quote", []), ("pub_advice_slip", "Advice slip", []), ("pub_animechan_quote", "Anime quote", [])]),
     ("pub_education", "Public · Universities & books", "reference", "Universities API + Open Library", [("pub_univ_search", "University search", [("query", "Hamburg", "text")]), ("pub_openlibrary_search", "Book search", [("query", "Asimov", "text")])]),
-    ("pub_games", "Public · Games & trivia", "media", "Deck of cards, Pokemon, SWAPI, Rick & Morty, trivia", [("pub_deck_new", "New shuffled deck", []), ("pub_deck_draw", "Draw cards (auto deck)", [("id", "3", "number")]), ("pub_pokemon", "Pokemon species", [("name", "pikachu", "text")]), ("pub_swapi_person", "SWAPI person", [("id", "1", "number")]), ("pub_rick_morty_character", "Rm character", [("id", "1", "number")]), ("pub_breaking_bad_quote", "Breaking Bad quote", []), ("pub_numbers_trivia", "Number trivia", [("id", "42", "number")]), ("pub_numbers_year", "Year fact", [("id", "1969", "number")]), ("pub_opentrivia_questions", "Trivia MCQ", [("amount", "3", "number"), ("difficulty", "easy", "text")])]),
+    ("pub_games", "Public · Games & trivia", "media", "Deck of cards, Pokemon, SWAPI, Rick & Morty, trivia", [("pub_deck_new", "New shuffled deck", []), ("pub_deck_draw", "Draw cards (auto deck)", [("id", "3", "number")]), ("pub_pokemon", "Pokemon species", [("name", "pikachu", "text")]), ("pub_swapi_person", "SWAPI person", [("id", "1", "number")]), ("pub_rick_morty_character", "Rm character", [("id", "1", "number")]), ("pub_breaking_bad_quote", "Breaking Bad quote", []), ("pub_opentrivia_questions", "Trivia MCQ", [("amount", "3", "number"), ("difficulty", "easy", "text")])]),
     ("pub_space", "Public · Space & NASA", "science", "ISS, people in space, APOD, headlines", [("pub_iss_location", "ISS position", []), ("pub_people_in_space", "Astronauts list", []), ("pub_nasa_apod", "NASA APOD", []), ("pub_spaceflight_news", "Space news", [])]),
     ("pub_dev_culture", "Public · Dev & culture", "utilities", "GitHub zen, xkcd, Met & ArtIC search", [("pub_github_zen", "GitHub Zen", []), ("pub_xkcd_current", "Current xkcd", []), ("pub_met_search", "Met Museum search", [("q", "sunflower", "text")]), ("pub_artic_artworks", "Art Institute search", [("query", "monet", "text")]), ("pub_tvmaze_search", "TV show search", [("query", "breaking bad", "text")])]),
-    ("pub_catalog_misc", "Public · More free APIs", "utilities", "Curated from public-apis/public-apis (no keys): boredapi, nationalize, Cloudflare trace, shibe, BTC ticker, jokes, ipwho", [("pub_bored_activity", "Bored? activity idea", []), ("pub_nationalize_name", "Nationalize a name", [("name", "maria", "text")]), ("pub_cloudflare_trace", "Cloudflare edge trace", []), ("pub_shibe_image", "Random shibe image", []), ("pub_blockchain_btc_ticker", "BTC fiat ticker", []), ("pub_official_joke", "Random joke", []), ("pub_ipwho", "Your IP + geo (ipwho.is)", [])]),
+    ("pub_catalog_misc", "Public · More free APIs", "utilities", "Curated from public-apis/public-apis (no keys): boredapi, nationalize, Cloudflare trace, shibe, BTC ticker, jokes, ipwho", [("pub_bored_activity", "Bored? activity idea", []), ("pub_nationalize_name", "Nationalize a name", [("name", "maria", "text")]), ("pub_cloudflare_trace", "Cloudflare edge trace", []), ("pub_blockchain_btc_ticker", "BTC fiat ticker", []), ("pub_official_joke", "Random joke", []), ("pub_ipwho", "Your IP + geo (ipwho.is)", [])]),
 ]
 
 def _consolidated_public_service() -> dict:

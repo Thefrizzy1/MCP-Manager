@@ -189,7 +189,10 @@ def _audit_detail(audit: dict[str, Any]) -> str:
 # limit — which Reddit's anonymous feed does readily when several tools fire in
 # a row — was reporting the tools themselves as failures.
 _TRANSIENT = ("rate-limit", "rate limit", "too many requests", "try again",
-              "temporarily unavailable", "timed out", "503", "429")
+              "temporarily unavailable", "timed out", "429",
+              # Gateway and unavailable codes: the upstream is having a bad
+              # minute, which is not the same as our tool being wrong.
+              "502", "503", "504")
 
 
 def looks_transient(text: str) -> bool:
