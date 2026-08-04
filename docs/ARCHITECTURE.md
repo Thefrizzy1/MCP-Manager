@@ -144,6 +144,8 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     agent_runner.py        Runs one agent through a provider CLI or HTTP API.
     agent_permissions.py   The write/publish axis (capability_disallow) + the
                            DANGEROUS / WRITE / OUTWARD blast-radius sets.
+    saved_agents.py        Agents you built in the wizard, reusable in a launch,
+                           a schedule, or a room seat.
     agent_presets.py       Named kinds of agent: folder, tool slice, how far it may go.
     agent_tasks.py         Playbooks — saved prompts with template variables.
     agent_skill.py         The system prompt / skill text an agent is launched with.

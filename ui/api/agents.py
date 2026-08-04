@@ -185,6 +185,79 @@ class AgentRunBody(BaseModel):
     smart_fallback: bool = True
 
 
+# ─── Saved agents ─────────────────────────────────────────────────────────────
+#
+# The wizard's answers under a name, so an agent you tuned once can be launched
+# again, scheduled, or dropped into a room without re-picking every field.
+
+class SavedAgentBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=40)
+    provider: str = Field(..., min_length=1)
+    account_id: str = Field(..., min_length=1)
+    model: str = Field(default="", max_length=80)
+    mcp_services: list[str] | None = None
+    allow_write: bool = True
+    allow_publish: bool = False
+    smart_fallback: bool = True
+    preset: str = Field(default="", max_length=40)
+    goal: str = Field(default="", max_length=500)
+    role: str = Field(default="researcher", max_length=20)
+
+
+class SavedAgentPatch(BaseModel):
+    label: str | None = None
+    provider: str | None = None
+    account_id: str | None = None
+    model: str | None = None
+    mcp_services: list[str] | None = None
+    allow_write: bool | None = None
+    allow_publish: bool | None = None
+    smart_fallback: bool | None = None
+    preset: str | None = None
+    goal: str | None = None
+    role: str | None = None
+
+
+@router.get("/api/v1/agent/saved")
+async def api_saved_agents():
+    from core import saved_agents
+
+    return {"agents": saved_agents.load_agents(ROOT), "roles": list(saved_agents.ROLES)}
+
+
+@router.post("/api/v1/agent/saved")
+async def api_save_agent(body: SavedAgentBody):
+    from core import saved_agents
+
+    try:
+        agent = saved_agents.add_agent(ROOT, **body.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "agent": agent}
+
+
+@router.post("/api/v1/agent/saved/{agent_id}")
+async def api_update_saved_agent(agent_id: str, body: SavedAgentPatch):
+    from core import saved_agents
+
+    try:
+        agent = saved_agents.update_agent(ROOT, agent_id, body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, "no such saved agent")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "agent": agent}
+
+
+@router.delete("/api/v1/agent/saved/{agent_id}")
+async def api_delete_saved_agent(agent_id: str):
+    from core import saved_agents
+
+    if not saved_agents.delete_agent(ROOT, agent_id):
+        raise HTTPException(404, "no such saved agent")
+    return {"ok": True}
+
+
 @router.get("/api/v1/agent/presets")
 async def api_v1_agent_presets():
     """The named kinds of agent, with today's folder already resolved.

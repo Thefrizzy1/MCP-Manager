@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock, RotateCw, Pencil } from 'lucide-react'
+import { Plus, Square, Play, Pause, Trash2, Bot, CalendarClock, RotateCw, Pencil, Save } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import type { Service } from '@/lib/health'
@@ -250,6 +250,7 @@ export function Agents() {
                 startStream()
                 status.refetch()
               }}
+              onSaved={() => qc.invalidateQueries({ queryKey: ['saved-agents'] })}
               onScheduled={() => {
                 setWizard(false)
                 setPrefill(null)
@@ -541,6 +542,7 @@ function LaunchWizard({
   initial,
   legacyLogin,
   onLaunched,
+  onSaved,
   onScheduled,
 }: {
   connections: Service[]
@@ -549,6 +551,8 @@ function LaunchWizard({
    *  token) exists. Without it "Default login" is an option that cannot run. */
   legacyLogin: boolean
   onLaunched: () => void
+  /** Refresh the saved-agent list after one is added. */
+  onSaved: () => void
   onScheduled: () => void
 }) {
   const [name, setName] = useState(initial?.label ?? '')
@@ -621,6 +625,46 @@ function LaunchWizard({
   }, [connections])
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+
+  /** The wizard's answers, minus the prompt — the shape the saved-agent store
+   *  and a launch both take. One builder so "save" and "launch" cannot drift. */
+  function settings() {
+    return {
+      provider: account ? provider : '',
+      account_id: account ? accountId : '',
+      model: model.trim(),
+      mcp_services: Object.entries(selected)
+        .filter(([, v]) => v)
+        .map(([k]) => k),
+      allow_write: allowWrite,
+      allow_publish: allowPublish,
+      smart_fallback: smartFallback,
+      preset,
+    }
+  }
+
+  async function saveAgent() {
+    const label = name.trim()
+    if (!label) {
+      setMsg('Give the agent a name first — that is what you drag into a room.')
+      return
+    }
+    if (!account) {
+      setMsg('Pick an account: a saved agent has to know what runs it.')
+      return
+    }
+    setBusy(true)
+    setMsg('…')
+    try {
+      await api.post('/api/v1/agent/saved', { label, goal: prompt.trim().slice(0, 500), ...settings() })
+      setMsg(`Saved — “${label}” is on the Rooms bench.`)
+      onSaved()
+    } catch (e) {
+      setMsg(String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function launch() {
     if (!prompt.trim()) {
@@ -811,6 +855,16 @@ function LaunchWizard({
         <div className="flex items-center gap-3">
           <Button variant="primary" size="sm" disabled={busy} onClick={launch}>
             Launch
+          </Button>
+          {/* Saving is not launching: it records these settings so the same
+              agent can be dropped into a room instead of rebuilt by hand. */}
+          <Button
+            size="sm"
+            disabled={busy}
+            title="Keep these settings under this name, ready to drag into a room"
+            onClick={saveAgent}
+          >
+            <Save size={13} /> Save agent
           </Button>
           {msg && <span className="text-[12px] text-ink-3">{msg}</span>}
         </div>

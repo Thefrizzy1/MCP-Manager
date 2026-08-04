@@ -78,6 +78,22 @@ interface RoomsResp {
   colours?: string[]
 }
 type LinkedAccount = ReturnType<typeof toLinked>[number]
+interface SavedAgent {
+  id: string
+  label: string
+  provider: string
+  account_id: string
+  model: string
+  role: string
+  goal: string
+  mcp_services: string[] | null
+}
+/** What is currently in hand. A saved agent and a bare account both land in a
+ *  room, but they build very different seats — an agent brings its model, role,
+ *  goal and connections; an account brings nothing but the login. */
+type Dragged =
+  | { kind: 'account'; account: LinkedAccount }
+  | { kind: 'agent'; agent: SavedAgent }
 
 const ROLE_HINT: Record<string, string> = {
   manager: 'reviews the work handed to it and directs the next person',
@@ -191,10 +207,14 @@ export function Rooms() {
     queryFn: () => api.get<{ services?: Service[] }>('/api/v1/dashboard?sections=services'),
   })
   const providers = useProviders()
+  const saved = useQuery({
+    queryKey: ['saved-agents'],
+    queryFn: () => api.get<{ agents: SavedAgent[] }>('/api/v1/agent/saved'),
+  })
 
   const [newRoom, setNewRoom] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
-  const [dragging, setDragging] = useState<LinkedAccount | null>(null)
+  const [dragging, setDragging] = useState<Dragged | null>(null)
   const [dragSeat, setDragSeat] = useState<string | null>(null)
   const [busy, setBusy] = useState('')
   const [openRun, setOpenRun] = useState<string | null>(null)
@@ -232,14 +252,37 @@ export function Rooms() {
     }
   }
 
-  async function dropIntoRoom(room: Room, acct: LinkedAccount, role: string) {
+  async function dropIntoRoom(room: Room, what: Dragged, role: string) {
+    if (what.kind === 'agent') {
+      // The server seats it: it copies the agent's account, model, role and
+      // goal, and widens the room's connections to cover the agent's — an agent
+      // is the tools it was given as much as the account it runs on.
+      await call(
+        async () => {
+          const res = await api.post<{ added_connections: string[] }>(
+            `/api/v1/rooms/${room.id}/seats/from-agent/${what.agent.id}`,
+            { role },
+          )
+          if (res.added_connections?.length) {
+            toast.success(
+              `${room.label} also gained ${res.added_connections.join(', ')} — ${what.agent.label} needs them.`,
+            )
+          }
+        },
+        'drop',
+        `${what.agent.label} joined ${room.label}.`,
+      )
+      return
+    }
+    const acct = what.account
+    const r = role || 'researcher'
     await call(
       () =>
         api.post(`/api/v1/rooms/${room.id}/seats`, {
-          role,
+          role: r,
           provider: acct.provider,
           account_id: acct.id,
-          label: `${role[0].toUpperCase()}${role.slice(1)}`,
+          label: `${r[0].toUpperCase()}${r.slice(1)}`,
         }),
       'drop',
       `${acct.label} joined ${room.label}.`,
@@ -339,7 +382,7 @@ export function Rooms() {
               onDropAgent={(room, role) => {
                 // Dropped on a desk? take that desk's role — hiring onto the
                 // Engineer desk should give you a developer. Open floor defaults.
-                if (dragging) dropIntoRoom(room, dragging, role || 'researcher')
+                if (dragging) dropIntoRoom(room, dragging, role || '')
                 setDragging(null)
               }}
               onReorder={(room, fromId, toId) => reorder(room, fromId, toId)}
@@ -477,7 +520,7 @@ export function Rooms() {
                   <div
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => {
-                      if (dragging) dropIntoRoom(open, dragging, 'researcher')
+                      if (dragging) dropIntoRoom(open, dragging, '')
                       setDragging(null)
                     }}
                     className="min-h-[110px] rounded-[var(--radius-md)] border border-dashed border-border-strong p-2"
@@ -606,21 +649,62 @@ export function Rooms() {
                       </Button>
                     </div>
                   ) : (
-                    linked.map((a) => (
-                      <div
-                        key={`${a.provider}/${a.id}`}
-                        draggable
-                        onDragStart={() => setDragging(a)}
-                        onDragEnd={() => setDragging(null)}
-                        className="mb-1 cursor-grab rounded-[var(--radius-sm)] bg-surface-2 px-2.5 py-2"
-                      >
-                        <div className="text-[12.5px] text-ink">{a.label}</div>
-                        <div className="text-[11px] text-ink-3">
-                          {a.providerLabel}
-                          {a.role ? ` · ${a.role}` : ''}
+                    <>
+                      {/* The ones you built. These carry their model, role, goal
+                          and connections into the seat, which is the whole
+                          difference between staffing a room and filling it. */}
+                      {(saved.data?.agents ?? []).map((a) => (
+                        <div
+                          key={a.id}
+                          draggable
+                          onDragStart={() => setDragging({ kind: 'agent', agent: a })}
+                          onDragEnd={() => setDragging(null)}
+                          title={a.goal || 'No goal set — it will run on the room brief alone'}
+                          className="mb-1 cursor-grab rounded-[var(--radius-sm)] border border-border bg-surface-2 px-2.5 py-2"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{a.label}</span>
+                            <span className="shrink-0 text-[10.5px] uppercase tracking-wide text-ink-3">
+                              {a.role}
+                            </span>
+                          </div>
+                          <div className="truncate text-[11px] text-ink-3">
+                            {a.model || a.provider}
+                            {a.mcp_services?.length ? ` · ${a.mcp_services.length} connections` : ''}
+                          </div>
                         </div>
+                      ))}
+
+                      {(saved.data?.agents ?? []).length === 0 && (
+                        <p className="px-1 pb-2 pt-1 text-[11.5px] leading-snug text-ink-3">
+                          Build an agent on the Agents page and hit “Save agent” — it
+                          lands here with its model and connections, ready to drop in.
+                        </p>
+                      )}
+
+                      {/* Bare logins, still draggable: a seat you intend to
+                          configure in place does not need a saved agent first. */}
+                      <div className="mt-1 border-t border-border pt-1.5">
+                        <div className="px-1 pb-1 text-[10.5px] uppercase tracking-wide text-ink-3">
+                          Accounts
+                        </div>
+                        {linked.map((a) => (
+                          <div
+                            key={`${a.provider}/${a.id}`}
+                            draggable
+                            onDragStart={() => setDragging({ kind: 'account', account: a })}
+                            onDragEnd={() => setDragging(null)}
+                            className="mb-1 cursor-grab rounded-[var(--radius-sm)] bg-surface-2 px-2.5 py-2"
+                          >
+                            <div className="text-[12.5px] text-ink">{a.label}</div>
+                            <div className="text-[11px] text-ink-3">
+                              {a.providerLabel}
+                              {a.role ? ` · ${a.role}` : ''}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))
+                    </>
                   )}
                 </div>
               </Card>

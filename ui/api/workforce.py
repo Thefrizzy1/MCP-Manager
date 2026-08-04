@@ -147,6 +147,54 @@ async def api_add_seat(room_id: str, body: SeatBody):
     return {"ok": True, "seat": seat, "room": workforce.get_room(ROOT, room_id)}
 
 
+class FromAgentBody(BaseModel):
+    """Which desk the agent was dropped on, when it was dropped on one."""
+    role: str = ""
+
+
+@router.post("/api/v1/rooms/{room_id}/seats/from-agent/{agent_id}")
+async def api_seat_from_agent(room_id: str, agent_id: str, body: FromAgentBody):
+    """Seat a saved agent: its account, model, role and goal, in one drop.
+
+    The seat *copies* the settings rather than referencing the agent, so editing
+    or deleting a saved agent never reaches back into rooms that were staffed
+    from it — a room that worked yesterday works today.
+
+    The room's connections are widened to include the agent's. An agent is the
+    tools it was given as much as the account it runs on, and a seat quietly
+    missing half of them is the kind of failure that looks like a bad model
+    rather than a bad drop. Explicit in the response so it is not a surprise;
+    ``None`` on the agent means "no restriction" and never widens anything.
+    """
+    from core import saved_agents
+
+    room = _room_or_404(room_id)
+    agent = saved_agents.get_agent(ROOT, agent_id)
+    if not agent:
+        raise HTTPException(404, "no such saved agent")
+
+    try:
+        seat = workforce.add_seat(
+            ROOT, room_id,
+            role=(body.role or agent.get("role") or workforce.DEFAULT_ROLE),
+            provider=agent["provider"], account_id=agent["account_id"],
+            label=agent.get("label", ""), goal=agent.get("goal", ""),
+            model=agent.get("model", ""))
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+
+    added: list[str] = []
+    wanted = agent.get("mcp_services")
+    if wanted:
+        have = list(room.get("mcp_services") or [])
+        added = [s for s in wanted if s not in have]
+        if added:
+            workforce.update_room(ROOT, room_id, {"mcp_services": have + added})
+
+    return {"ok": True, "seat": seat, "added_connections": added,
+            "room": workforce.get_room(ROOT, room_id)}
+
+
 class SeatPatch(BaseModel):
     role: str | None = None
     label: str | None = None
