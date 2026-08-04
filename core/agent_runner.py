@@ -1258,18 +1258,24 @@ def _plutus_declarations(mcp_url: str, token: str, disallowed: list[str] | None,
     return builtin_decls + decls, client
 
 
-def _spare_account(root: Path, provider: str, used: str) -> str:
+def _spare_account(root: Path, provider: str, used: "str | set[str]") -> str:
     """Another linked account on the same provider, or "".
 
     Same provider only: a model id chosen for one provider means nothing to
     another, and silently switching provider would change what the run costs and
     what it can do.
+
+    ``used`` is every account this run has already burned, not just the current
+    one. With two accounts those are the same thing; with three they are not —
+    excluding only the current account made A→B→A→B ping-pong between the first
+    two while C, sitting there unlimited, was never tried.
     """
     from core import ai_providers
 
+    spent = {used} if isinstance(used, str) else set(used)
     for account in ai_providers.load_accounts(root).get(provider, []):
         aid = account.get("id") or ""
-        if aid and aid != used:
+        if aid and aid not in spent:
             if ai_providers.account_status(root, provider, account)["authenticated"]:
                 return aid
     return ""
@@ -1305,6 +1311,9 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
     contents: list[dict] = [ai_providers.api_user_message(provider, prompt)]
     deadline = time.monotonic() + _timeout_min(cfg) * 60
     turns = 0
+    # Every account this run has hit a limit on. A rate limit lasts minutes, so
+    # an account that was exhausted on turn three is still exhausted on turn six.
+    spent: set[str] = set()
     try:
         for _ in range(MAX_TOOL_TURNS):
             if _current.get("cancelled"):
@@ -1328,7 +1337,8 @@ def _execute_api(root: Path, rec: dict, prompt: str, provider: str, account_id: 
                 # api_turn already backed off and retried. Still limited means
                 # this account is done for now, so move to another one rather
                 # than throwing away the work done so far.
-                spare = _spare_account(root, provider, account_id)
+                spent.add(account_id)
+                spare = _spare_account(root, provider, spent)
                 if spare:
                     _emit(f"note: {account_id} is rate limited — switching to {spare}")
                     account_id = spare

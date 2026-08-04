@@ -153,10 +153,24 @@ async def api_v1_files_download_folder(request: Request):
                 except OSError:
                     continue
     buf.seek(0)
-    name = os.path.basename(ap.rstrip("/\\")) or "library"
+    name = _header_safe(os.path.basename(ap.rstrip("/\\"))) or "library"
     return StreamingResponse(
         buf, media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+
+def _header_safe(name: str) -> str:
+    """A folder name that can sit inside a quoted header parameter.
+
+    On Linux — which is where this runs — a directory may legitimately be called
+    `report"; x="`, and interpolating that straight into Content-Disposition ends
+    the quoted string and injects another parameter. Non-ASCII goes too: header
+    values are latin-1 on the wire, so a folder with an em dash in its name would
+    raise on encode and turn a download into a 500.
+    """
+    cleaned = "".join(c for c in name if c.isascii() and c.isprintable()
+                      and c not in '"\\')
+    return cleaned.strip() or ""
 
 
 class FilePathBody(BaseModel):

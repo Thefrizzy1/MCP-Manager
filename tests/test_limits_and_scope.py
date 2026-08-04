@@ -110,6 +110,21 @@ def test_a_second_account_is_found_for_failover(tmp_path):
     assert AR._spare_account(tmp_path, "gemini", b["id"]) == a["id"]
 
 
+def test_a_third_account_is_reached_instead_of_ping_ponging(tmp_path):
+    """Excluding only the *current* account meant A→B→A→B forever while C, sitting
+    there unlimited, was never tried. A rate limit lasts minutes, so an account
+    burned on turn three is still burned on turn six."""
+    ids = []
+    for name in ("One", "Two", "Three"):
+        acct = AP.add_account(tmp_path, "gemini", name)
+        AP.save_token(tmp_path, "gemini", acct["id"], "k")
+        ids.append(acct["id"])
+
+    assert AR._spare_account(tmp_path, "gemini", {ids[0]}) == ids[1]
+    assert AR._spare_account(tmp_path, "gemini", {ids[0], ids[1]}) == ids[2]
+    assert AR._spare_account(tmp_path, "gemini", set(ids)) == ""
+
+
 def test_an_unlinked_second_account_is_not_a_fallback(tmp_path):
     a = AP.add_account(tmp_path, "gemini", "One")
     AP.save_token(tmp_path, "gemini", a["id"], "k1")
@@ -340,3 +355,22 @@ def test_renaming_onto_an_existing_name_is_refused(tmp_path):
 def test_renaming_to_its_own_name_is_fine(tmp_path):
     a = AP.add_account(tmp_path, "gemini", "Personal")
     assert AP.rename_account(tmp_path, "gemini", a["id"], "Personal")["label"] == "Personal"
+
+
+# ── the zip filename ends up in an HTTP header ───────────────────────────────
+
+def test_a_folder_name_cannot_break_out_of_the_download_header():
+    """On Linux a directory may legitimately be called `report"; x="`, and that
+    interpolated into Content-Disposition closes the quoted string and injects
+    another parameter."""
+    from ui.api.files import _header_safe
+
+    assert '"' not in _header_safe('report"; x="')
+    assert "\\" not in _header_safe(r"back\slash")
+    assert _header_safe("weekly-research") == "weekly-research"
+    # Header values go out as latin-1; an em dash would raise on encode and turn
+    # a download into a 500.
+    assert _header_safe("notes — july").isascii()
+    # Nothing usable left is "", so the caller falls back to a default name.
+    assert _header_safe("———") == ""
+    assert _header_safe("") == ""
