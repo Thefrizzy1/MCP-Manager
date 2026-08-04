@@ -305,13 +305,27 @@ def save_room_run(root: Path, rec: dict) -> None:
 
 
 def list_room_runs(root: Path, limit: int = 20) -> list[dict]:
+    """The most recent room runs, newest first.
+
+    The runs directory holds more than runs: ``<run>.advice.json`` sits beside
+    ``<run>.json``. A plain ``*.json`` glob picked those up too, so a run that
+    used ``room_advise`` returned a JSON *list* where every caller expects a run
+    record — and ate one of the ``limit`` slots doing it. Filter, then slice, or
+    a room with advice on every run shows half a history.
+    """
     import glob
-    out = []
-    for fp in sorted(glob.glob(str(_runs_dir(root) / "*.json")), reverse=True)[:limit]:
+    out: list[dict] = []
+    for fp in sorted(glob.glob(str(_runs_dir(root) / "*.json")), reverse=True):
+        if fp.endswith(".advice.json"):
+            continue
         try:
-            out.append(json.loads(Path(fp).read_text(encoding="utf-8")))
+            rec = json.loads(Path(fp).read_text(encoding="utf-8"))
         except Exception:
-            pass
+            continue
+        if isinstance(rec, dict) and rec.get("id"):
+            out.append(rec)
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -320,9 +334,11 @@ def get_room_run(root: Path, run_id: str) -> dict | None:
         return None
     p = _runs_dir(root) / f"{run_id}.json"
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        rec = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    # "<run>.advice" resolves to a real file that is not a run record.
+    return rec if isinstance(rec, dict) else None
 
 
 # ── redirection between seats ────────────────────────────────────────────────
@@ -386,25 +402,60 @@ def publish_live(root: Path) -> None:
     """Mirror LIVE to disk so the MCP process can see which run is in flight.
 
     Rooms are started from two processes and their tools are served from a third
-    context; "which run am I part of" has to be answerable from any of them.
+    context; "which run am I part of" has to be answerable from any of them. The
+    owning pid rides along so a reader can tell a room that is still running from
+    one whose process was killed mid-seat.
     """
     try:
         p = Path(root) / "data" / _LIVE_FILE
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(LIVE), encoding="utf-8")
+        tmp.write_text(json.dumps({**LIVE, "pid": os.getpid(), "at": int(time.time())}),
+                       encoding="utf-8")
         os.replace(tmp, p)
     except OSError:
         pass          # a stale indicator is not worth failing a run over
 
 
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        # os.kill(pid, 0) *terminates* the target on Windows — CPython maps it to
+        # TerminateProcess. Ask the OS for a handle instead.
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                       # someone else's process, but alive
+    return True
+
+
 def read_live(root: Path) -> dict:
-    """LIVE as last published, from whichever process asks."""
+    """LIVE as last published, from whichever process asks.
+
+    A record claiming a run is in flight is only believed while the process that
+    published it still exists. Without that check, killing the app mid-room
+    leaves ``running: true`` on disk forever and every later room is refused with
+    "a room is already running" — unrecoverable except by deleting the file.
+    """
     try:
         data = json.loads((Path(root) / "data" / _LIVE_FILE).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else dict(LIVE)
     except (OSError, json.JSONDecodeError):
         return dict(LIVE)
+    if not isinstance(data, dict):
+        return dict(LIVE)
+    pid = int(data.get("pid") or 0)
+    if data.get("running") and pid and pid != os.getpid() and not _pid_alive(pid):
+        return {**data, "running": False, "stale": True}
+    return data
 
 # One room at a time, across *every* way of starting one. It lives here rather
 # than in the HTTP layer because a room can now also be started over MCP: with a

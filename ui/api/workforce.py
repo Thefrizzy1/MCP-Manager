@@ -46,7 +46,11 @@ async def api_rooms():
     return {
         "rooms": workforce.load_rooms(ROOT),
         "roles": list(workforce.ROLES),
-        "live": dict(workforce.LIVE),
+        # Read from disk, not from this process's copy: a room started by an
+        # agent over MCP runs in the *other* process, and the in-memory LIVE
+        # here would never learn about it — the floor would sit idle through
+        # a whole run.
+        "live": workforce.read_live(ROOT),
         "runs": workforce.list_room_runs(ROOT, 10),
         "scheduled": scheduled,
     }
@@ -176,7 +180,7 @@ async def api_run_room(room_id: str, body: RunBody):
     single-agent launches without either side knowing about the other.
     """
     room = _room_or_404(room_id)
-    if workforce.LIVE.get("running"):
+    if workforce.read_live(ROOT).get("running"):
         raise HTTPException(409, "a room is already running")
     if not (room.get("seats") or []):
         raise HTTPException(400, "this room has no agents in it yet — drag one in first")

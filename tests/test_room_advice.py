@@ -166,3 +166,53 @@ def test_room_advise_targets_the_live_run(monkeypatch, tmp_path):
 def test_room_advise_rejects_an_unknown_run(monkeypatch, tmp_path):
     call = _tools(monkeypatch, tmp_path)
     assert "no room run 'ghost'" in call("room_advise", note="x", run_id="ghost")
+
+
+# ── run history vs. the files that sit beside it ─────────────────────────────
+
+def test_advice_files_are_not_room_runs(tmp_path):
+    """`<run>.advice.json` lives in the runs directory and must never come back
+    as a run: it is a JSON list, and every caller indexes runs like dicts."""
+    for n in range(3):
+        workforce.save_room_run(tmp_path, {"id": f"20260804-12000{n}-aaaa",
+                                           "room_label": "Research", "steps": []})
+        workforce.add_advice(tmp_path, f"20260804-12000{n}-aaaa", "note", author="seat")
+
+    runs = workforce.list_room_runs(tmp_path)
+    assert len(runs) == 3
+    assert all(isinstance(r, dict) and r.get("id") for r in runs)
+    assert workforce.get_room_run(tmp_path, "20260804-120000-aaaa.advice") is None
+
+
+def test_advice_does_not_eat_the_limit(tmp_path):
+    """Filtering has to happen before the slice, or a room whose runs all left
+    advice shows half the history it asked for."""
+    for n in range(6):
+        workforce.save_room_run(tmp_path, {"id": f"20260804-12000{n}-bbbb", "steps": []})
+        workforce.add_advice(tmp_path, f"20260804-12000{n}-bbbb", "note")
+    assert len(workforce.list_room_runs(tmp_path, limit=4)) == 4
+
+
+# ── LIVE across processes ────────────────────────────────────────────────────
+
+def test_live_from_a_dead_process_is_not_running(tmp_path):
+    """Killing the app mid-room used to leave `running: true` on disk forever,
+    and every later room was refused with "a room is already running"."""
+    import json
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "data" / "room_live.json").write_text(json.dumps({
+        "room_id": "r", "run_id": "x", "seat_id": "s", "running": True,
+        "pid": 999_999_999, "at": 0,
+    }), encoding="utf-8")
+
+    live = workforce.read_live(tmp_path)
+    assert live["running"] is False and live["stale"] is True
+
+
+def test_live_from_a_live_process_is_believed(tmp_path):
+    workforce.LIVE.update(room_id="r", run_id="x", seat_id="s", running=True)
+    try:
+        workforce.publish_live(tmp_path)
+        assert workforce.read_live(tmp_path)["running"] is True
+    finally:
+        workforce.LIVE.update(running=False, room_id="", run_id="", seat_id="")

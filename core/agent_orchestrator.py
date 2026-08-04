@@ -64,7 +64,7 @@ def launch_room(root: Path, cfg, room_id: str, brief: str = "", *,
         return {"ok": False, "error": f"no room with id '{room_id}'"}
     if not (room.get("seats") or []):
         return {"ok": False, "error": f"room '{room.get('label')}' has no agents in it yet"}
-    if workforce.LIVE.get("running"):
+    if workforce.read_live(root).get("running"):
         return {"ok": False, "error": "a room is already running"}
 
     acfg = agent_runner.load_agent_config(root)

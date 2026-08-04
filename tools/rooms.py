@@ -61,7 +61,7 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         parts.append("\n".join(_room_line(r) for r in rooms) if rooms
                      else "_No rooms yet. Create one with room_create._")
 
-        live = workforce.LIVE
+        live = workforce.read_live(_ROOT)
         if live.get("running"):
             parts += ["", f"**A room is running now:** `{live.get('room_id')}` "
                           f"(run `{live.get('run_id')}`)."]
@@ -208,8 +208,9 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return f"Error: no room with id '{params.room_id}'. Call room_list."
         if not (room.get("seats") or []):
             return f"Error: room '{room.get('label')}' has no agents in it. Use room_add_seat first."
-        if workforce.LIVE.get("running"):
-            return (f"Error: room `{workforce.LIVE.get('room_id')}` is already running. "
+        running = workforce.read_live(_ROOT)
+        if running.get("running"):
+            return (f"Error: room `{running.get('room_id')}` is already running. "
                     f"Rooms run one at a time.")
 
         from core import agent_runner
@@ -306,8 +307,9 @@ def register_room_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         rec = workforce.get_room_run(_ROOT, params.run_id)
         if not rec:
             return f"Error: no room run '{params.run_id}'."
-        live = " (still running)" if (workforce.LIVE.get("running")
-                                     and workforce.LIVE.get("run_id") == rec["id"]) else ""
+        now = workforce.read_live(_ROOT)
+        live = " (still running)" if (now.get("running")
+                                      and now.get("run_id") == rec["id"]) else ""
         out = [f"# {rec.get('room_label')} — {'ok' if rec.get('ok') else 'FAILED'}{live}", "",
                f"- run id: `{rec['id']}`",
                f"- started: {rec.get('started')}  finished: {rec.get('finished') or '—'}",
