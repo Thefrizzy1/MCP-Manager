@@ -16,6 +16,7 @@ import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
 import { ModelPicker } from '@/components/agents/ModelPicker'
 import { linkedAccounts as toLinked, useProviders } from '@/lib/providers'
 import { Floor } from '@/components/rooms/Floor'
+import { RunDetail } from '@/components/rooms/RunDetail'
 
 interface Seat {
   id: string
@@ -100,6 +101,7 @@ export function Rooms() {
   const [dragging, setDragging] = useState<LinkedAccount | null>(null)
   const [dragSeat, setDragSeat] = useState<string | null>(null)
   const [busy, setBusy] = useState('')
+  const [openRun, setOpenRun] = useState<string | null>(null)
 
   const linked = toLinked(providers.data?.providers)
   const accountLabel = (seat: Seat) =>
@@ -487,7 +489,13 @@ export function Rooms() {
                     <p className="px-2 py-3 text-[12px] text-ink-3">Nothing has run yet.</p>
                   ) : (
                     (rooms.data?.runs ?? []).map((run) => (
-                      <div key={run.id} className="border-b border-border px-2 py-2 last:border-0">
+                      <button
+                        key={run.id}
+                        type="button"
+                        onClick={() => setOpenRun(run.id)}
+                        title="See what each seat produced"
+                        className="block w-full border-b border-border px-2 py-2 text-left last:border-0 hover:bg-surface-hover"
+                      >
                         <div className="flex items-center gap-2">
                           <StatusDot state={run.ok ? 'online' : 'offline'} />
                           <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{run.room_label}</span>
@@ -497,7 +505,7 @@ export function Rooms() {
                           {run.steps.map((s) => `${s.ok ? '✓' : '✗'} ${s.label}`).join('  ')}
                         </div>
                         {run.error && <div className="mt-0.5 text-[11px] text-danger">{run.error}</div>}
-                      </div>
+                      </button>
                     ))
                   )}
                 </div>
@@ -507,6 +515,7 @@ export function Rooms() {
           </div>
         )}
       </PageBody>
+      <RunDetail runId={openRun} onClose={() => setOpenRun(null)} />
     </>
   )
 }
