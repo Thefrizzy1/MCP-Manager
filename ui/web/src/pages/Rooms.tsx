@@ -15,6 +15,7 @@ import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
 import { ModelPicker } from '@/components/agents/ModelPicker'
 import { linkedAccounts as toLinked, useProviders } from '@/lib/providers'
+import { Floor } from '@/components/rooms/Floor'
 
 interface Seat {
   id: string
@@ -180,32 +181,31 @@ export function Rooms() {
             hint="A room holds a few agents, its own MCP connections, and a shared brief. They run in order, each seeing what the one before produced."
           />
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[240px_1fr_260px]">
-            {/* rooms */}
-            <Card>
-              <CardHeader title="Rooms" />
-              <div className="px-2 pb-2">
-                {list.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => setOpenId(r.id)}
-                    className={
-                      'flex w-full items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5 text-left text-[12.5px] ' +
-                      (open?.id === r.id ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-hover')
-                    }
-                  >
-                    {live?.running && live.room_id === r.id ? (
-                      <StatusDot state="online" />
-                    ) : (
-                      <StatusDot state="unknown" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{r.label}</span>
-                    <span className="text-[11px] text-ink-3">{r.seats.length}</span>
-                  </button>
-                ))}
-              </div>
-            </Card>
+          <div className="space-y-4">
+            {/* The floor. Rooms are spaces, chains are corridors, and the seat
+                that is working right now is lit. Clicking a room opens it below. */}
+            <Floor
+              rooms={list}
+              live={live}
+              selectedId={open?.id ?? null}
+              busy={busy}
+              draggingAgent={Boolean(dragging)}
+              onSelect={setOpenId}
+              onRun={(room) =>
+                call(
+                  () => api.post(`/api/v1/rooms/${room.id}/run`, { brief: room.brief }),
+                  'run',
+                  `${room.label} started.`,
+                )
+              }
+              onDropAgent={(room) => {
+                if (dragging) dropIntoRoom(room, dragging, 'researcher')
+                setDragging(null)
+              }}
+              onReorder={(room, fromId, toId) => reorder(room, fromId, toId)}
+            />
 
+          <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
             {/* the open room */}
             {open && (
               <Card>
@@ -473,6 +473,7 @@ export function Rooms() {
                   )}
                 </div>
               </Card>
+            </div>
             </div>
           </div>
         )}

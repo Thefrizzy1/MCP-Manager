@@ -190,3 +190,65 @@ a {
   pointer-events: none;
   animation: plutus-activity 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+/* ── The Rooms floor ────────────────────────────────────────────────────────
+   Rooms are drawn as a floor plan, because that is what they are: spaces with
+   people in them, connected in the order the work moves. A plan is line work —
+   hairlines and fills, no shadows — which is also exactly what this design
+   system already is, so the game view and the app share one visual language.
+
+   The dot grid is drafting-paper texture, not decoration; it is what makes the
+   blocks read as rooms on a floor rather than cards in a list. It is the only
+   place in the app that uses a background pattern. */
+.floor-canvas {
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -1px -1px;
+}
+
+/* The seat that is working right now. A slow breath, not a flash — you should
+   be able to leave this on a second monitor for an hour. */
+@keyframes floor-occupied {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent);
+  }
+}
+.floor-desk-live {
+  animation: floor-occupied 2.4s ease-out infinite;
+}
+
+/* The baton travelling down a corridor between two chained rooms. */
+@keyframes floor-baton {
+  0% {
+    transform: translateX(-2px);
+    opacity: 0;
+  }
+  35%,
+  65% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(14px);
+    opacity: 0;
+  }
+}
+.floor-baton {
+  animation: floor-baton 1.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The pulse carries state, so freeze it at its visible extreme rather than
+     letting the global rule leave it mid-fade. */
+  .floor-desk-live {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  .floor-baton {
+    animation: none;
+    opacity: 1;
+  }
+}
