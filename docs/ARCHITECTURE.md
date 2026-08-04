@@ -151,6 +151,8 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     subagents.py           A coordinator handing work to cheaper models.
     workforce.py           Rooms: a team of seats running in order on a shared brief,
                            with room-to-room handoff and seat-to-seat redirection.
+    room_presets.py        Pre-made pipelines (research → office → publishing) and
+                           the room-tag colour palette.
 
   Agents — auth & storage
     ai_providers.py        Providers (Claude/Codex/Gemini/…) with several accounts each.

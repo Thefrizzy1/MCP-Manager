@@ -31,8 +31,24 @@ export interface FloorRoom {
   brief: string
   mcp_services: string[]
   next_room?: string
+  colour?: string
   seats: FloorSeat[]
 }
+
+/** Room tag -> the token that draws it. A lookup rather than an interpolated
+ *  `var(--room-${colour})`, so a colour that is not in the palette falls back
+ *  visibly instead of resolving to nothing and drawing a transparent rule. */
+export const ROOM_COLOUR: Record<string, string> = {
+  slate: 'var(--room-slate)',
+  indigo: 'var(--room-indigo)',
+  violet: 'var(--room-violet)',
+  teal: 'var(--room-teal)',
+  amber: 'var(--room-amber)',
+  rose: 'var(--room-rose)',
+  lime: 'var(--room-lime)',
+}
+
+export const roomColour = (name?: string) => ROOM_COLOUR[name || ''] ?? ROOM_COLOUR.slate
 export interface FloorLive {
   room_id: string
   run_id: string
@@ -328,13 +344,21 @@ export function Floor({
                       draggingAgent && 'border-dashed border-accent',
                     )}
                   >
+                    {/* The room's tag. A hairline across the top of the card,
+                        not a fill: it has to identify the room at a glance
+                        without competing with the accent, which is the only
+                        colour on the floor that means "happening now". */}
+                    <span
+                      className="h-[3px] shrink-0 rounded-t-[var(--radius)]"
+                      style={{ backgroundColor: roomColour(room.colour) }}
+                      aria-hidden
+                    />
+
                     {/* door plate */}
                     <header className="flex items-center gap-1.5 border-b border-border px-2.5 py-2">
                       <span
-                        className={cn(
-                          'h-1.5 w-1.5 shrink-0 rounded-full',
-                          isLive ? 'bg-ok' : 'bg-border-strong',
-                        )}
+                        className={cn('h-1.5 w-1.5 shrink-0 rounded-full', isLive && 'bg-ok')}
+                        style={isLive ? undefined : { backgroundColor: roomColour(room.colour) }}
                         aria-hidden
                       />
                       <button

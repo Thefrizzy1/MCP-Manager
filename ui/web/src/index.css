@@ -34,6 +34,17 @@
   --danger-weak: #fbeae9;
   /* shadow (only floating things get one) */
   --shadow-pop: 0 8px 28px -8px rgba(16, 22, 40, 0.18), 0 2px 6px -2px rgba(16, 22, 40, 0.1);
+  /* Room tags. A floor of a dozen rooms is unreadable when every door plate
+     looks the same, so a room carries one of these as a hairline on its card.
+     Muted on purpose — this is a tag on a plan, not a highlighter, and the
+     accent still has to be the loudest thing on the page. */
+  --room-slate: #7c8698;
+  --room-indigo: #5566d6;
+  --room-violet: #8a5fd0;
+  --room-teal: #2f9c96;
+  --room-amber: #c9871f;
+  --room-rose: #cf5670;
+  --room-lime: #6a9b34;
 }
 
 :root[data-theme='dark'] {
@@ -57,6 +68,15 @@
   --warn-weak: #2a2113;
   --danger-weak: #2d1615;
   --shadow-pop: 0 10px 34px -10px rgba(0, 0, 0, 0.6), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+  /* Lifted and desaturated for the dark ground — the light-theme values glare
+     against #0c0d10 and stop reading as the same calm system. */
+  --room-slate: #7b8494;
+  --room-indigo: #7f92f0;
+  --room-violet: #a986ea;
+  --room-teal: #4fc0b6;
+  --room-amber: #dda43f;
+  --room-rose: #e8798f;
+  --room-lime: #97c65c;
 }
 
 @theme inline {

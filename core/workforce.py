@@ -28,6 +28,8 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from core import room_presets
+
 ROOMS_FILE = "workforce.json"
 RUNS_DIR = "room_runs"
 
@@ -76,7 +78,10 @@ def load_rooms(root: Path) -> list[dict]:
     rooms = data.get("rooms") if isinstance(data, dict) else None
     if not isinstance(rooms, list):
         return []
-    return [r for r in rooms if isinstance(r, dict) and r.get("id")]
+    out = [r for r in rooms if isinstance(r, dict) and r.get("id")]
+    for room in out:                       # rooms saved before colours existed
+        room.setdefault("colour", room_presets.DEFAULT_COLOUR)
+    return out
 
 
 def save_rooms(root: Path, rooms: list[dict]) -> list[dict]:
@@ -107,6 +112,10 @@ def add_room(root: Path, label: str, *, mcp_services: list[str] | None = None) -
             # makes it a room rather than a folder of unrelated agents.
             "mcp_services": list(mcp_services or []),
             "brief": "",
+            # A tag, not decoration: a floor of a dozen rooms is unreadable when
+            # every door plate looks the same, and the chain a room belongs to is
+            # the thing you are actually scanning for.
+            "colour": room_presets.DEFAULT_COLOUR,
             "seats": [],
             "created_at": int(time.time()),
         }
@@ -124,6 +133,8 @@ def update_room(root: Path, room_id: str, changes: dict) -> dict:
         for key in ("label", "brief", "mcp_services", "next_room"):
             if key in changes and changes[key] is not None:
                 room[key] = changes[key]
+        if changes.get("colour") is not None:
+            room["colour"] = room_presets.valid_colour(str(changes["colour"]))
         save_rooms(root, rooms)
     return room
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Play, Trash2, GripVertical, Users } from 'lucide-react'
+import { Plus, Play, Trash2, GripVertical, Users, ArrowRight } from 'lucide-react'
 import { api } from '@/lib/api'
 import { navigate } from '@/lib/router'
 import type { Service } from '@/lib/health'
@@ -15,7 +15,7 @@ import { useToast } from '@/components/ui/Toast'
 import { ConnectionPicker } from '@/components/agents/ConnectionPicker'
 import { ModelPicker } from '@/components/agents/ModelPicker'
 import { linkedAccounts as toLinked, useProviders } from '@/lib/providers'
-import { Floor } from '@/components/rooms/Floor'
+import { Floor, roomColour } from '@/components/rooms/Floor'
 import { RunDetail } from '@/components/rooms/RunDetail'
 
 interface Seat {
@@ -33,7 +33,14 @@ interface Room {
   brief: string
   mcp_services: string[]
   next_room?: string
+  colour?: string
   seats: Seat[]
+}
+interface RoomPreset {
+  id: string
+  label: string
+  description: string
+  rooms: { label: string; colour: string; seats: number; roles: string[] }[]
 }
 interface RoomStep {
   seat_id: string
@@ -67,6 +74,8 @@ interface RoomsResp {
   runs: RoomRun[]
   /** room id -> its schedule, when the room runs on its own. */
   scheduled?: Record<string, { cron: string; timezone: string; enabled: boolean; name: string }>
+  presets?: RoomPreset[]
+  colours?: string[]
 }
 type LinkedAccount = ReturnType<typeof toLinked>[number]
 
@@ -76,6 +85,93 @@ const ROLE_HINT: Record<string, string> = {
   developer: 'turns accepted findings into working changes',
   reviewer: 'checks the work against the brief',
   writer: 'produces the finished written output',
+}
+
+/** Start from a working pipeline instead of an empty room.
+ *
+ * The hard part of a room is not creating it — it is the brief, the seat order,
+ * and a connection list narrow enough that the tool manifest does not drown the
+ * task. A template ships all three, already chained, so the first run produces
+ * something. */
+function Templates({
+  presets,
+  accounts,
+  busy,
+  onInstall,
+}: {
+  presets: RoomPreset[]
+  accounts: LinkedAccount[]
+  busy: string
+  onInstall: (presetId: string, acct: LinkedAccount) => void
+}) {
+  const [who, setWho] = useState('')
+  if (presets.length === 0) return null
+
+  const chosen = accounts.find((a) => `${a.provider}/${a.id}` === who) ?? accounts[0]
+
+  return (
+    <Card>
+      <CardHeader
+        title="Start from a template"
+        subtitle="A whole pipeline — rooms, briefs and the chain between them"
+      />
+      <div className="space-y-2 px-4 pb-4">
+        {accounts.length === 0 ? (
+          <p className="text-[12px] text-ink-3">
+            Link a provider account first — a template staffs every seat with one.
+          </p>
+        ) : (
+          <>
+            {accounts.length > 1 && (
+              <Field label="Staff the seats with" hint="You can re-point any seat afterwards.">
+                <Select value={who || `${chosen.provider}/${chosen.id}`} onChange={(e) => setWho(e.target.value)}>
+                  {accounts.map((a) => (
+                    <option key={`${a.provider}/${a.id}`} value={`${a.provider}/${a.id}`}>
+                      {a.label} · {a.providerLabel}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            )}
+            {presets.map((p) => (
+              <div key={p.id} className="rounded-[var(--radius-sm)] border border-border p-2.5">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12.5px] font-medium text-ink">{p.label}</div>
+                    <p className="mt-0.5 text-[11.5px] leading-snug text-ink-3">{p.description}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={busy === `preset-${p.id}`}
+                    onClick={() => onInstall(p.id, chosen)}
+                  >
+                    <Plus size={13} /> Add
+                  </Button>
+                </div>
+                {/* What you are about to get, in the order it runs. */}
+                <div className="mt-2 flex flex-wrap items-center gap-1">
+                  {p.rooms.map((r, i) => (
+                    <span key={r.label} className="flex items-center gap-1">
+                      {i > 0 && <ArrowRight size={11} className="text-ink-3" aria-hidden />}
+                      <span className="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2">
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ backgroundColor: roomColour(r.colour) }}
+                          aria-hidden
+                        />
+                        {r.label}
+                        <span className="text-ink-3">{r.seats}</span>
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </Card>
+  )
 }
 
 export function Rooms() {
@@ -150,6 +246,18 @@ export function Rooms() {
     )
   }
 
+  async function installPreset(presetId: string, acct: LinkedAccount) {
+    await call(
+      () =>
+        api.post(`/api/v1/rooms/presets/${presetId}`, {
+          provider: acct.provider,
+          account_id: acct.id,
+        }),
+      `preset-${presetId}`,
+      'Rooms created and chained.',
+    )
+  }
+
   async function reorder(room: Room, fromId: string, toId: string) {
     if (fromId === toId) return
     const ids = room.seats.map((s) => s.id)
@@ -195,11 +303,21 @@ export function Rooms() {
       />
       <PageBody>
         {list.length === 0 ? (
-          <EmptyState
-            icon={Users}
-            title="No rooms yet"
-            hint="A room holds a few agents, its own MCP connections, and a shared brief. They run in order, each seeing what the one before produced."
-          />
+          <div className="space-y-4">
+            <EmptyState
+              icon={Users}
+              title="No rooms yet"
+              hint="A room holds a few agents, its own MCP connections, and a shared brief. They run in order, each seeing what the one before produced."
+            />
+            <div className="mx-auto max-w-[460px]">
+              <Templates
+                presets={rooms.data?.presets ?? []}
+                accounts={linked}
+                busy={busy}
+                onInstall={installPreset}
+              />
+            </div>
+          </div>
         ) : (
           <div className="space-y-4">
             {/* The floor. Rooms are spaces, chains are corridors, and the seat
@@ -286,6 +404,31 @@ export function Rooms() {
                           call(() => api.post(`/api/v1/rooms/${open.id}`, { brief: e.target.value }), 'brief')
                       }}
                     />
+                  </Field>
+
+                  <Field label="Tag" hint="Shows on the floor, so a dozen rooms stay readable.">
+                    <div className="flex flex-wrap gap-1.5">
+                      {(rooms.data?.colours ?? []).map((c) => {
+                        const on = (open.colour || 'slate') === c
+                        return (
+                          <button
+                            key={c}
+                            type="button"
+                            title={c}
+                            aria-label={c}
+                            aria-pressed={on}
+                            onClick={() =>
+                              call(() => api.post(`/api/v1/rooms/${open.id}`, { colour: c }), 'colour')
+                            }
+                            className={
+                              'h-5 w-5 rounded-full ring-offset-2 ring-offset-surface ' +
+                              (on ? 'ring-2 ring-accent' : 'ring-1 ring-border-strong hover:ring-ink-3')
+                            }
+                            style={{ backgroundColor: roomColour(c) }}
+                          />
+                        )
+                      })}
+                    </div>
                   </Field>
 
                   <Field
@@ -481,6 +624,13 @@ export function Rooms() {
                   )}
                 </div>
               </Card>
+
+              <Templates
+                presets={rooms.data?.presets ?? []}
+                accounts={linked}
+                busy={busy}
+                onInstall={installPreset}
+              />
 
               <Card>
                 <CardHeader title="Recent room runs" />

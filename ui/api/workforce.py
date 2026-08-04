@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core import agent_orchestrator, workforce
+from core import agent_orchestrator, room_presets, workforce
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
 
@@ -53,7 +53,28 @@ async def api_rooms():
         "live": workforce.read_live(ROOT),
         "runs": workforce.list_room_runs(ROOT, 10),
         "scheduled": scheduled,
+        "presets": room_presets.public_presets(),
+        "colours": list(room_presets.COLOURS),
     }
+
+
+class PresetBody(BaseModel):
+    provider: str = Field(..., min_length=1)
+    account_id: str = Field(..., min_length=1)
+    model: str = Field(default="", max_length=80)
+
+
+@router.post("/api/v1/rooms/presets/{preset_id}")
+async def api_install_preset(preset_id: str, body: PresetBody):
+    """Create a whole pipeline — rooms, seats, brief, chain — in one go."""
+    try:
+        rooms = room_presets.install(ROOT, preset_id, provider=body.provider,
+                                     account_id=body.account_id, model=body.model)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "rooms": rooms}
 
 
 class RoomBody(BaseModel):
@@ -78,6 +99,7 @@ class RoomPatch(BaseModel):
     # since the handoff landed, but it was never accepted here or offered in the
     # UI, so the whole chain feature was unreachable. "" clears it.
     next_room: str | None = None
+    colour: str | None = None
 
 
 @router.post("/api/v1/rooms/{room_id}")
