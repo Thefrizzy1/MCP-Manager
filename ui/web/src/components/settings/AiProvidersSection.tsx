@@ -5,6 +5,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { useToast } from '@/components/ui/Toast'
+import { GuidedLogin } from '@/components/settings/GuidedLogin'
 import { useProviders, type ProviderAccount as Account } from '@/lib/providers'
 
 interface Check {
@@ -139,6 +140,10 @@ export function AiProvidersSection() {
   const [checks, setChecks] = useState<Record<string, Check[]>>({})
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({})
   const [usage, setUsage] = useState<Record<string, Usage>>({})
+  // Which account is mid guided-login, if any.
+  const [signingIn, setSigningIn] = useState<
+    { provider: string; providerLabel: string; accountId: string; accountLabel: string } | null
+  >(null)
 
   async function loadUsage(pid: string, aid: string) {
     const key = `${pid}/${aid}`
@@ -371,6 +376,27 @@ export function AiProvidersSection() {
                           cmd={a.login_command}
                           tone={a.authenticated ? 'muted' : 'accent'}
                         />
+                        {/* The same login, driven here. On a headless box the
+                            command above means finding a terminal and docker
+                            exec; this needs a pty, so it appears only where the
+                            server can actually run one. */}
+                        {data?.guided_login_available && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="mt-1.5"
+                            onClick={() =>
+                              setSigningIn({
+                                provider: p.id,
+                                providerLabel: p.label,
+                                accountId: a.id,
+                                accountLabel: a.label,
+                              })
+                            }
+                          >
+                            Sign in here instead
+                          </Button>
+                        )}
                         {a.accepts_key && (
                           <KeyField
                             account={a}
@@ -464,6 +490,20 @@ export function AiProvidersSection() {
           )
         })}
       </div>
+
+      {signingIn && (
+        <GuidedLogin
+          provider={signingIn.provider}
+          providerLabel={signingIn.providerLabel}
+          accountId={signingIn.accountId}
+          accountLabel={signingIn.accountLabel}
+          onClose={() => setSigningIn(null)}
+          onDone={() => {
+            setSigningIn(null)
+            refetch()
+          }}
+        />
+      )}
     </Card>
   )
 }
