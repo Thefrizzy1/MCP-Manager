@@ -100,6 +100,10 @@ class RoomPatch(BaseModel):
     # UI, so the whole chain feature was unreachable. "" clears it.
     next_room: str | None = None
     colour: str | None = None
+    # {"enabled": bool, "start": "HH:MM", "end": "HH:MM", "days": [0..6]}, 0=Monday.
+    # Repaired rather than rejected in core.workforce.clean_hours — a bad value
+    # must not make a room unopenable.
+    hours: dict | None = None
 
 
 @router.post("/api/v1/rooms/{room_id}")

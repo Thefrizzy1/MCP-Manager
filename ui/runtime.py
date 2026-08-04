@@ -380,7 +380,7 @@ def _run_room_bg(room_id: str, brief: str = "") -> None:
     Run: seats, their provider accounts, the room's connections and any handoff
     are already saved, so a schedule only has to name the room.
     """
-    res = agent_orchestrator.launch_room(ROOT, cfg, room_id, brief)
+    res = agent_orchestrator.launch_room(ROOT, cfg, room_id, brief, respect_hours=True)
     if not res["ok"]:
         # Raised rather than swallowed so the scheduler records the failure
         # against the schedule — a nightly room that silently never starts is

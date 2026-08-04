@@ -12,7 +12,7 @@
  * reads as a room inside Plutus, not a toy bolted onto it.
  */
 import { useRef } from 'react'
-import { ArrowRight, Clock, Link2, Play, Unlink, UserPlus } from 'lucide-react'
+import { ArrowRight, Clock, Link2, Play, Timer, Unlink, UserPlus } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
@@ -32,6 +32,7 @@ export interface FloorRoom {
   mcp_services: string[]
   next_room?: string
   colour?: string
+  hours?: { enabled: boolean; start: string; end: string; days: number[] }
   seats: FloorSeat[]
 }
 
@@ -82,6 +83,24 @@ export function cronLabel(cron: string): string {
     return `${time} ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][Number(dow)]}`
   }
   return `${time} · ${dom} ${mon} ${dow}`
+}
+
+/** "09:00–17:00, Mon–Fri" from a work-hours block, collapsing a run of
+ *  consecutive days into a range — a five-chip week is the common case and
+ *  reads worse spelled out than as "Mon–Fri". */
+export function hoursLabel(h: { start: string; end: string; days: number[] }): string {
+  const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+  const days = [...h.days].sort((a, b) => a - b)
+  let when: string
+  if (days.length === 7) when = 'every day'
+  else if (days.length === 0) when = 'no days'
+  else {
+    const consecutive = days.every((d, i) => i === 0 || d === days[i - 1] + 1)
+    when = consecutive && days.length > 2
+      ? `${names[days[0]]}–${names[days[days.length - 1]]}`
+      : days.map((d) => names[d]).join(', ')
+  }
+  return `${h.start}–${h.end}, ${when}`
 }
 
 /** Role → the plate on the desk. Letters, not icons: five roles read faster as
@@ -443,8 +462,8 @@ export function Floor({
                     </div>
 
                     {/* how this room stands: scheduled? how did it go last time? */}
-                    {(sched || last) && (
-                      <div className="flex items-center gap-2 border-t border-border px-2.5 py-1 text-[11px]">
+                    {(sched || last || room.hours?.enabled) && (
+                      <div className="flex flex-wrap items-center gap-2 border-t border-border px-2.5 py-1 text-[11px]">
                         {sched && (
                           <span
                             className={cn(
@@ -461,7 +480,24 @@ export function Floor({
                             {cronLabel(sched.cron)}
                           </span>
                         )}
-                        {sched && last && <span aria-hidden className="text-ink-3">·</span>}
+                        {room.hours?.enabled && (
+                          <>
+                            {sched && <span aria-hidden className="text-ink-3">·</span>}
+                            {/* Worth its own mark: a scheduled room that will not
+                                start because it is Saturday looks identical to a
+                                broken one otherwise. */}
+                            <span
+                              className="inline-flex items-center gap-1 text-ink-2"
+                              title={`Only starts on its own inside ${hoursLabel(room.hours)}. Run is always available.`}
+                            >
+                              <Timer size={11} aria-hidden />
+                              {hoursLabel(room.hours)}
+                            </span>
+                          </>
+                        )}
+                        {(sched || room.hours?.enabled) && last && (
+                          <span aria-hidden className="text-ink-3">·</span>
+                        )}
                         {last && (
                           <span
                             className={last.ok ? 'text-ink-3' : 'text-danger'}

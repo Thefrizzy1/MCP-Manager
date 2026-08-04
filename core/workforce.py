@@ -79,8 +79,9 @@ def load_rooms(root: Path) -> list[dict]:
     if not isinstance(rooms, list):
         return []
     out = [r for r in rooms if isinstance(r, dict) and r.get("id")]
-    for room in out:                       # rooms saved before colours existed
+    for room in out:                       # rooms saved before these existed
         room.setdefault("colour", room_presets.DEFAULT_COLOUR)
+        room.setdefault("hours", dict(DEFAULT_HOURS))
     return out
 
 
@@ -116,6 +117,9 @@ def add_room(root: Path, label: str, *, mcp_services: list[str] | None = None) -
             # every door plate looks the same, and the chain a room belongs to is
             # the thing you are actually scanning for.
             "colour": room_presets.DEFAULT_COLOUR,
+            # Present but off: the editor always has something to bind to, and
+            # a room with no hours block would otherwise read as "closed".
+            "hours": dict(DEFAULT_HOURS),
             "seats": [],
             "created_at": int(time.time()),
         }
@@ -135,6 +139,8 @@ def update_room(root: Path, room_id: str, changes: dict) -> dict:
                 room[key] = changes[key]
         if changes.get("colour") is not None:
             room["colour"] = room_presets.valid_colour(str(changes["colour"]))
+        if changes.get("hours") is not None:
+            room["hours"] = clean_hours(changes["hours"])
         save_rooms(root, rooms)
     return room
 
@@ -147,6 +153,87 @@ def delete_room(root: Path, room_id: str) -> bool:
             return False
         save_rooms(root, keep)
     return True
+
+
+# ── work hours ───────────────────────────────────────────────────────────────
+#
+# A room that can start on its own — on a schedule, or because the room before it
+# in the chain finished — can start at 03:00 and spend the night working through
+# a quota nobody is watching. Work hours are the answer to "run nightly, but not
+# actually at night, and not at the weekend".
+#
+# Deliberately *not* applied to a hand-started run. If you clicked Run at
+# midnight you meant it, and a button that silently refuses is worse than one
+# that costs you a few cents. Only the unattended paths honour them.
+
+DEFAULT_HOURS = {"enabled": False, "start": "09:00", "end": "17:00",
+                 "days": [0, 1, 2, 3, 4]}          # Monday–Friday, 0=Monday
+
+_HHMM = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def clean_hours(raw: object) -> dict:
+    """A stored hours block, repaired. Never raises — bad hours must not make a
+    room unopenable, and the safe repair is the default rather than a refusal."""
+    src = raw if isinstance(raw, dict) else {}
+    start = str(src.get("start") or DEFAULT_HOURS["start"])
+    end = str(src.get("end") or DEFAULT_HOURS["end"])
+    days = src.get("days")
+    return {
+        "enabled": bool(src.get("enabled", False)),
+        "start": start if _HHMM.match(start) else DEFAULT_HOURS["start"],
+        "end": end if _HHMM.match(end) else DEFAULT_HOURS["end"],
+        "days": sorted({int(d) for d in days if isinstance(d, int) and 0 <= d <= 6})
+                if isinstance(days, list) else list(DEFAULT_HOURS["days"]),
+    }
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def within_hours(room: dict, now: "time.struct_time | None" = None) -> bool:
+    """Is this room allowed to start unattended right now?
+
+    An overnight window (22:00–06:00) is a normal thing to want and wraps past
+    midnight, so the comparison cannot be a plain ``start <= t < end``. When it
+    wraps, the *day* check applies to the day the window opened — a Friday
+    22:00–06:00 shift runs into Saturday morning without Saturday being ticked,
+    which is what anyone describing it as "the Friday night shift" means.
+    """
+    hours = clean_hours(room.get("hours"))
+    if not hours["enabled"]:
+        return True
+    if not hours["days"]:
+        return False                    # every day unticked means "never"
+
+    t = now or time.localtime()
+    minute = t.tm_hour * 60 + t.tm_min
+    start, end = _minutes(hours["start"]), _minutes(hours["end"])
+    today = t.tm_wday                                   # 0=Monday, as stored
+
+    if start == end:
+        return False                    # a zero-length window is closed, not open
+    if start < end:
+        return today in hours["days"] and start <= minute < end
+    # Wraps midnight: after `start` belongs to today, before `end` to yesterday.
+    if minute >= start:
+        return today in hours["days"]
+    if minute < end:
+        return (today - 1) % 7 in hours["days"]
+    return False
+
+
+def hours_reason(room: dict, now: "time.struct_time | None" = None) -> str:
+    """Why a room may not start unattended, or "" when it may."""
+    if within_hours(room, now):
+        return ""
+    h = clean_hours(room["hours"]) if room.get("hours") else clean_hours(None)
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    days = ", ".join(names[d] for d in h["days"]) or "no days"
+    return (f"outside {room.get('label', 'this room')}'s work hours "
+            f"({h['start']}–{h['end']}, {days})")
 
 
 # ── seats ────────────────────────────────────────────────────────────────────
@@ -492,7 +579,14 @@ def _hand_off(root: Path, room: dict, room_id: str, brief: str, prior: list[dict
     nxt = str(room.get("next_room") or "").strip()
     if not nxt or nxt == room_id or nxt in chain or len(chain) >= MAX_CHAIN:
         return
-    if not get_room(root, nxt):
+    nxt_room = get_room(root, nxt)
+    if not nxt_room:
+        return
+    # A handoff is an unattended start: the publishing room's own hours have to
+    # hold even when the research room that triggered it was inside its.
+    closed = hours_reason(nxt_room)
+    if closed:
+        rec["next_skipped"] = f"did not hand off to '{nxt_room.get('label', nxt)}' — {closed}"
         return
     last = prior[-1]["result"] if prior else ""
     try:
@@ -549,7 +643,7 @@ def run_room(root: Path, room_id: str, brief: str, *,
         "folder": folder,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "finished": None, "ok": False, "cost_usd": 0.0, "steps": [], "error": None,
-        "next_run_id": "",
+        "next_run_id": "", "next_skipped": "",
     }
     LIVE.update(room_id=room_id, run_id=rec["id"], seat_id="", running=True)
     publish_live(root)

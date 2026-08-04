@@ -43,7 +43,7 @@ def mcp_target(cfg) -> tuple[str, str]:
 
 
 def launch_room(root: Path, cfg, room_id: str, brief: str = "", *,
-                block: bool = False) -> dict:
+                block: bool = False, respect_hours: bool = False) -> dict:
     """Start a room on a background thread. The one way a room gets run.
 
     There were three near-identical copies of this — the dashboard endpoint, the
@@ -64,6 +64,12 @@ def launch_room(root: Path, cfg, room_id: str, brief: str = "", *,
         return {"ok": False, "error": f"no room with id '{room_id}'"}
     if not (room.get("seats") or []):
         return {"ok": False, "error": f"room '{room.get('label')}' has no agents in it yet"}
+    if respect_hours:
+        # Only the unattended paths pass this. Clicking Run at midnight is a
+        # decision; a scheduler firing at midnight is a default nobody chose.
+        closed = workforce.hours_reason(room)
+        if closed:
+            return {"ok": False, "error": f"not started — {closed}"}
     if workforce.read_live(root).get("running"):
         return {"ok": False, "error": "a room is already running"}
 

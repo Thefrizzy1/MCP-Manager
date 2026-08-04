@@ -9,6 +9,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input, Select, Textarea } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
+import { Switch } from '@/components/ui/Switch'
 import { Stat } from '@/components/ui/Stat'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -500,33 +501,6 @@ function ScheduleRow({
 /** A labelled checkbox with the consequence spelled out underneath.
  *  These decide what an agent is allowed to do to things you care about, so the
  *  cost of each is written next to it rather than left to a tooltip. */
-function Switch({
-  checked,
-  onChange,
-  label,
-  hint,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-  hint: string
-}) {
-  return (
-    <label className="flex max-w-[240px] cursor-pointer items-start gap-2">
-      <input
-        type="checkbox"
-        className="mt-[3px]"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-      />
-      <span className="min-w-0">
-        <span className="block text-[12.5px] text-ink">{label}</span>
-        <span className="block text-[11px] leading-snug text-ink-3">{hint}</span>
-      </span>
-    </label>
-  )
-}
-
 const isPublic = (s: Service) => (s.section || '').toLowerCase().includes('public')
 
 /** Self-hosted connections start on; public/internet ones start off, so an agent

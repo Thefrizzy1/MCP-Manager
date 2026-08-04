@@ -9,6 +9,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Input, Select, Textarea } from '@/components/ui/Input'
 import { Field } from '@/components/ui/Field'
+import { Switch } from '@/components/ui/Switch'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { useToast } from '@/components/ui/Toast'
@@ -34,7 +35,16 @@ interface Room {
   mcp_services: string[]
   next_room?: string
   colour?: string
+  hours?: WorkHours
   seats: Seat[]
+}
+/** When a room may start *unattended* — on a schedule, or because the room
+ *  before it in the chain finished. `days` is 0=Monday, matching the store. */
+interface WorkHours {
+  enabled: boolean
+  start: string
+  end: string
+  days: number[]
 }
 interface RoomPreset {
   id: string
@@ -187,6 +197,90 @@ function Templates({
         )}
       </div>
     </Card>
+  )
+}
+
+const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/** Work hours for a room.
+ *
+ * Only the unattended starts honour these — a schedule, or a handoff from the
+ * room before. Clicking Run is always allowed, which is worth saying on the
+ * control itself: a switch that looks like it disables the Run button, but does
+ * not, is a switch you cannot trust. */
+function HoursField({ room, onChange }: { room: Room; onChange: (h: WorkHours) => void }) {
+  const hours: WorkHours = room.hours ?? { enabled: false, start: '09:00', end: '17:00', days: [0, 1, 2, 3, 4] }
+  const set = (patch: Partial<WorkHours>) => onChange({ ...hours, ...patch })
+  const overnight = hours.start > hours.end
+
+  return (
+    <Field
+      label="Work hours"
+      hint="Only applies when this room starts on its own — a schedule, or a handoff. Run is always available."
+    >
+      <div className="space-y-2">
+        <Switch
+          checked={hours.enabled}
+          onChange={(on) => set({ enabled: on })}
+          label="Only run inside these hours"
+        />
+        {hours.enabled && (
+          <>
+            <div className="flex items-center gap-2">
+              <Input
+                type="time"
+                className="h-7 max-w-[110px] text-[12px]"
+                value={hours.start}
+                onChange={(e) => set({ start: e.target.value })}
+                aria-label="Start of work hours"
+              />
+              <span className="text-[12px] text-ink-3">to</span>
+              <Input
+                type="time"
+                className="h-7 max-w-[110px] text-[12px]"
+                value={hours.end}
+                onChange={(e) => set({ end: e.target.value })}
+                aria-label="End of work hours"
+              />
+              {/* An overnight window is a normal thing to want and an easy thing
+                  to have typed by accident, so it is named rather than left to
+                  be discovered by a room that never runs. */}
+              {overnight && (
+                <span className="text-[11px] text-ink-3">overnight — ends next morning</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {DAY_LABELS.map((label, day) => {
+                const on = hours.days.includes(day)
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() =>
+                      set({
+                        days: on ? hours.days.filter((d) => d !== day) : [...hours.days, day].sort(),
+                      })
+                    }
+                    className={
+                      'rounded-[var(--radius-sm)] px-1.5 py-0.5 text-[11px] ' +
+                      (on ? 'bg-accent text-accent-fg' : 'bg-surface-2 text-ink-3 hover:text-ink-2')
+                    }
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            {hours.days.length === 0 && (
+              <p className="text-[11px] text-danger">
+                No days ticked — this room will never start on its own.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+    </Field>
   )
 }
 
@@ -473,6 +567,13 @@ export function Rooms() {
                       })}
                     </div>
                   </Field>
+
+                  <HoursField
+                    room={open}
+                    onChange={(hours) =>
+                      call(() => api.post(`/api/v1/rooms/${open.id}`, { hours }), 'hours')
+                    }
+                  />
 
                   <Field
                     label="Room connections"
