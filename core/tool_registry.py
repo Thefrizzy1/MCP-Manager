@@ -28,6 +28,10 @@ def looks_like_missing_service_config(message: str) -> bool:
         return True
     if "set " in t and ".env" in t:
         return True
+    # "this platform has no Unix sockets" is a fact about the host, not a broken
+    # tool — the same category as a missing binary or an unset key.
+    if "not available on this platform" in t:
+        return True
     if "tailscale command not found" in t:
         return True
     if "fail2ban-client not accessible" in t or "fail2ban-client not found" in t:
@@ -328,6 +332,21 @@ def tool_safety_level(tool_name: str) -> int:
 def merged_smoke_payload(tool_name: str) -> dict:
     base = dict(TOOL_TEST_PAYLOAD_DEFAULTS.get(tool_name, {}))
     base.update(TOOL_SMOKE_DEFAULTS.get(tool_name, {}))
+
+    # The filesystem tools were being handed `/`, which is refused on *every*
+    # install: the whole point of `filesystem_allowed_paths` is that `/` is not
+    # one of them. Three tools therefore failed on every machine with a message
+    # that read like a permissions bug. Substitute the first configured root —
+    # a value that is by definition allowed, and different per install, which is
+    # why it cannot live in a static table.
+    if tool_name.startswith("fs_") and base.get("path") == "/":
+        import os
+        roots = [r for r in (cfg.filesystem_allowed_paths or []) if r]
+        # The first root that is actually there. A configured-but-absent mount —
+        # a Linux path in a .env being read on a dev box — is a real thing to
+        # report, but not on every tool at once when another root is mounted and
+        # would have proved the tool works.
+        base["path"] = next((r for r in roots if os.path.isdir(r)), roots[0] if roots else "/")
     return base
 
 

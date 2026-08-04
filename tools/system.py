@@ -27,9 +27,27 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
     # ─── DOCKER ───────────────────────────────────────────────────────────────
 
+    def _docker_unavailable() -> str:
+        """Why Docker cannot be reached at all on this host, or "".
+
+        CPython does not expose ``socket.AF_UNIX`` on Windows, so every Docker
+        tool died with "unexpected error (AttributeError)" — a message that tells
+        the person reading it nothing about what to do. Plutus ships in a Linux
+        container so this is a native-Windows install only, but "AttributeError"
+        is the wrong way to find that out.
+        """
+        import socket
+        if not hasattr(socket, "AF_UNIX"):
+            return ("Error: Docker is not available on this platform — it is reached "
+                    "over a Unix socket, which this OS does not provide. Run Plutus in "
+                    "its Docker container, where the socket is mounted.")
+        return ""
+
     async def _docker_get(path: str) -> dict | list:
         """Make a request to the Docker socket."""
         import httpx
+        if (stop := _docker_unavailable()):
+            raise RuntimeError(stop.removeprefix("Error: "))
         transport = httpx.AsyncHTTPTransport(uds=cfg.docker_socket)
         async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, base_url="http://docker") as client:
             r = await client.get(path)
@@ -39,6 +57,8 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     async def _docker_post(path: str, body: dict = None) -> dict | list | str:
         """POST to Docker socket."""
         import httpx
+        if (stop := _docker_unavailable()):
+            raise RuntimeError(stop.removeprefix("Error: "))
         transport = httpx.AsyncHTTPTransport(uds=cfg.docker_socket)
         async with httpx.AsyncClient(transport=transport, timeout=TIMEOUT, base_url="http://docker") as client:
             r = await client.post(path, json=body)
@@ -54,6 +74,8 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     )
     async def docker_list_containers() -> str:
         """List all Docker containers on plutus with status, ports, and uptime."""
+        if (stop := _docker_unavailable()):
+            return stop
         try:
             containers = await _docker_get("/containers/json?all=true")
             if not containers:
@@ -105,6 +127,8 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         to raw decoding when it doesn't look like framing — otherwise
         TTY-attached containers return garbage.
         """
+        if (stop := _docker_unavailable()):
+            return stop
         try:
             import httpx
             transport = httpx.AsyncHTTPTransport(uds=cfg.docker_socket)
@@ -200,6 +224,8 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     )
     async def docker_system_info() -> str:
         """Get Docker system stats: total containers, images, volumes, disk usage."""
+        if (stop := _docker_unavailable()):
+            return stop
         try:
             info = await _docker_get("/info")
             result = "## Docker System Info\n\n"
