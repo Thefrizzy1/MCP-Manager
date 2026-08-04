@@ -160,13 +160,21 @@ def test_an_in_url_query_string_survives_the_helper():
     assert "format=json" not in str(httpx.Request("GET", "https://x/?format=json", params={}).url)
 
 
-def test_no_tool_still_points_at_a_host_that_stopped_resolving():
+def test_no_tool_still_calls_a_host_that_stopped_resolving():
     """These were all verified dead by hand: the connection is refused, not a
     404. A tool that can never answer is manifest weight plus a guaranteed
-    failed call, so it is either repointed or gone."""
+    failed call, so it is either repointed or gone.
+
+    Comments are exempt on purpose — each replacement names the host it replaced,
+    and that note is the reason the next person will not "helpfully" point it
+    back. Only lines that actually make a request are checked.
+    """
     from pathlib import Path
 
     src = (Path(__file__).resolve().parents[1] / "tools" / "public_apis_bulk.py").read_text(encoding="utf-8")
+    code = [ln for ln in src.splitlines() if not ln.lstrip().startswith("#")]
+
     for host in ("worldtimeapi.org", "api.coincap.io", "api.quotable.io",
                  "swapi.dev", "numbersapi.com", "shibe.online", "animechan.xyz"):
-        assert host not in src, f"{host} no longer resolves"
+        hits = [ln.strip() for ln in code if host in ln]
+        assert not hits, f"{host} no longer resolves, but is still called: {hits}"
