@@ -60,10 +60,11 @@ OUTWARD: frozenset[str] = frozenset({
     "jellyseerr_request",
 })
 
-# Naming conventions for the ones not yet written — reddit_submit_post,
-# mastodon_post, bluesky_publish. Only consulted for tools that are *already*
-# not read-only, which is what stops `reddit_post_comments` (a read) matching.
-_OUTWARD_MARKERS = ("submit", "publish", "share", "tweet", "toot", "upload_video")
+# Naming conventions for the ones not yet written — mastodon_post,
+# bluesky_publish. Only consulted for tools that are *already* not read-only,
+# which is what stops `reddit_post_comments` (a read) matching "comment".
+_OUTWARD_MARKERS = ("submit", "publish", "share", "tweet", "toot", "upload_video",
+                    "comment", "reply")
 
 
 def is_outward(name: str, read_only: bool) -> bool:

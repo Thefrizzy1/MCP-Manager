@@ -1,7 +1,12 @@
 """
-tools/social.py — social + community reading. Keys optional, Reddit login optional.
+tools/social.py — social + community reading, plus posting to Reddit.
 
-All read-only; nothing here posts, votes or follows.
+Read-only with two exceptions: `reddit_submit` and `reddit_comment` publish under
+one of your own Reddit logins. They are annotated not-read-only and named so that
+`core.agent_permissions.is_outward` catches them, which puts them behind the
+agent's *publish* switch rather than merely its write switch — an agent allowed to
+write to the research library still cannot post in your name. They are safety
+level 2 as well, so no smoke test ever fires one.
 
 What each network actually allows, verified against the live endpoints rather than
 assumed:
@@ -213,6 +218,53 @@ def reddit_auth_error(account: str) -> str:
     return f"No Reddit account matching '{account}'. Known accounts: {known}."
 
 
+_FULLNAME_RE = re.compile(r"^t[1-6]_[a-z0-9]+$", re.I)
+_PERMALINK_RE = re.compile(r"/comments/([a-z0-9]+)(?:/[^/]*/([a-z0-9]+))?", re.I)
+
+
+def reddit_thing_id(value: str) -> str:
+    """Normalise whatever the caller had to hand into a Reddit fullname.
+
+    A model asked to "reply to this post" reaches for the thing it was shown,
+    which is a permalink — not the ``t3_…`` fullname the API wants. Accepting
+    only fullnames means the tool fails on the most natural input; guessing
+    silently means replying to the wrong thing. So: fullnames pass through, a
+    permalink is parsed (the comment id wins over the post id when the URL has
+    both, because that URL points at the comment), and a bare id is assumed to be
+    a post. Anything else returns "" and the caller refuses.
+    """
+    v = (value or "").strip()
+    if not v:
+        return ""
+    if _FULLNAME_RE.match(v):
+        return v.lower()
+    m = _PERMALINK_RE.search(v)
+    if m:
+        return f"t1_{m.group(2).lower()}" if m.group(2) else f"t3_{m.group(1).lower()}"
+    if re.fullmatch(r"[a-z0-9]{4,12}", v, re.I):
+        return f"t3_{v.lower()}"
+    return ""
+
+
+def reddit_api_error(body: object) -> str:
+    """The human-readable error Reddit hid inside a 200 response, or "".
+
+    Reddit answers a rejected submission with HTTP 200 and the reason in
+    ``json.errors`` — rate limits, subreddit bans, missing flair, captcha. Treat
+    that as success and the agent reports "posted" for something that does not
+    exist, which is the one failure mode a publishing tool must not have.
+    """
+    errors = ((body or {}).get("json") or {}).get("errors") if isinstance(body, dict) else None
+    if not errors:
+        return ""
+    first = errors[0] if isinstance(errors, list) and errors else errors
+    if isinstance(first, (list, tuple)):
+        code = str(first[0]) if first else "ERROR"
+        msg = str(first[1]) if len(first) > 1 else ""
+        return f"{msg or code} [{code}]"
+    return str(first)
+
+
 def atom_entries(xml: str, limit: int) -> list[dict]:
     """Pull entries out of an Atom feed. Module level so it can be unit-tested."""
     out: list[dict] = []
@@ -250,11 +302,15 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         r.raise_for_status()
         return atom_entries(r.text, int(params.get("limit", 10)))
 
-    async def _reddit_api(path: str, params: dict | None = None,
-                          account: str = "") -> dict | list | None:
-        """Authenticated JSON from oauth.reddit.com, or None when not logged in.
+    async def _reddit_call(method: str, path: str, *, params: dict | None = None,
+                           data: dict | None = None,
+                           account: str = "") -> dict | list | None:
+        """One authenticated call to oauth.reddit.com, or None when not logged in.
 
-        ``account`` picks which login answers; empty uses the default one.
+        ``account`` picks which login answers; empty uses the default one. GET and
+        POST share this because they share the part that is easy to get wrong:
+        the single 401 retry against a token that expired between the check and
+        the call.
         """
         from core import reddit_accounts as ra
 
@@ -263,10 +319,17 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return None
         acct = ra.resolve(_SOCIAL_ROOT, account)
         aid = acct["id"] if acct else ""
-        async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
-                                     headers={"User-Agent": UA,
-                                              "Authorization": f"bearer {token}"}) as c:
-            r = await c.get(f"https://oauth.reddit.com{path}", params=params or {})
+
+        async def _send(tok: str):
+            url = f"https://oauth.reddit.com{path}"
+            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
+                                         headers={"User-Agent": UA,
+                                                  "Authorization": f"bearer {tok}"}) as c:
+                if method == "POST":
+                    return await c.post(url, data=data or {}, params=params or {})
+                return await c.get(url, params=params or {})
+
+        r = await _send(token)
         if r.status_code == 401:
             # The token expired early, or the app's password changed. One retry
             # with a fresh token beats surfacing an auth error for something the
@@ -275,12 +338,13 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             token = await reddit_token(account)
             if not token:
                 return None
-            async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
-                                         headers={"User-Agent": UA,
-                                                  "Authorization": f"bearer {token}"}) as c:
-                r = await c.get(f"https://oauth.reddit.com{path}", params=params or {})
+            r = await _send(token)
         r.raise_for_status()
         return r.json()
+
+    async def _reddit_api(path: str, params: dict | None = None,
+                          account: str = "") -> dict | list | None:
+        return await _reddit_call("GET", path, params=params, account=account)
 
     def _from_listing(body: dict | None) -> list[dict]:
         """Reddit's JSON listing into the same rows the Atom path produces.
@@ -606,6 +670,132 @@ def register_social_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         if not entries:
             return f"Nothing in {kind}."
         return _render(f"u/{user} — {kind}", entries)
+
+    # ─── REDDIT (writing) ─────────────────────────────────────────────────────
+    #
+    # These are the only Reddit tools that put something in front of other
+    # people, so they are annotated not-read-only and carry a "submit"/"comment"
+    # name — `core.agent_permissions.is_outward` picks both up, which means an
+    # agent needs the *publish* switch on, not merely write, before it can reach
+    # them. They are also safety level 2, so no smoke test ever fires one.
+
+    async def _acting_as(account: str) -> "tuple[dict | None, str]":
+        """The account a write will post as, or an error explaining why not.
+
+        Writes never fall back to anonymous — there is no anonymous write — and
+        never fall back to *a different account* than the one that was named.
+        """
+        from core import reddit_accounts as ra
+
+        bad = reddit_auth_error(account)
+        if bad:
+            return None, f"Error: {bad}"
+        acct = ra.resolve(_SOCIAL_ROOT, account)
+        if not acct:
+            return None, _NEEDS_LOGIN
+        if not await reddit_token(account):
+            return None, (f"Error: could not log in as u/{acct['username']}. Check that "
+                          "account's script-app credentials in Settings → Reddit.")
+        return acct, ""
+
+    class RedditSubmitInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        subreddit: str = Field(..., description="Subreddit to post to, without r/",
+                               min_length=1, max_length=60)
+        title: str = Field(..., description="Post title", min_length=1, max_length=300)
+        text: str = Field(default="", description="Body for a text post (markdown)",
+                          max_length=40000)
+        url: str = Field(default="", description="Link for a link post. Use text OR url, not both.",
+                         max_length=2000)
+        account: str = Field(default="", description="Which Reddit account posts. "
+                                                     "Empty uses the default one.",
+                             max_length=60)
+
+    @mcp.tool(name="reddit_submit",
+              annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def reddit_submit(params: RedditSubmitInput) -> str:
+        """Post to a subreddit as one of your Reddit accounts (text or link post).
+
+        This is public and immediate. Reddit enforces its own per-account rate
+        limit and subreddit rules — if the post is rejected the reason is
+        reported, never swallowed.
+        """
+        if bool(params.text) == bool(params.url):
+            return ("Error: give either `text` (a self post) or `url` (a link post), "
+                    "not both and not neither.")
+        acct, err = await _acting_as(params.account)
+        if err:
+            return err
+        if params.url:
+            # Same screen the federated `instance` arguments get: `url` is
+            # model-supplied, and Reddit's crawler will fetch whatever we hand it.
+            why = await _screen(params.url)
+            if why:
+                return f"Error: refusing to submit that link — {why}"
+
+        sub = params.subreddit.strip().lstrip("/").removeprefix("r/")
+        payload = {"sr": sub, "title": params.title, "api_type": "json",
+                   "kind": "self" if params.text else "link"}
+        payload["text" if params.text else "url"] = params.text or params.url
+        try:
+            body = await _reddit_call("POST", "/api/submit", data=payload,
+                                      account=params.account)
+        except Exception as e:
+            return _handle_error(e, "Reddit")
+        if body is None:
+            return _NEEDS_LOGIN
+        bad = reddit_api_error(body)
+        if bad:
+            return f"Error: Reddit rejected the post — {bad}"
+        data = ((body or {}).get("json") or {}).get("data") or {}
+        link = data.get("url") or ""
+        return (f"Posted to r/{sub} as u/{acct['username']}: **{params.title}**"
+                + (f"{NL}{link}" if link else ""))
+
+    class RedditCommentInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        target: str = Field(..., description="What to reply to: a permalink, a "
+                                             "fullname like t3_abc123 (post) or "
+                                             "t1_abc123 (comment), or a post id",
+                            min_length=1, max_length=300)
+        text: str = Field(..., description="Comment body (markdown)",
+                          min_length=1, max_length=10000)
+        account: str = Field(default="", description="Which Reddit account comments. "
+                                                     "Empty uses the default one.",
+                             max_length=60)
+
+    @mcp.tool(name="reddit_comment",
+              annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def reddit_comment(params: RedditCommentInput) -> str:
+        """Reply to a Reddit post or comment as one of your accounts.
+
+        `target` takes the permalink you were reading, so you do not have to
+        translate it into a fullname first.
+        """
+        thing = reddit_thing_id(params.target)
+        if not thing:
+            return (f"Error: could not tell what '{params.target}' refers to. Give a "
+                    "reddit.com permalink, or a fullname like t3_abc123 (post) or "
+                    "t1_abc123 (comment).")
+        acct, err = await _acting_as(params.account)
+        if err:
+            return err
+        try:
+            body = await _reddit_call("POST", "/api/comment", account=params.account,
+                                      data={"thing_id": thing, "text": params.text,
+                                            "api_type": "json"})
+        except Exception as e:
+            return _handle_error(e, "Reddit")
+        if body is None:
+            return _NEEDS_LOGIN
+        bad = reddit_api_error(body)
+        if bad:
+            return f"Error: Reddit rejected the comment — {bad}"
+        things = (((body or {}).get("json") or {}).get("data") or {}).get("things") or []
+        perma = ((things[0] or {}).get("data") or {}).get("permalink", "") if things else ""
+        kind = "comment" if thing.startswith("t1_") else "post"
+        return (f"Replied to {kind} `{thing}` as u/{acct['username']}."
+                + (f"{NL}https://www.reddit.com{perma}" if perma else ""))
 
     # ─── HACKER NEWS ──────────────────────────────────────────────────────────
 

@@ -218,6 +218,9 @@ SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
 
 # 0 = read-only, 1 = reversible mutation with cleanup, 2 = destructive/manual.
 TOOL_SAFETY_LEVELS: dict[str, int] = {
+    # Public and immediate. There is no undo a smoke test could rely on.
+    "reddit_submit": 2,
+    "reddit_comment": 2,
     "nextcloud_add_task": 1,
     "nextcloud_add_event": 1,
     "nextcloud_delete_event": 2,

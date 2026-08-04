@@ -316,7 +316,9 @@ SERVICES: list[dict] = [
             {"name":"reddit_me","label":"Who am I (login)","params":[]},
             {"name":"reddit_my_subreddits","label":"My subreddits (login)","params":[("limit","Max","number")]},
             {"name":"reddit_home_feed","label":"My front page (login)","params":[("limit","Max","number")]},
-            {"name":"reddit_my_posts","label":"Saved / upvoted (login)","params":[("kind","saved|upvoted|submitted","text"),("limit","Max","number")]}]},
+            {"name":"reddit_my_posts","label":"Saved / upvoted (login)","params":[("kind","saved|upvoted|submitted","text"),("limit","Max","number")]},
+            {"name":"reddit_submit","label":"Post to a subreddit (login)","params":[("subreddit","Subreddit","text"),("title","Title","text"),("text","Body (text post)","text"),("url","Link (link post)","text"),("account","Account","text")]},
+            {"name":"reddit_comment","label":"Reply to a post/comment (login)","params":[("target","Permalink or t3_/t1_ id","text"),("text","Comment","text"),("account","Account","text")]}]},
 
   {"id":"hackernews","label":"Hacker News","icon":"🟧","tag":"social","section":"public",
    "desc":"Front page and full-history search (Firebase + Algolia, no key)",

@@ -131,14 +131,14 @@ def test_html_is_stripped_and_truncated():
 
 # ── every tool is registered and read-only ───────────────────────────────────
 
-def test_all_social_tools_register_and_none_can_write():
+def test_the_social_tools_register_and_only_the_publishers_can_write():
     from mcp.server.fastmcp import FastMCP
 
     m = FastMCP("t")
     S.register_social_tools(m)
     tools = {t.name: t for t in m._tool_manager.list_tools()}
 
-    assert set(tools) == {
+    reading = {
         "reddit_subreddit_posts", "reddit_search", "reddit_post_comments",
         # Which logins exist, so a caller can name one instead of guessing.
         "reddit_accounts",
@@ -147,11 +147,16 @@ def test_all_social_tools_register_and_none_can_write():
         "hackernews_stories", "hackernews_search", "lemmy_posts",
         "mastodon_timeline", "bluesky_search", "stackexchange_search",
     }
-    # Nothing here posts, votes or follows — the annotation has to say so, since
-    # the agent's blast-radius rules read it. Authenticating widens what can be
-    # *read*, never what can be changed.
-    for name, t in tools.items():
-        assert t.annotations and t.annotations.readOnlyHint, name
+    # The only two that put something in front of other people. Keeping this set
+    # explicit means a new write tool cannot be added without someone deciding it
+    # belongs here — the annotation is what the blast-radius rules read.
+    writing = {"reddit_submit", "reddit_comment"}
+    assert set(tools) == reading | writing
+
+    for name in reading:
+        assert tools[name].annotations and tools[name].annotations.readOnlyHint, name
+    for name in writing:
+        assert tools[name].annotations and not tools[name].annotations.readOnlyHint, name
 
 
 # ── Reddit as the logged-in user ─────────────────────────────────────────────
@@ -213,9 +218,17 @@ def _fake_reddit(monkeypatch, *, token="tok-1", routes=None, token_status=200):
         async def post(self, url, **kw):
             seen.append({"method": "POST", "url": url, "data": kw.get("data"),
                          "auth": kw.get("auth")})
-            if token_status >= 400:
-                return _Resp({"error": "invalid_grant"}, token_status)
-            return _Resp({"access_token": token, "expires_in": 3600})
+            # Two different POSTs now: the token exchange on www.reddit.com and
+            # the write itself on oauth.reddit.com. Answering both with a token
+            # would let a broken write path look like it succeeded.
+            if "access_token" in url:
+                if token_status >= 400:
+                    return _Resp({"error": "invalid_grant"}, token_status)
+                return _Resp({"access_token": token, "expires_in": 3600})
+            for fragment, payload in (routes or {}).items():
+                if fragment in url:
+                    return _Resp(payload)
+            return _Resp({"json": {"errors": [], "data": {}}})
 
         async def get(self, url, **kw):
             seen.append({"method": "GET", "url": url, "headers": self.headers,
@@ -389,3 +402,143 @@ def test_an_expired_token_is_refreshed_once(monkeypatch):
 
     assert calls["post"] == 2, "a 401 should buy exactly one fresh token"
     assert "Your Reddit front page" in out
+
+
+# ── writing to Reddit ────────────────────────────────────────────────────────
+
+def test_thing_ids_come_from_whatever_the_model_had():
+    """A model told to "reply to this" reaches for the permalink it was shown,
+    not the fullname the API wants."""
+    assert S.reddit_thing_id("t3_1abc23") == "t3_1abc23"
+    assert S.reddit_thing_id("T1_XyZ9") == "t1_xyz9"
+    assert S.reddit_thing_id("https://www.reddit.com/r/s/comments/1abc23/t/") == "t3_1abc23"
+    # A URL naming both points at the comment, so the comment wins.
+    assert S.reddit_thing_id("https://www.reddit.com/r/s/comments/1abc23/t/kf9d2xq/") == "t1_kf9d2xq"
+    assert S.reddit_thing_id("1abc23") == "t3_1abc23"
+    for junk in ("", "   ", "nonsense!!", "https://example.com/x"):
+        assert S.reddit_thing_id(junk) == "", junk
+
+
+def test_reddit_hides_failures_inside_a_200():
+    """Rate limits and bans come back as HTTP 200 with the reason in the body.
+    Reporting that as a successful post is the one thing a publisher must not do."""
+    rate = {"json": {"errors": [["RATELIMIT", "you are doing that too much.", "ratelimit"]]}}
+    assert "RATELIMIT" in S.reddit_api_error(rate)
+    assert "doing that too much" in S.reddit_api_error(rate)
+    assert S.reddit_api_error({"json": {"errors": [], "data": {"url": "https://x"}}}) == ""
+    assert S.reddit_api_error({}) == "" and S.reddit_api_error(None) == ""
+
+
+def test_a_rejected_post_is_reported_as_an_error(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    _fake_reddit(monkeypatch, routes={"/api/submit": {"json": {"errors": [
+        ["SUBREDDIT_NOTALLOWED", "you are not allowed to post there.", "sr"]]}}})
+
+    out = str(asyncio.run(invoke_mcp_tool_fn(
+        _tool("reddit_submit"),
+        payload={"subreddit": "selfhosted", "title": "Hi", "text": "Body"})))
+    assert out.startswith("Error:") and "allowed to post" in out
+
+
+def test_a_successful_post_names_the_account_and_the_link(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    seen = _fake_reddit(monkeypatch, routes={"/api/submit": {"json": {
+        "errors": [], "data": {"url": "https://www.reddit.com/r/selfhosted/comments/9/"}}}})
+
+    out = str(asyncio.run(invoke_mcp_tool_fn(
+        _tool("reddit_submit"),
+        payload={"subreddit": "r/selfhosted", "title": "Hi", "text": "Body"})))
+    assert "u/friso" in out and "r/selfhosted" in out and "comments/9" in out
+    submit = next(c for c in seen if "/api/submit" in c["url"])
+    assert submit["data"]["kind"] == "self" and submit["data"]["sr"] == "selfhosted"
+    assert submit["data"]["text"] == "Body" and "url" not in submit["data"]
+
+
+def test_a_post_is_either_text_or_link(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    _fake_reddit(monkeypatch)
+    for payload in ({"subreddit": "x", "title": "t"},
+                    {"subreddit": "x", "title": "t", "text": "b", "url": "https://e.com"}):
+        out = str(asyncio.run(invoke_mcp_tool_fn(_tool("reddit_submit"), payload=payload)))
+        assert out.startswith("Error:") and "not both and not neither" in out
+
+
+def test_a_link_post_is_screened_for_ssrf(monkeypatch):
+    """`url` is model-supplied and Reddit's crawler fetches it, so a link post is
+    also a way to make our own credentials publish an internal address."""
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    _fake_reddit(monkeypatch)
+    out = str(asyncio.run(invoke_mcp_tool_fn(
+        _tool("reddit_submit"),
+        payload={"subreddit": "x", "title": "t", "url": "http://169.254.169.254/latest/"})))
+    assert out.startswith("Error:") and "refusing to submit" in out
+
+
+def test_commenting_needs_a_target_it_understands(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    _fake_reddit(monkeypatch)
+    out = str(asyncio.run(invoke_mcp_tool_fn(
+        _tool("reddit_comment"), payload={"target": "nonsense!!", "text": "hi"})))
+    assert out.startswith("Error:") and "t3_abc123" in out
+
+
+def test_a_comment_posts_to_the_resolved_fullname(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _configure(monkeypatch)
+    seen = _fake_reddit(monkeypatch, routes={"/api/comment": {"json": {
+        "errors": [], "data": {"things": [{"data": {"permalink": "/r/x/comments/1/_/2/"}}]}}}})
+
+    out = str(asyncio.run(invoke_mcp_tool_fn(_tool("reddit_comment"), payload={
+        "target": "https://www.reddit.com/r/x/comments/1abc23/title/", "text": "hi"})))
+    assert "u/friso" in out and "/r/x/comments/1/_/2/" in out
+    call = next(c for c in seen if "/api/comment" in c["url"])
+    assert call["data"]["thing_id"] == "t3_1abc23" and call["data"]["text"] == "hi"
+
+
+def test_writing_without_a_login_says_so(monkeypatch):
+    from core.invoke_tool import invoke_mcp_tool_fn
+
+    _unconfigure(monkeypatch)
+    for name, payload in (("reddit_submit", {"subreddit": "x", "title": "t", "text": "b"}),
+                          ("reddit_comment", {"target": "t3_abc123", "text": "hi"})):
+        out = str(asyncio.run(invoke_mcp_tool_fn(_tool(name), payload=payload)))
+        assert "needs a Reddit login" in out, name
+
+
+def test_posting_needs_the_publish_switch_not_just_write():
+    """Writing to the research library and posting under your own name in public
+    are not the same permission."""
+    from mcp.server.fastmcp import FastMCP
+
+    from core.agent_permissions import capability_disallow
+
+    m = FastMCP("t")
+    S.register_social_tools(m)
+    tm = m._tool_manager
+
+    write_only = capability_disallow(tm, allow_write=True, allow_publish=False)
+    assert "mcp__plutus__reddit_submit" in write_only
+    assert "mcp__plutus__reddit_comment" in write_only
+    # Reading a thread is not publishing, however much the name looks like it.
+    assert "mcp__plutus__reddit_post_comments" not in write_only
+
+    publishing = capability_disallow(tm, allow_write=True, allow_publish=True)
+    assert "mcp__plutus__reddit_submit" not in publishing
+    assert "mcp__plutus__reddit_comment" not in publishing
+
+
+def test_the_write_tools_are_never_smoke_tested():
+    from core.tool_registry import tool_safety_level
+    assert tool_safety_level("reddit_submit") == 2
+    assert tool_safety_level("reddit_comment") == 2
