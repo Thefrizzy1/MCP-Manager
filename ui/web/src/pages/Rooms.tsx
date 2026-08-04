@@ -45,6 +45,7 @@ interface RoomStep {
 }
 interface RoomRun {
   id: string
+  room_id: string
   room_label: string
   started: string
   ok: boolean
@@ -63,6 +64,8 @@ interface RoomsResp {
   roles: string[]
   live: Live
   runs: RoomRun[]
+  /** room id -> its schedule, when the room runs on its own. */
+  scheduled?: Record<string, { cron: string; timezone: string; enabled: boolean; name: string }>
 }
 type LinkedAccount = ReturnType<typeof toLinked>[number]
 
@@ -107,6 +110,16 @@ export function Rooms() {
   const live = rooms.data?.live
   const open = list.find((r) => r.id === openId) ?? list[0] ?? null
   const services = (conns.data?.services ?? []).filter((s) => s.configured && !s.ignored)
+
+  // Most recent run per room, keyed by id rather than label — a renamed room
+  // would otherwise silently lose its own history. The list is newest-first, so
+  // the first hit for a room wins and older ones are ignored.
+  const lastRuns: Record<string, { ok: boolean; started: string; cost_usd: number }> = {}
+  for (const run of rooms.data?.runs ?? []) {
+    if (run.room_id && !lastRuns[run.room_id]) {
+      lastRuns[run.room_id] = { ok: run.ok, started: run.started, cost_usd: run.cost_usd }
+    }
+  }
 
   async function call(fn: () => Promise<unknown>, key: string, ok?: string) {
     setBusy(key)
@@ -210,6 +223,15 @@ export function Rooms() {
                 setDragging(null)
               }}
               onReorder={(room, fromId, toId) => reorder(room, fromId, toId)}
+              scheduled={rooms.data?.scheduled ?? {}}
+              lastRuns={lastRuns}
+              onChain={(fromId, toId) =>
+                call(
+                  () => api.post(`/api/v1/rooms/${fromId}`, { next_room: toId }),
+                  'chain',
+                  toId ? 'Rooms linked.' : 'Link removed.',
+                )
+              }
             />
 
           <div className="grid gap-4 lg:grid-cols-[1fr_260px]">

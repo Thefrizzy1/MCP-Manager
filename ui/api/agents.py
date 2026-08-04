@@ -319,7 +319,10 @@ async def api_v1_schedules_get():
 class ScheduleBody(BaseModel):
     id: str | None = None
     name: str = ""
-    kind: str = Field(..., pattern="^(agent|tool|task)$")
+    # Kept in step with core.schedule_store.VALID_KINDS rather than hand-written:
+    # "room" was added there and not here, so the store and the scheduler both
+    # understood a nightly room while the API refused to create one with a 422.
+    kind: str = Field(..., pattern=f"^({'|'.join(schedule_store.VALID_KINDS)})$")
     cron: str = Field(..., min_length=1, max_length=120)
     timezone: str = "Europe/Berlin"
     enabled: bool = True

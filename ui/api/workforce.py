@@ -28,11 +28,27 @@ def _room_or_404(room_id: str) -> dict:
 
 @router.get("/api/v1/rooms")
 async def api_rooms():
+    # Which rooms run on their own, keyed by room id. A room can now be a
+    # schedule, and "does this run without me" is a property of the room you want
+    # to see *on* the room — not something to go hunting for on another page.
+    from core import schedule_store
+
+    scheduled = {
+        (s.get("payload") or {}).get("room_id"): {
+            "cron": s.get("cron", ""),
+            "timezone": s.get("timezone", ""),
+            "enabled": bool(s.get("enabled", True)),
+            "name": s.get("name", ""),
+        }
+        for s in schedule_store.load_schedules(ROOT)
+        if s.get("kind") == "room" and (s.get("payload") or {}).get("room_id")
+    }
     return {
         "rooms": workforce.load_rooms(ROOT),
         "roles": list(workforce.ROLES),
         "live": dict(workforce.LIVE),
         "runs": workforce.list_room_runs(ROOT, 10),
+        "scheduled": scheduled,
     }
 
 

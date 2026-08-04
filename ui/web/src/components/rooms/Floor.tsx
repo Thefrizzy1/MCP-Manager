@@ -12,7 +12,7 @@
  * reads as a room inside Plutus, not a toy bolted onto it.
  */
 import { useRef } from 'react'
-import { ArrowRight, Play, UserPlus } from 'lucide-react'
+import { ArrowRight, Clock, Link2, Play, Unlink, UserPlus } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/cn'
@@ -39,10 +39,39 @@ export interface FloorLive {
   seat_id: string
   running: boolean
 }
+export interface FloorSchedule {
+  cron: string
+  timezone: string
+  enabled: boolean
+  name: string
+}
+export interface FloorLastRun {
+  ok: boolean
+  started: string
+  cost_usd: number
+}
 
-/** Role → the single letter on the desk plate. Initials, not icons: five roles
- *  read faster as letters than as five glyphs a viewer has to learn. */
-/** Two letters, not one. Researcher and reviewer both start with R, so single
+/** "0 3 * * *" → "03:00 nightly". Falls back to the raw expression, which is
+ *  still more use than nothing for a cron a human wrote by hand. */
+export function cronLabel(cron: string): string {
+  const p = cron.trim().split(/\s+/)
+  if (p.length !== 5) return cron
+  const [min, hr, dom, mon, dow] = p
+  const time = /^\d+$/.test(min) && /^\d+$/.test(hr)
+    ? `${hr.padStart(2, '0')}:${min.padStart(2, '0')}`
+    : null
+  if (!time) return cron
+  if (dom === '*' && mon === '*' && dow === '*') return `${time} nightly`
+  if (dom === '*' && mon === '*' && /^[0-6]$/.test(dow)) {
+    return `${time} ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][Number(dow)]}`
+  }
+  return `${time} · ${dom} ${mon} ${dow}`
+}
+
+/** Role → the plate on the desk. Letters, not icons: five roles read faster as
+ *  letters than as five glyphs a viewer has to learn.
+ *
+ *  Two letters, not one. Researcher and reviewer both start with R, so single
  *  initials forced one of them onto an unrelated letter ("V" for reviewer),
  *  which is a thing the reader has to be taught rather than can read. */
 const ROLE_PLATE: Record<string, string> = {
@@ -164,21 +193,46 @@ function Desk({
   )
 }
 
-function Corridor({ active }: { active: boolean }) {
+function Corridor({ active, onUnlink }: { active: boolean; onUnlink: () => void }) {
   return (
-    <div
-      className="relative flex shrink-0 items-center self-center px-1"
-      title="Work moves this way — the next room starts on the same folder, told what this one produced"
-      aria-label="then"
+    <button
+      type="button"
+      onClick={onUnlink}
+      className="group relative flex shrink-0 items-center self-center px-1"
+      title="Work moves this way — the next room starts on the same folder, told what this one produced.\nClick to unlink."
+      aria-label="then — click to unlink"
     >
       <span className="h-px w-4 bg-border-strong" aria-hidden />
       <ArrowRight
         size={13}
-        className={cn('shrink-0', active ? 'floor-baton text-accent' : 'text-ink-3')}
+        className={cn(
+          'shrink-0 group-hover:hidden',
+          active ? 'floor-baton text-accent' : 'text-ink-3',
+        )}
         aria-hidden
       />
+      <Unlink size={13} className="hidden shrink-0 text-danger group-hover:block" aria-hidden />
       <span className="h-px w-4 bg-border-strong" aria-hidden />
-    </div>
+    </button>
+  )
+}
+
+/** The out-handle: drag it onto another room to make that room run next. */
+function ChainHandle({ roomId, onGrab }: { roomId: string; onGrab: (id: string | null) => void }) {
+  return (
+    <span
+      draggable
+      onDragStart={(e) => {
+        e.stopPropagation()
+        onGrab(roomId)
+      }}
+      onDragEnd={() => onGrab(null)}
+      title="Drag onto another room to run it after this one"
+      aria-hidden
+      className="ml-auto grid h-5 w-5 cursor-crosshair place-items-center rounded-[var(--radius-sm)] text-ink-3 hover:bg-surface-2 hover:text-accent"
+    >
+      <Link2 size={12} />
+    </span>
   )
 }
 
@@ -188,16 +242,23 @@ export function Floor({
   selectedId,
   busy,
   draggingAgent,
+  scheduled,
+  lastRuns,
   onSelect,
   onRun,
   onDropAgent,
   onReorder,
+  onChain,
 }: {
   rooms: FloorRoom[]
   live?: FloorLive
   selectedId: string | null
   busy: string
   draggingAgent: boolean
+  scheduled: Record<string, FloorSchedule>
+  lastRuns: Record<string, FloorLastRun>
+  /** Set (or with '' clear) which room runs after ``fromId``. */
+  onChain: (fromId: string, toId: string) => void
   onSelect: (roomId: string) => void
   onRun: (room: FloorRoom) => void
   /** ``role`` is the role of the desk the agent was dropped on, so dropping
@@ -211,6 +272,10 @@ export function Floor({
   // refetch lands mid-drag and would wipe a plain local — the seat you were
   // moving would silently become a no-op on drop.
   const dragSeat = useRef<string | null>(null)
+  // Chaining used to live in a dropdown three fields down a side panel, which is
+  // a strange place for the one relationship the floor exists to show. Drag a
+  // room's out-handle onto another room to wire them.
+  const chainFrom = useRef<string | null>(null)
 
   // A chain has to stay on one line to read as a pipeline, but a floor of
   // twenty unchained rooms as twenty one-room rows is a list again with extra
@@ -234,6 +299,8 @@ export function Floor({
               const isLive = Boolean(live?.running && live.room_id === room.id)
               const liveIndex = isLive ? room.seats.findIndex((s) => s.id === live?.seat_id) : -1
               const selected = selectedId === room.id
+              const sched = scheduled[room.id]
+              const last = lastRuns[room.id]
               const nextLive = Boolean(
                 live?.running && chain[i + 1] && live.room_id === chain[i + 1].id,
               )
@@ -241,9 +308,19 @@ export function Floor({
                 <div key={room.id} className="flex items-stretch">
                   <section
                     onDragOver={(e) => {
-                      if (draggingAgent) e.preventDefault()
+                      if (draggingAgent || chainFrom.current) e.preventDefault()
                     }}
-                    onDrop={() => draggingAgent && onDropAgent(room)}
+                    onDrop={() => {
+                      const from = chainFrom.current
+                      chainFrom.current = null
+                      // A chain drop wins: you were explicitly dragging a
+                      // corridor, not an agent.
+                      if (from) {
+                        if (from !== room.id) onChain(from, room.id)
+                        return
+                      }
+                      if (draggingAgent) onDropAgent(room)
+                    }}
                     aria-current={selected ? 'true' : undefined}
                     className={cn(
                       'flex w-[228px] flex-col rounded-[var(--radius)] border bg-surface',
@@ -286,6 +363,7 @@ export function Floor({
                       >
                         <Play size={12} />
                       </Button>
+                      <ChainHandle roomId={room.id} onGrab={(id) => (chainFrom.current = id)} />
                     </header>
 
                     {/* desks */}
@@ -340,6 +418,37 @@ export function Floor({
                       )}
                     </div>
 
+                    {/* how this room stands: scheduled? how did it go last time? */}
+                    {(sched || last) && (
+                      <div className="flex items-center gap-2 border-t border-border px-2.5 py-1 text-[11px]">
+                        {sched && (
+                          <span
+                            className={cn(
+                              'inline-flex items-center gap-1',
+                              sched.enabled ? 'text-ink-2' : 'text-ink-3 line-through',
+                            )}
+                            title={
+                              sched.enabled
+                                ? `Runs on its own: ${sched.cron} ${sched.timezone}`
+                                : `Schedule is paused: ${sched.cron} ${sched.timezone}`
+                            }
+                          >
+                            <Clock size={11} aria-hidden />
+                            {cronLabel(sched.cron)}
+                          </span>
+                        )}
+                        {sched && last && <span aria-hidden className="text-ink-3">·</span>}
+                        {last && (
+                          <span
+                            className={last.ok ? 'text-ink-3' : 'text-danger'}
+                            title={`Last run ${last.ok ? 'succeeded' : 'failed'} — $${last.cost_usd}`}
+                          >
+                            last {last.ok ? 'ok' : 'failed'}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                     <footer className="flex items-center gap-2 border-t border-border px-2.5 py-1.5 text-[11px] text-ink-3">
                       {liveIndex >= 0 ? (
                         // During a run the seat count is the wrong thing to show —
@@ -367,7 +476,7 @@ export function Floor({
                       flattened collection of unrelated rooms — an arrow between
                       two of them would assert a handoff that does not exist. */}
                   {ci < pipelines.length && i < chain.length - 1 && (
-                    <Corridor active={isLive || nextLive} />
+                    <Corridor active={isLive || nextLive} onUnlink={() => onChain(room.id, '')} />
                   )}
                 </div>
               )

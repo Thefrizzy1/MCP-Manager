@@ -222,3 +222,25 @@ def test_the_brief_pins_output_to_a_dated_folder(tmp_path, monkeypatch):
     brief = workforce.load_rooms(tmp_path)[0]["brief"]
     assert "TODAY'S DATE" in brief
     assert "dashboard.html" in brief and "scripts/" in brief
+
+
+def test_the_api_accepts_every_kind_the_store_does():
+    """The store and the scheduler both understood a nightly room while the HTTP
+    model still rejected one with a 422, so the feature was reachable only by
+    writing the file directly."""
+    import re
+
+    from ui.api.agents import ScheduleBody
+
+    pattern = next(m.pattern for m in ScheduleBody.model_fields["kind"].metadata
+                   if hasattr(m, "pattern"))
+    for kind in schedule_store.VALID_KINDS:
+        assert re.match(pattern, kind), f"the API rejects kind {kind!r}"
+
+
+def test_a_room_schedule_round_trips_through_the_api_model():
+    from ui.api.agents import ScheduleBody
+
+    body = ScheduleBody(kind="room", cron="0 3 * * *", payload={"room_id": "abc"})
+    assert body.kind == "room"
+    assert schedule_store._normalize(body.model_dump())["payload"]["room_id"] == "abc"
