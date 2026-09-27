@@ -91,6 +91,9 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
                       "proton_bridge_status", "nextcloud_get_activity"],
     "system_ops":    ["docker_", "omv_", "ssh_", "fail2ban_", "tailscale_"],
     "ai":            ["comfyui_", "fal_", "huggingface_"],
+    # comfy-mcp's ~40 tools, apart from "ai" so they can be switched off in one
+    # go — they are the largest single block in the manifest when on.
+    "comfy":         ["comfy_"],
     "weather":       ["weather_", "get_context"],
     "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_", "search_console_"],
     "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_"],
@@ -129,7 +132,7 @@ INTENT_PRESETS: dict[str, list[str]] = {
     "office":   ["calendar", "tasks", "contacts", "notes", "files", "notifications"],
     "homelab":  ["system_ops", "monitoring", "automation"],
     "smarthome": ["home", "automation", "notifications", "monitoring"],
-    "creative": ["ai", "photos", "files"],
+    "creative": ["ai", "comfy", "photos", "files"],
     "dev":      ["code", "files", "search"],
     "web":      ["search", "weather", "finance", "ip_network", "social"],
     "social":   ["social", "search"],

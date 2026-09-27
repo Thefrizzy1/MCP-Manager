@@ -66,7 +66,7 @@ def _fine_capability(name: str) -> str | None:
         return "maps"
     if n.startswith("n8n_"):
         return "automation"
-    if n.startswith(("comfyui_", "fal_")):
+    if n.startswith(("comfyui_", "comfy_", "fal_")):
         return "ai_image"
     if n.startswith(("docker_", "omv_", "ssh_", "tailscale_", "fail2ban_", "syncthing_", "uptime_")):
         return "system"

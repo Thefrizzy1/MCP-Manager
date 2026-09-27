@@ -220,6 +220,17 @@ SERVICES: list[dict] = [
             {"name":"comfyui_generate","label":"Generate Image","params":[("positive_prompt","Prompt","text"),("checkpoint","Checkpoint","text"),("width","Width","number"),("height","Height","number")]},
             {"name":"comfyui_interrupt","label":"Cancel","params":[]}]},
 
+  {"id":"comfy_mcp","label":"ComfyUI MCP (comfy-cli)","icon":"🧩","tag":"ai","section":"selfhosted",
+   "desc":"Comfy-Org's comfy-mcp, served as comfy_* tools: run workflows and gallery templates, poll and fetch jobs, search the live node and model catalog, validate and vary workflows, manage the install. Targets the ComfyUI card's URL. Ships in the Docker image; elsewhere it is found on PATH or via COMFY_MCP_COMMAND in .env",
+   # COMFY_MCP_COMMAND is not editable here on purpose: it names a program to run.
+   "config_keys":[("COMFY_API_KEY","Comfy API key (optional — partner-API nodes only)","",True)],
+   # No probe: the server is a child process, not an address. comfy_mcp_status
+   # starts it and reports what it found.
+   "health_url":None,"health_headers":lambda: {},
+   "configured_keys":("comfy_mcp_command",),
+   "documentation_url":"https://github.com/Comfy-Org/comfy-mcp",
+   "tools":[{"name":"comfy_mcp_status","label":"Status & tool guides","params":[("tool","Tool (optional)","text")]}]},
+
   {"id":"tailscale","label":"Tailscale","icon":"🌐","tag":"network","section":"selfhosted",
    "desc":"VPN mesh network",
    "config_keys":[],"health_url":None,"health_headers":lambda: {},"configured_keys":(),
@@ -497,7 +508,7 @@ SERVICE_LOGO_DOMAIN: dict[str, str] = {
     "immich": "immich.app", "homeassistant": "home-assistant.io", "nextcloud": "nextcloud.com",
     "habitica": "habitica.com", "n8n": "n8n.io", "ntfy": "ntfy.sh", "syncthing": "syncthing.net",
     "obsidian": "obsidian.md", "uptime_kuma": "uptime-kuma.io", "omv": "openmediavault.org",
-    "docker": "docker.com", "comfyui": "github.com", "tailscale": "tailscale.com",
+    "docker": "docker.com", "comfyui": "github.com", "comfy_mcp": "comfy.org", "tailscale": "tailscale.com",
     "fail2ban": "fail2ban.org", "fal": "fal.ai", "weather": "wttr.in", "maps": "openstreetmap.org",
     "websearch": "duckduckgo.com", "smtp": "proton.me", "wikipedia": "wikipedia.org",
     # ECB, not frankfurter.app: this is the value that already won before the
@@ -523,7 +534,7 @@ SERVICE_ICON_SLUG: dict[str, str] = {
     "lidarr": "lidarr", "immich": "immich", "homeassistant": "homeassistant",
     "nextcloud": "nextcloud", "n8n": "n8n", "syncthing": "syncthing", "tailscale": "tailscale",
     "qbittorrent": "qbittorrent", "obsidian": "obsidian", "postgres": "postgresql",
-    "comfyui": "comfyui", "ntfy": "ntfy", "maps": "openstreetmap", "websearch": "duckduckgo",
+    "comfyui": "comfyui", "comfy_mcp": "comfyui", "ntfy": "ntfy", "maps": "openstreetmap", "websearch": "duckduckgo",
     "wikipedia": "wikipedia", "google": "google", "currency": "eurostat",
     "github": "github", "gitlab": "gitlab", "huggingface": "huggingface", "youtube": "youtube",
     "youtube_studio": "youtube",

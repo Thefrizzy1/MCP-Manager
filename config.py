@@ -5,6 +5,7 @@ All settings are optional — tools gracefully disable if not configured.
 
 import os
 import re
+import shutil
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -156,6 +157,13 @@ class Config(BaseModel):
 
     # ComfyUI
     comfyui_url: str = _get("COMFYUI_URL")
+    # Comfy-Org's comfy-mcp (a wrapper over comfy-cli), run as a child process and
+    # re-served as comfy_* tools. Empty = look for `comfy-mcp` on PATH. It needs
+    # mcp 2.x, so it lives in its own environment (/opt/comfy-mcp in the image).
+    # Deliberately not writable from the dashboard — see _BLOCKED_UI_ENV_KEYS.
+    comfy_mcp_command: str = _get("COMFY_MCP_COMMAND", shutil.which("comfy-mcp") or "")
+    # Comfy account key — only for partner-API nodes (Flux/Kling/… hosted models).
+    comfy_api_key: str = _get("COMFY_API_KEY")
 
     # Obsidian REST API
     obsidian_url: str = _get("OBSIDIAN_URL", "http://192.168.1.5:27124")
@@ -295,6 +303,11 @@ _BLOCKED_UI_ENV_KEYS: frozenset[str] = frozenset(
         "WINDIR",
         "SYSTEMROOT",
         "COMSPEC",
+        # Name a program Plutus executes. Editable from the dashboard, either one
+        # would be command execution for anyone who can open Settings — so they
+        # are deployment settings (.env / the Docker image), never UI ones.
+        "COMFY_MCP_COMMAND",
+        "COMFY_BIN",
     }
 )
 

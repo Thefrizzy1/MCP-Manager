@@ -83,6 +83,7 @@ _TOOL_PREFIX_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("ntfy_", ("ntfy_url",)),
     ("fal_", ("fal_key",)),
     ("youtube_", ()),
+    ("comfy_", ("comfy_mcp_command",)),
     ("pub_", ()),
 )
 
@@ -163,6 +164,7 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "youtube_channel_videos": {"channel": "@YouTube", "max_results": 5},
     "youtube_keywords": {"query": "comfyui"},
     "youtube_track_report": {},
+    "comfy_mcp_status": {},
     "youtube_analytics": {"report": "overview", "days": 7},
     "search_console_query": {},
     # The GitHub read tools need a repo. A public one keeps the smoke run

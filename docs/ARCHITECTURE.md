@@ -223,7 +223,9 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     schedule_store.py      Persistent CRUD + cron validation.
     scheduler.py           APScheduler runtime firing agent/tool schedules.
     mcp_export.py          Downloadable client configs (Connection Manager).
-    mcp_client.py          Client for talking MCP to another server.
+    mcp_client.py          Client for talking MCP to another server (streamable HTTP).
+    mcp_stdio.py           The same over a child process's stdin/stdout — how
+                           comfy-mcp (mcp 2.x, its own venv) is re-served here.
     links.py               Client-facing URLs without hardcoded LAN IPs.
     reddit_accounts.py     Several Reddit logins rather than one.
     api_dialects.py        How each HTTP provider's chat API is shaped.
@@ -233,7 +235,7 @@ tools/               One module per domain, each exposing `register_*_tools(mcp)
   media.py personal.py photos.py system.py comfyui.py utilities.py obsidian.py
   monitoring.py nextcloud.py infrastructure.py fal_tools.py public_apis_bulk.py
   ssh_smb.py github.py gitlab.py youtube.py youtube_studio.py huggingface.py
-  social.py scrape.py
+  social.py scrape.py comfy_mcp.py
   agents.py rooms.py agent_db.py prompts.py resources.py apps.py
   mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
                         Plutus's own /mcp, applying the run's scope. This is how

@@ -35,6 +35,9 @@ DANGEROUS: frozenset[str] = frozenset({
     "nextcloud_delete_task", "nextcloud_delete_event", "nextcloud_delete_file",
     "habitica_delete_task", "fs_move_file",
     "radarr_add_movie", "sonarr_add_series", "jellyseerr_request",
+    # comfy-mcp: changes the ComfyUI install, stops it, or spends Comfy credits.
+    "comfy_install_node", "comfy_update_comfyui", "comfy_switch_comfyui_version",
+    "comfy_stop_comfyui", "comfy_restart_comfyui", "comfy_partner_generate",
 })
 
 # Note / content writing — part of the safety floor when writes are off, but not

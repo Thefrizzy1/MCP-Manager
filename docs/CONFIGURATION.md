@@ -68,6 +68,7 @@ Tools stay disabled until their required keys are present.
 | Obsidian | `OBSIDIAN_URL`, `OBSIDIAN_API_KEY` |
 | n8n | `N8N_URL`, `N8N_API_KEY` |
 | ComfyUI | `COMFYUI_URL` |
+| ComfyUI MCP (comfy-mcp) | `COMFY_MCP_COMMAND` (set in the Docker image; else `comfy-mcp` on PATH — **.env only**, not editable in the dashboard), optional `COMFY_API_KEY`, `COMFY_MCP_ASSUME_CONSENT` (passed through) |
 | fal.ai | `FAL_KEY` |
 | Google Search | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` |
 | YouTube | optional `YOUTUBE_API_KEY` (exact counts + publish dates; everything but trending works without it) |
@@ -100,6 +101,16 @@ and Search Console are owner-only, so they need one Google sign-in:
 The refresh token is stored in `data/google_oauth.json` (0600). Connecting also
 registers YouTube's daily impressions report; the first files arrive ~48 h later
 with the previous 30 days backfilled.
+
+### ComfyUI MCP (comfy-mcp)
+
+The Docker image ships Comfy-Org's `comfy-mcp` + `comfy-cli` in `/opt/comfy-mcp`
+(their own venv — comfy-mcp needs mcp 2.x). Plutus serves its tools as `comfy_*`,
+pointed at `COMFYUI_URL`: a loopback address means this machine, anything else a
+remote GPU box, where runs, jobs, uploads and output fetches go remote and
+install/lifecycle tools stay local. Consent prompts (node installs, version
+switches) are declined — pre-authorise them with `COMFY_MCP_ASSUME_CONSENT` as
+comfy-mcp documents. Build with `--build-arg WITH_COMFY_MCP=0` to leave it out.
 
 > **Security:** `UI_PASSWORD`, `MCP_BEARER_TOKEN`, and all service credentials are
 > stored in `.env`. `chmod 600 .env` and keep it out of VCS (already in `.gitignore`).

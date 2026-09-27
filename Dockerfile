@@ -44,6 +44,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Comfy-Org's comfy-mcp + comfy-cli, served by Plutus as comfy_* tools.
+#
+# Its own venv, not the app's: comfy-mcp requires mcp 2.x while Plutus is on 1.x,
+# and the two only ever talk over stdio, so they never have to share a Python.
+# Tracking is switched off at build time — comfy-cli asks about it on first run,
+# and a question on a container's stdin is a hang. WITH_COMFY_MCP=0 leaves it out
+# (~150 MB: comfy-cli bundles ffmpeg and uv).
+ARG WITH_COMFY_MCP=1
+RUN if [ "$WITH_COMFY_MCP" = "1" ]; then \
+      python -m venv /opt/comfy-mcp \
+      && /opt/comfy-mcp/bin/pip install --no-cache-dir "comfy-mcp>=0.10" "comfy-cli>=1.14" \
+      && /opt/comfy-mcp/bin/comfy --skip-prompt tracking disable; \
+    fi
+# A path that does not exist (WITH_COMFY_MCP=0) simply means "not installed".
+ENV COMFY_MCP_COMMAND=/opt/comfy-mcp/bin/comfy-mcp \
+    COMFY_BIN=/opt/comfy-mcp/bin/comfy
+
 # Copy source (ui/static/dist is .dockerignored, so it isn't clobbered below).
 COPY . .
 
