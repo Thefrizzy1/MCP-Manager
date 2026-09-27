@@ -55,6 +55,7 @@ from tools.ssh_smb import register_ssh_smb_tools
 from tools.system import register_system_tools
 from tools.utilities import register_utility_tools
 from tools.youtube import register_youtube_tools
+from tools.youtube_studio import register_youtube_studio_tools
 from tools.huggingface import register_huggingface_tools
 from tools.github import register_github_tools
 from tools.gitlab import register_gitlab_tools
@@ -108,6 +109,7 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_infrastructure_tools(m, allow=allow); register_fal_tools(m, allow=allow)
     register_public_apis_bulk(m, allow=allow)
     register_youtube_tools(m, allow=allow)
+    register_youtube_studio_tools(m, allow=allow)
     register_huggingface_tools(m, allow=allow)
     register_github_tools(m, allow=allow)
     register_gitlab_tools(m, allow=allow)

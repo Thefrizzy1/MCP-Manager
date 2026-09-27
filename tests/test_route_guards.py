@@ -20,6 +20,9 @@ PUBLIC_PATHS = {
     "/", "/ui", "/server/health",
     "/login", "/app",
     "/api/v1/auth/login", "/api/v1/auth/logout",
+    # Google's OAuth redirect. It finishes only a sign-in this process started
+    # (matching `state`, PKCE verifier held server-side) — see ui/api/google.py.
+    "/api/v1/google/callback",
 }
 
 

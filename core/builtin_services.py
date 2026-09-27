@@ -279,15 +279,43 @@ SERVICES: list[dict] = [
             {"name":"currency_rates","label":"Latest rates","params":[("base","Base currency","text")]}]},
 
   {"id":"youtube","label":"YouTube","icon":"▶️","tag":"media","section":"public",
-   "desc":"YouTube Data API v3 — search, channel stats, video details, trending",
-   "config_keys":[("YOUTUBE_API_KEY","API Key (Google Cloud — enable YouTube Data API v3)","",True)],
-   "health_url":lambda: f"https://www.googleapis.com/youtube/v3/i18nLanguages?part=snippet&hl=en&key={cfg.youtube_api_key}","health_headers":lambda: {},
-   "configured_keys":("youtube_api_key",),
+   "desc":"Research any channel or video without a key — transcripts, descriptions, chapters, most-replayed moments, comments, whole-channel stats tables, search rankings, autocomplete keywords, and competitor tracking over time. An API key makes counts exact and adds publish dates",
+   "config_keys":[("YOUTUBE_API_KEY","API key (optional — Google Cloud, enable YouTube Data API v3)","",True)],
+   # Keyless by design, so the card is never "unconfigured". With a key the probe
+   # checks the key itself (a cheap 1-unit call); without one it checks that the
+   # public oEmbed endpoint the page-reading tools depend on answers.
+   "health_url":lambda: ("https://www.googleapis.com/youtube/v3/i18nLanguages?part=snippet&hl=en"
+                         if cfg.youtube_api_key else
+                         "https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+   "health_headers":lambda: {"X-Goog-Api-Key": cfg.youtube_api_key} if cfg.youtube_api_key else {},
+   "configured_keys":(),
    "documentation_url":"https://developers.google.com/youtube/v3/getting-started",
-   "tools":[{"name":"youtube_search","label":"Search Videos","params":[("query","Search terms","text"),("max_results","Max results","number")]},
-            {"name":"youtube_channel","label":"Channel Stats","params":[("channel","@handle or channel ID","text")]},
-            {"name":"youtube_video","label":"Video Details","params":[("video_id","Video ID","text")]},
-            {"name":"youtube_trending","label":"Trending","params":[("region","Region code","text"),("max_results","Max results","number")]}]},
+   "tools":[{"name":"youtube_search","label":"Search","params":[("query","Search terms","text"),("max_results","Max results","number"),("order","relevance|date","text")]},
+            {"name":"youtube_watch","label":"Watch (full read)","params":[("video","Video ID or URL","text"),("comments","Top comments","number")]},
+            {"name":"youtube_transcript","label":"Transcript","params":[("video","Video ID or URL","text"),("lang","Language","text")]},
+            {"name":"youtube_video","label":"Video stats","params":[("video_id","Video ID or URL","text")]},
+            {"name":"youtube_comments","label":"Comments","params":[("video","Video ID or URL","text"),("max_results","Max","number"),("order","relevance|time","text")]},
+            {"name":"youtube_channel","label":"Channel profile","params":[("channel","@handle, ID or URL","text")]},
+            {"name":"youtube_channel_videos","label":"Channel uploads table","params":[("channel","@handle, ID or URL","text"),("tab","videos|shorts|streams","text"),("max_results","Max","number"),("sort","recent|views|views_per_day","text")]},
+            {"name":"youtube_keywords","label":"Autocomplete keywords","params":[("query","Seed keyword","text"),("source","youtube|google|both","text"),("expand","A–Z long tail","text")]},
+            {"name":"youtube_track","label":"Track channels","params":[("action","add|remove|list|snapshot","text"),("channel","@handle","text")]},
+            {"name":"youtube_track_report","label":"Tracker report","params":[("channel","Channel (empty = all)","text"),("days","Days","number")]},
+            {"name":"youtube_ask_video","label":"Gemini watches it","params":[("video","Video ID or URL","text"),("question","Question","text")]},
+            {"name":"youtube_trending","label":"Trending (key)","params":[("region","Region code","text"),("max_results","Max results","number")]}]},
+
+  {"id":"youtube_studio","label":"YouTube Studio & Search Console","icon":"📈","tag":"media","section":"public",
+   "desc":"Your own channel's real numbers — watch time, retention, the YouTube search terms that found you, traffic sources, audience, impressions and CTR — plus Google Search Console for your sites. One Google login: add a Desktop-app OAuth client here, then connect under Settings → Google account",
+   "config_keys":[("GOOGLE_OAUTH_CLIENT_ID","OAuth client ID (Desktop app type)","…apps.googleusercontent.com",False),
+                  ("GOOGLE_OAUTH_CLIENT_SECRET","OAuth client secret","",True),
+                  ("GOOGLE_OAUTH_REDIRECT_URI","Redirect URI (optional — only for an https Plutus address)","",False)],
+   # No probe: whether the client works is only known once somebody signs in,
+   # and Settings → Google account shows exactly that.
+   "health_url":None,"health_headers":lambda: {},
+   "configured_keys":("google_oauth_client_id","google_oauth_client_secret"),
+   "documentation_url":"https://developers.google.com/youtube/analytics",
+   "tools":[{"name":"youtube_analytics","label":"Analytics","params":[("report","overview|daily|top_videos|search_terms|traffic_sources|retention|…","text"),("days","Days","number"),("video","Video (optional)","text")]},
+            {"name":"youtube_reach","label":"Impressions & CTR","params":[("days","Days","number"),("video","Video (optional)","text")]},
+            {"name":"search_console_query","label":"Search Console","params":[("site","Property (empty = list)","text"),("dimension","query|page|country|device|date","text")]}]},
 
   {"id":"agent_db","label":"Agent Database","icon":"🗄","tag":"storage","section":"system",
    "desc":"Plutus's own SQLite store — the always-writable fallback when Nextcloud, Obsidian or the filesystem are unavailable",
@@ -476,7 +504,7 @@ SERVICE_LOGO_DOMAIN: dict[str, str] = {
     # duplicate keys were removed, kept for parity.
     "currency": "ecb.europa.eu", "google": "google.com",
     "github": "github.com", "gitlab": "gitlab.com", "huggingface": "huggingface.co",
-    "youtube": "youtube.com",
+    "youtube": "youtube.com", "youtube_studio": "studio.youtube.com",
     # — dashboard bookmarks / public aggregates (no SERVICES row) —
     "pub_network": "httpbin.org", "pub_geo_time": "openstreetmap.org",
     "pub_finance_crypto": "coingecko.com", "pub_fun": "quotable.io",
@@ -498,6 +526,7 @@ SERVICE_ICON_SLUG: dict[str, str] = {
     "comfyui": "comfyui", "ntfy": "ntfy", "maps": "openstreetmap", "websearch": "duckduckgo",
     "wikipedia": "wikipedia", "google": "google", "currency": "eurostat",
     "github": "github", "gitlab": "gitlab", "huggingface": "huggingface", "youtube": "youtube",
+    "youtube_studio": "youtube",
     "pub_network": "cloudflare", "pub_geo_time": "openstreetmap", "pub_finance_crypto": "coingecko",
     "pub_fun": "steam", "pub_education": "wikimediafoundation", "pub_games": "nintendo",
     "pub_space": "nasa", "pub_dev_culture": "github",

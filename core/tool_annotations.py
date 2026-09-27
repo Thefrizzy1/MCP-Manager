@@ -19,7 +19,7 @@ from __future__ import annotations
 # Reaches the public internet. Everything else talks to LAN/local services
 # (jellyfin, *arr, immich, home assistant, nextcloud, obsidian, docker, omv,
 # ssh, smb, comfyui, n8n, syncthing, tailscale, ntfy, ...).
-_INTERNET_PREFIXES = ("pub_", "fal_", "habitica_")
+_INTERNET_PREFIXES = ("pub_", "fal_", "habitica_", "youtube_", "search_console_")
 _INTERNET_TOOLS = {
     "web_search", "web_fetch", "google_search", "wikipedia_summary",
     "weather_current", "weather_forecast", "get_context",

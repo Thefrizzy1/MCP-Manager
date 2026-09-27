@@ -17,6 +17,7 @@ from ui.api import (
     connections,
     discover,
     files,
+    google,
     health,
     profiles,
     providers,
@@ -34,6 +35,9 @@ from ui.runtime import DIST_DIR, ICONS_DIR, STATIC_DIR, ui_lifespan
 _PUBLIC_ROUTERS = (
     public.router,
     auth.public_router,
+    # Only the OAuth callback: Google redirects the consenting browser there,
+    # often on another origin (localhost), so no session cookie arrives with it.
+    google.public_router,
 )
 
 # Routers whose every route is guarded by verify_auth.
@@ -47,6 +51,7 @@ _AUTHED_ROUTERS = (
     profiles.router,
     providers.router,
     reddit.router,
+    google.router,
     agents.router,
     auth.router,
     settings.router,

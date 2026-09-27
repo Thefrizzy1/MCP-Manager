@@ -210,6 +210,15 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     openapi_discover.py    Introspect a service's OpenAPI spec.
     observability.py       In-memory route latency/status ring buffer.
 
+  YouTube research
+    youtube_scrape.py      Keyless reading of public YouTube pages via yt-dlp:
+                           metadata, transcripts, replay heatmap, channel tabs,
+                           search results, comments, autocomplete parsing.
+    youtube_store.py       SQLite snapshots of tracked channels and their videos.
+    youtube_reporting.py   Reporting API: the daily impressions/CTR report job.
+    google_oauth.py        One Google login (PKCE, refresh token in data/) for
+                           YouTube Analytics, reach reports and Search Console.
+
   Scheduling & misc
     schedule_store.py      Persistent CRUD + cron validation.
     scheduler.py           APScheduler runtime firing agent/tool schedules.
@@ -223,7 +232,8 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
 tools/               One module per domain, each exposing `register_*_tools(mcp)`:
   media.py personal.py photos.py system.py comfyui.py utilities.py obsidian.py
   monitoring.py nextcloud.py infrastructure.py fal_tools.py public_apis_bulk.py
-  ssh_smb.py github.py gitlab.py youtube.py huggingface.py social.py scrape.py
+  ssh_smb.py github.py gitlab.py youtube.py youtube_studio.py huggingface.py
+  social.py scrape.py
   agents.py rooms.py agent_db.py prompts.py resources.py apps.py
   mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
                         Plutus's own /mcp, applying the run's scope. This is how

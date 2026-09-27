@@ -56,6 +56,12 @@ _TOOL_KEYS_EXACT: dict[str, tuple[str, ...]] = {
     "comfyui_status": ("comfyui_url",),
     "comfyui_queue": ("comfyui_url",),
     "comfyui_get_models": ("comfyui_url",),
+    # The rest of youtube_* reads public pages; only the chart needs the Data API.
+    "youtube_trending": ("youtube_api_key",),
+    # Owner-only numbers: the OAuth client must exist before anyone can sign in.
+    "youtube_analytics": ("google_oauth_client_id", "google_oauth_client_secret"),
+    "youtube_reach": ("google_oauth_client_id", "google_oauth_client_secret"),
+    "search_console_query": ("google_oauth_client_id", "google_oauth_client_secret"),
 }
 
 # Longest-prefix wins after exact match.
@@ -76,7 +82,7 @@ _TOOL_PREFIX_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("syncthing_", ("syncthing_url", "syncthing_api_key")),
     ("ntfy_", ("ntfy_url",)),
     ("fal_", ("fal_key",)),
-    ("youtube_", ("youtube_api_key",)),
+    ("youtube_", ()),
     ("pub_", ()),
 )
 
@@ -151,6 +157,14 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "youtube_channel": {"channel": "@YouTube"},
     "youtube_video": {"video_id": "dQw4w9WgXcQ"},
     "youtube_trending": {"region": "US", "max_results": 3},
+    "youtube_watch": {"video": "dQw4w9WgXcQ", "max_chars": 1500},
+    "youtube_transcript": {"video": "dQw4w9WgXcQ", "max_chars": 1000},
+    "youtube_comments": {"video": "dQw4w9WgXcQ", "max_results": 3},
+    "youtube_channel_videos": {"channel": "@YouTube", "max_results": 5},
+    "youtube_keywords": {"query": "comfyui"},
+    "youtube_track_report": {},
+    "youtube_analytics": {"report": "overview", "days": 7},
+    "search_console_query": {},
     # The GitHub read tools need a repo. A public one keeps the smoke run
     # meaningful without a token and without touching anything of the user's.
     "github_repo_info": {"repo": "Thefrizzy1/MCP-Manager"},
@@ -235,6 +249,12 @@ SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
         "sonarr_add_series",
         "fs_write_file",
         "n8n_trigger_webhook",
+        # Writes the tracker database; a smoke run must not add channels.
+        "youtube_track",
+        # Spends the owner's Gemini quota (free tier: 8 hours of video a day).
+        "youtube_ask_video",
+        # Downloads up to 60 daily report files — a real read, but not a probe.
+        "youtube_reach",
     }
 )
 

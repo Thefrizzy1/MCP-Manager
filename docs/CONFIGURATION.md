@@ -70,12 +70,36 @@ Tools stay disabled until their required keys are present.
 | ComfyUI | `COMFYUI_URL` |
 | fal.ai | `FAL_KEY` |
 | Google Search | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` |
+| YouTube | optional `YOUTUBE_API_KEY` (exact counts + publish dates; everything but trending works without it) |
+| YouTube Studio & Search Console | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, optional `GOOGLE_OAUTH_REDIRECT_URI` — then **Settings → Google account → Connect** |
 | Weather | `WEATHER_DEFAULT_LOCATION` |
 | SSH hosts / SMB shares | `SSH_HOSTS`, `SMB_SHARES` (JSON arrays; managed via the dashboard) |
 
 There are additional `*_URL` "bookmark" integrations (Audiobookshelf, Paperless,
 Vaultwarden, Grafana, Pi-hole, …) that add dashboard cards without dedicated tools — see
 `config.py` for the full list.
+
+### YouTube Studio & Search Console (Google login)
+
+Watch time, retention, the search terms that found your videos, impressions/CTR
+and Search Console are owner-only, so they need one Google sign-in:
+
+1. In Google Cloud Console, enable **YouTube Data API v3**, **YouTube Analytics
+   API**, **YouTube Reporting API** and **Google Search Console API**.
+2. OAuth consent screen: add yourself as a test user, then set publishing status
+   to **In production**. Left in *Testing*, Google expires the login every 7 days.
+3. Create an OAuth client of type **Desktop app**; paste its id and secret on the
+   *YouTube Studio & Search Console* card.
+4. **Settings → Google account → Connect.** Google redirects to
+   `http://localhost:<UI_PORT>/api/v1/google/callback`. Opened on the server
+   itself it finishes by itself; anywhere else the browser shows "can't connect" —
+   copy that whole address into the box under Connect. (With an https name for
+   Plutus, set `GOOGLE_OAUTH_REDIRECT_URI` to `https://<name>/api/v1/google/callback`
+   and use a *Web application* client instead.)
+
+The refresh token is stored in `data/google_oauth.json` (0600). Connecting also
+registers YouTube's daily impressions report; the first files arrive ~48 h later
+with the previous 30 days backfilled.
 
 > **Security:** `UI_PASSWORD`, `MCP_BEARER_TOKEN`, and all service credentials are
 > stored in `.env`. `chmod 600 .env` and keep it out of VCS (already in `.gitignore`).

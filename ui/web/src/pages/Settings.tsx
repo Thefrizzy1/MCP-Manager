@@ -10,6 +10,7 @@ import { ClientExportModal } from '@/components/settings/ClientExportModal'
 import { AiProvidersSection } from '@/components/settings/AiProvidersSection'
 import { UsersSection } from '@/components/settings/UsersSection'
 import { RedditAccountsSection } from '@/components/settings/RedditAccountsSection'
+import { GoogleAccountSection } from '@/components/settings/GoogleAccountSection'
 import { useToast } from '@/components/ui/Toast'
 
 interface DashAuthNet {
@@ -196,6 +197,8 @@ export function Settings() {
           <AiProvidersSection />
 
           <RedditAccountsSection />
+
+          <GoogleAccountSection />
 
           <Section title="Defaults">
             <Row label="Weather city">

@@ -175,8 +175,17 @@ class Config(BaseModel):
     google_api_key: str = _get("GOOGLE_API_KEY")
     google_cse_id: str = _get("GOOGLE_CSE_ID")
 
-    # YouTube Data API v3 (same Google Cloud key type; separate key recommended)
+    # YouTube Data API v3 (same Google Cloud key type; separate key recommended).
+    # Optional: the YouTube tools read public pages without it. With it, view
+    # counts are exact rather than the page's rounded "11K" and publish dates come
+    # back with every list — for about one quota unit per 50 videos.
     youtube_api_key: str = _get("YOUTUBE_API_KEY")
+    # Google OAuth client ("Desktop app" type) for the owner-only numbers:
+    # YouTube Analytics, the Reporting API's impressions/CTR, and Search Console.
+    # The login itself is stored in data/google_oauth.json, not here.
+    google_oauth_client_id: str = _get("GOOGLE_OAUTH_CLIENT_ID")
+    google_oauth_client_secret: str = _get("GOOGLE_OAUTH_CLIENT_SECRET")
+    google_oauth_redirect_uri: str = _get("GOOGLE_OAUTH_REDIRECT_URI")
     # Reddit — a "script" app (https://www.reddit.com/prefs/apps). Optional: the
     # social tools read public feeds without it. With it, requests go to
     # oauth.reddit.com as *you*, which is the difference between an anonymous

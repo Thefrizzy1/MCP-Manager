@@ -92,7 +92,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "system_ops":    ["docker_", "omv_", "ssh_", "fail2ban_", "tailscale_"],
     "ai":            ["comfyui_", "fal_", "huggingface_"],
     "weather":       ["weather_", "get_context"],
-    "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_"],
+    "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_", "search_console_"],
     "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_"],
     # Source forges. Previously uncategorised, which meant the slicer could not
     # remove them at all: 26 GitHub/GitLab schemas rode along in every single

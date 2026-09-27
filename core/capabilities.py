@@ -56,7 +56,7 @@ def _fine_capability(name: str) -> str | None:
         return "models"
     if n.startswith(("github_", "gitlab_")):
         return "code"
-    if n in {"web_search", "web_fetch", "google_search", "wikipedia_summary"}:
+    if n in {"web_search", "web_fetch", "google_search", "wikipedia_summary"} or n.startswith("search_console_"):
         return "search"
     if n.startswith("weather_") or n == "get_context":
         return "weather"

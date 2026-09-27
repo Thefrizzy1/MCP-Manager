@@ -284,9 +284,11 @@ richer and the scripts/opportunities get sharper over time.
 Placeholders in a playbook prompt: `{{LIBRARY}}` (your library folder) and
 `{{DATE}}` (today) are filled in at run time.
 
-> **"Check my numbers":** basic channel/competitor research works from public web
-> data. Real analytics (CTR, retention, impressions) need the YouTube Data/Analytics
-> API — add a YouTube MCP server to `allowed_tools` when you want that (phase 2).
+> **"Check my numbers":** channel and competitor research works from public
+> YouTube data with the `youtube_*` tools (transcripts, channel stats tables,
+> comments, autocomplete, tracking). Your own analytics — watch time, retention,
+> search terms, impressions/CTR — come from `youtube_analytics` / `youtube_reach`
+> once a Google account is connected (Settings → Google account).
 
 Schedule kinds: `agent` (ad-hoc prompt), `task` (a playbook by id — edits to the
 playbook flow through), or `tool` (a single Plutus tool call).
