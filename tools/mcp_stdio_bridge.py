@@ -73,6 +73,14 @@ def main() -> int:
     if not url:
         log("PLUTUS_MCP_URL is not set — nothing to bridge to")
         return 1
+    # MCP over stdio is UTF-8 by spec. Python picks the locale's codec instead —
+    # cp1252 on Windows — and the first tool description with a character outside
+    # it ("→") killed the bridge mid tools/list, leaving the agent with no tools.
+    for stream in (sys.stdin, sys.stdout):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass          # already-wrapped stream (tests, an embedding host)
     deny = denied_tools()
     client = McpHttpClient(url, os.environ.get("PLUTUS_MCP_TOKEN", "").strip())
     log(f"bridging to {url}" + (f", {len(deny)} tools denied" if deny else ""))
