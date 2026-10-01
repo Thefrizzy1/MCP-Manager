@@ -30,9 +30,13 @@ ANALYTICS = "https://youtubeanalytics.googleapis.com/v2/reports"
 SEARCH_CONSOLE = "https://www.googleapis.com/webmasters/v3"
 
 # How YouTube names its traffic sources in Studio, keyed by the API's code.
+# SUBSCRIBER is NOT "your subscribers": the API defines it as "referred from feeds on the
+# YouTube homepage or from YouTube subscription features" — Studio's "Browse features".
+# (Labelled "Subscriptions / feeds" until 2026-10-01, which read as subscriber views; on
+# the_frizzy1 that source was 23k views in 90 days while subscribed viewers were 3k.)
 TRAFFIC_SOURCES = {
     "YT_SEARCH": "YouTube search", "RELATED_VIDEO": "Suggested videos",
-    "BROWSE": "Browse features", "SUBSCRIBER": "Subscriptions / feeds",
+    "SUBSCRIBER": "Browse features (home page + subscriptions)",
     "EXT_URL": "External", "NO_LINK_OTHER": "Direct or unknown", "PLAYLIST": "Playlists",
     "YT_CHANNEL": "Channel pages", "NOTIFICATION": "Notifications", "SHORTS": "Shorts feed",
     "END_SCREEN": "End screens", "YT_OTHER_PAGE": "Other YouTube features",
@@ -242,6 +246,31 @@ def register_youtube_studio_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
                 "relativeRetentionPerformance: against YouTube videos of similar length — 0.5 is the "
                 "middle, higher is better. Definitions are YouTube's._")
 
+    class ReachSetupInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    @mcp.tool(name="youtube_reach_setup",
+              annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True})
+    async def youtube_reach_setup(params: ReachSetupInput) -> str:
+        """Register YouTube's daily impressions/CTR report for your channel (what
+        youtube_reach reads). Idempotent: an existing report job is reused, never
+        duplicated. Same as Settings → Google account → Set up impressions reports."""
+        try:
+            token = await go.access_token(_ROOT)
+            job, created = await yr.ensure_reach_job(token)
+        except go.NotConnected as e:
+            return str(e)
+        except Exception as e:
+            go.update_meta(_ROOT, reach_job_error=str(e)[:300])
+            return _explain(e)
+        since = str(job.get("createTime") or "")[:10]
+        go.update_meta(_ROOT, reach_job_created=since or "yes", reach_job_error="")
+        if created:
+            return ("Impressions report registered with YouTube. The first daily files arrive about "
+                    "48 hours from now, with the 30 days before today backfilled — then youtube_reach "
+                    "has per-video impressions and CTR.")
+        return f"The impressions report was already set up ({since}); youtube_reach reads it."
+
     class ReachInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         days: int = Field(default=28, description="Days back (reports are kept 60 days)", ge=1, le=60)
@@ -265,9 +294,9 @@ def register_youtube_studio_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
         except Exception as e:
             return _explain(e)
         if not job:
-            return ("No impressions report is set up for this channel yet. Press **Set up "
-                    "impressions reports** under Settings → Google account (it registers a daily "
-                    "report with YouTube; the first files arrive about 48 hours later).")
+            return ("No impressions report is set up for this channel yet. Run youtube_reach_setup "
+                    "(or press **Set up impressions reports** under Settings → Google account) — it "
+                    "registers a daily report with YouTube; the first files arrive about 48 hours later.")
         since = (date.today() - timedelta(days=params.days)).isoformat() + "T00:00:00Z"
         try:
             reports = await yr.list_reports(token, job["id"], since)

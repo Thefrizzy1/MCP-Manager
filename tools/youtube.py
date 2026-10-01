@@ -233,7 +233,9 @@ def register_youtube_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         query: str = Field(..., description="Search terms", min_length=1, max_length=300)
         max_results: int = Field(default=10, description="Max results (1–50)", ge=1, le=50)
-        order: Literal["relevance", "date"] = Field(default="relevance", description="relevance = YouTube's ranking; date = newest first")
+        order: Literal["relevance", "today", "week", "month", "year", "date"] = Field(
+            default="relevance", description="relevance = all uploads; today/week/month/year = only uploads "
+                                             "from that period (YouTube no longer sorts by date; 'date' = week)")
 
     @mcp.tool(name="youtube_search", annotations={"readOnlyHint": True})
     async def youtube_search(params: SearchInput) -> str:

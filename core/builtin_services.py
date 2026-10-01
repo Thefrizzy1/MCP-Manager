@@ -326,6 +326,7 @@ SERVICES: list[dict] = [
    "documentation_url":"https://developers.google.com/youtube/analytics",
    "tools":[{"name":"youtube_analytics","label":"Analytics","params":[("report","overview|daily|top_videos|search_terms|traffic_sources|retention|…","text"),("days","Days","number"),("video","Video (optional)","text")]},
             {"name":"youtube_reach","label":"Impressions & CTR","params":[("days","Days","number"),("video","Video (optional)","text")]},
+            {"name":"youtube_reach_setup","label":"Set up impressions report","params":[]},
             {"name":"search_console_query","label":"Search Console","params":[("site","Property (empty = list)","text"),("dimension","query|page|country|device|date","text")]}]},
 
   {"id":"agent_db","label":"Agent Database","icon":"🗄","tag":"storage","section":"system",

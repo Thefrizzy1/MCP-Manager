@@ -339,11 +339,24 @@ def channel_listing(ref: str, tab: str = "videos", limit: int = 30) -> dict:
     }
 
 
+# YouTube's upload-date filters (the results page's "sp" parameter). There is no
+# working "sort by upload date" any more: YouTube ignores sp=CAI%3D, and yt-dlp's
+# ytsearchdate prefix is gone ("No suitable extractor"). The date filter still works —
+# verified 2026-10-01: "this week" returned only videos from the last few days.
+UPLOAD_FILTERS = {"today": "EgIIAg%3D%3D", "week": "EgIIAw%3D%3D", "month": "EgIIBA%3D%3D", "year": "EgIIBQ%3D%3D"}
+
+
 def search(query: str, limit: int = 10, order: str = "relevance") -> list[dict]:
-    """YouTube's own results page for a query — the ranking a viewer sees."""
-    prefix = "ytsearchdate" if order == "date" else "ytsearch"
-    info = _extract(f"{prefix}{int(limit)}:{query}", extract_flat="in_playlist")
-    return [_entry(e) for e in (info.get("entries") or []) if e.get("id")]
+    """YouTube's own results page for a query — the ranking a viewer sees. ``order`` other
+    than relevance restricts it to uploads from that period (still YouTube's ranking)."""
+    sp = UPLOAD_FILTERS.get("week" if order == "date" else order)
+    if sp:
+        from urllib.parse import quote_plus
+        info = _extract(f"https://www.youtube.com/results?search_query={quote_plus(query)}&sp={sp}",
+                        extract_flat="in_playlist", playlistend=int(limit))
+    else:
+        info = _extract(f"ytsearch{int(limit)}:{query}", extract_flat="in_playlist")
+    return [_entry(e) for e in (info.get("entries") or [])[:int(limit)] if e.get("id")]
 
 
 def comments(video_id: str, limit: int = 20, order: str = "top") -> list[dict]:

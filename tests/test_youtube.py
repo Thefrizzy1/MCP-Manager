@@ -214,9 +214,9 @@ def test_registration_and_the_one_writer():
         "youtube_search", "youtube_channel", "youtube_channel_videos", "youtube_video",
         "youtube_watch", "youtube_transcript", "youtube_comments", "youtube_keywords",
         "youtube_trending", "youtube_ask_video", "youtube_track", "youtube_track_report",
-        "youtube_analytics", "youtube_reach", "search_console_query"}
+        "youtube_analytics", "youtube_reach", "youtube_reach_setup", "search_console_query"}
     writers = {n for n, t in tools.items() if not t.annotations.readOnlyHint}
-    assert writers == {"youtube_track"}
+    assert writers == {"youtube_track", "youtube_reach_setup"}
     from core.agent_permissions import is_outward
     assert not any(is_outward(n, t.annotations.readOnlyHint) for n, t in tools.items())
 
@@ -421,7 +421,8 @@ def test_without_a_client_the_tools_explain_the_setup(monkeypatch):
     from core.tool_registry import looks_like_missing_service_config
     from tools import youtube_studio as ST
     tools = _tools(ST.register_youtube_studio_tools)
-    for name, payload in (("youtube_analytics", {}), ("youtube_reach", {}), ("search_console_query", {})):
+    for name, payload in (("youtube_analytics", {}), ("youtube_reach", {}), ("youtube_reach_setup", {}),
+                          ("search_console_query", {})):
         out = _run(tools[name], payload)
         assert "GOOGLE_OAUTH_CLIENT_ID" in out and looks_like_missing_service_config(out), name
 
@@ -576,3 +577,50 @@ def test_live_transcript_of_a_public_video():
     assert v["title"] and v["views"] and v["heatmap"]
     t = ys.fetch_transcript(v)
     assert len(t["segments"]) > 20
+
+
+def test_reach_setup_registers_once_and_reuses_the_job(monkeypatch, tmp_path):
+    """The report job is created only when none exists — a second run must not make a second job."""
+    from tools import youtube_studio as ST
+    monkeypatch.setattr(ST, "_ROOT", tmp_path)
+
+    async def tok(_root):
+        return "AT"
+    monkeypatch.setattr(go, "access_token", tok)
+    jobs, posts = [], []
+
+    async def call(method, url, token, *, params=None, json=None, raw=False):
+        if method == "GET":
+            return {"jobs": list(jobs)}
+        posts.append(json)
+        jobs.append({"id": "J1", "reportTypeId": yr.REACH_TYPE, "createTime": "2026-10-01T18:00:00Z"})
+        return jobs[-1]
+    monkeypatch.setattr(yr, "_call", call)
+    tool = _tools(ST.register_youtube_studio_tools)["youtube_reach_setup"]
+    assert "registered" in _run(tool, {})
+    assert "already set up (2026-10-01)" in _run(tool, {})
+    assert len(posts) == 1 and posts[0]["reportTypeId"] == yr.REACH_TYPE
+
+
+def test_dated_search_uses_youtubes_upload_filter(monkeypatch):
+    """YouTube dropped sort-by-date (sp=CAI%3D is ignored, ytsearchdate is gone); the
+    upload-date filter is what still works, so 'date' maps to 'uploaded this week'."""
+    seen = []
+
+    def fake(url, **kw):
+        seen.append((url, kw))
+        return {"entries": [{"id": "dQw4w9WgXcQ", "title": "t"}]}
+    monkeypatch.setattr(ys, "_extract", fake)
+    ys.search("comfy ui", 5, "date")
+    ys.search("comfy ui", 5, "month")
+    ys.search("comfy ui", 5)
+    assert seen[0][0] == "https://www.youtube.com/results?search_query=comfy+ui&sp=EgIIAw%3D%3D"
+    assert seen[0][1]["playlistend"] == 5
+    assert seen[1][0].endswith("sp=EgIIBA%3D%3D")
+    assert seen[2][0] == "ytsearch5:comfy ui"
+
+
+def test_the_browse_source_is_not_called_subscribers():
+    from tools.youtube_studio import TRAFFIC_SOURCES
+    assert "Browse features" in TRAFFIC_SOURCES["SUBSCRIBER"]
+    assert "BROWSE" not in TRAFFIC_SOURCES

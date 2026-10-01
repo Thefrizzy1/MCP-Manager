@@ -62,6 +62,7 @@ _TOOL_KEYS_EXACT: dict[str, tuple[str, ...]] = {
     "youtube_analytics": ("google_oauth_client_id", "google_oauth_client_secret"),
     "youtube_reach": ("google_oauth_client_id", "google_oauth_client_secret"),
     "search_console_query": ("google_oauth_client_id", "google_oauth_client_secret"),
+    "youtube_reach_setup": ("google_oauth_client_id", "google_oauth_client_secret"),
 }
 
 # Longest-prefix wins after exact match.
@@ -267,6 +268,8 @@ SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
         "youtube_ask_video",
         # Downloads up to 60 daily report files — a real read, but not a probe.
         "youtube_reach",
+        # Registers a reporting job with YouTube — a (harmless, idempotent) write.
+        "youtube_reach_setup",
         # Reads as the user's X account: every call counts against its rate limit,
         # and a burst from a test button is how an account gets flagged.
         "twitter_search",
