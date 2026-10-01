@@ -348,3 +348,55 @@ def test_ads_scope_is_only_requested_with_a_developer_token(monkeypatch):
     assert go.ADS_SCOPE not in go.requested_scopes()
     monkeypatch.setattr(cfg, "google_ads_developer_token", "DEV")
     assert go.ADS_SCOPE in go.requested_scopes()
+
+
+# ── Google Trends ────────────────────────────────────────────────────────────
+
+def test_trends_json_strips_the_xssi_guard():
+    assert K.trends_json(")]}'\n{\"a\": 1}") == {"a": 1}
+    assert K.trends_json(")]}',\n{\"b\": [2]}") == {"b": [2]}
+    with pytest.raises(ValueError):
+        K.trends_json("<html>429</html>")
+
+
+def test_trends_request_and_sampling():
+    req = K.trends_explore_request(["comfyui", "midjourney"], "today 12-m", "DE", "youtube")
+    assert req["property"] == "youtube"
+    assert req["comparisonItem"][1] == {"keyword": "midjourney", "geo": "DE", "time": "today 12-m"}
+    pts = list(range(53))
+    s = K.sample_rows(pts)
+    assert len(s) == 14 and s[0] == 0 and s[-1] == 52
+    assert K.sample_rows([1, 2, 3]) == [1, 2, 3]
+
+
+def test_trends_compare_end_to_end(monkeypatch):
+    """explore → widget token → multiline, values shown exactly as Trends gives them."""
+    calls = []
+
+    async def fake_get(path, params):
+        calls.append((path, params))
+        if path == "explore":
+            return {"widgets": [{"id": "TIMESERIES", "token": "TOK", "request": {"r": 1}},
+                                {"id": "RELATED_QUERIES_0", "token": "R0", "request": {"r": 2}}]}
+        if path == "widgetdata/multiline":
+            return {"default": {"averages": [78, 20], "timelineData": [
+                {"formattedAxisTime": "Oct 5, 2025", "formattedValue": ["60", "25"]},
+                {"formattedAxisTime": "Sep 27, 2026", "formattedValue": ["79", "17"], "isPartial": True}]}}
+        return {"default": {"rankedList": [{"rankedKeyword": [{"query": "comfyui video", "formattedValue": "100"}]},
+                                           {"rankedKeyword": [{"query": "comfyui ltx", "formattedValue": "Breakout"}]}]}}
+
+    monkeypatch.setattr(K, "_trends_get", fake_get)
+    out = _run(_tools(K.register_keyword_tools)["trends_compare"],
+               {"keywords": "comfyui, stable diffusion", "search_type": "youtube", "related": True})
+    assert json.loads(calls[0][1]["req"])["property"] == "youtube"
+    assert calls[1] == ("widgetdata/multiline", {"req": json.dumps({"r": 1}), "token": "TOK"})
+    assert "| comfyui | 78 |" in out and "| stable diffusion | 20 |" in out
+    assert "| Sep 27, 2026 (partial) | 79 | 17 |" in out
+    assert "comfyui ltx (Breakout)" in out
+    # Only one RELATED widget exists, so only one related block is fetched.
+    assert [c[0] for c in calls].count("widgetdata/relatedsearches") == 1
+
+
+def test_trends_rejects_a_bad_country():
+    out = _run(_tools(K.register_keyword_tools)["trends_compare"], {"keywords": "x", "country": "1"})
+    assert out.startswith("Error:")

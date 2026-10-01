@@ -19,12 +19,23 @@ and the top-of-page bid range. These are *Google Search* volumes: Google
 publishes no search volume for YouTube itself — youtube_keywords (autocomplete)
 and youtube_analytics' search_terms report are the YouTube-side signals.
 
+**Google Trends** (``trends_compare``) is the free answer to "how does interest
+in X compare with Y": a 0–100 index, relative to the highest point in the
+comparison, for up to five terms — and, unlike Keyword Planner, it can be
+restricted to *YouTube* searches. No counts, no key. Google offers no open
+Trends API, so this reads the endpoints trends.google.com's own page calls; they
+answer a normal client but rate-limit bursts (429), hence one request at a time,
+spaced, with patient retries on a fresh cookie.
+
 Values are shown as the source returns them. Google may round volumes into
 buckets for Ads accounts with little or no spend; that is Google's rounding,
 not ours.
 """
 
+import asyncio
+import json
 import re
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -240,6 +251,103 @@ async def _dataforseo(path: str, task: dict) -> list:
     return t.get("result") or []
 
 
+# ── Google Trends ────────────────────────────────────────────────────────────
+
+TRENDS = "https://trends.google.com/trends"
+TRENDS_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
+TIMEFRAMES = {"7d": "now 7-d", "1m": "today 1-m", "3m": "today 3-m", "12m": "today 12-m",
+              "5y": "today 5-y", "all": "all"}
+# Trends' own name for each search surface ("froogle" is Shopping, historically).
+PROPERTIES = {"web": "", "youtube": "youtube", "images": "images", "news": "news", "shopping": "froogle"}
+_TRENDS_GATE = asyncio.Lock()
+_TRENDS_STATE: dict = {"cookies": None, "at": 0.0, "last": 0.0}
+_TRENDS_MIN_INTERVAL = 1.5
+
+
+def trends_json(text: str):
+    """Trends prefixes every answer with an XSSI guard — )]}' and, on some
+    endpoints, a comma. The JSON starts at the first brace."""
+    i = text.find("{")
+    if i < 0:
+        raise ValueError("Google Trends returned no JSON")
+    return json.loads(text[i:])
+
+
+def trends_explore_request(terms: list[str], timeframe: str, geo: str, prop: str) -> dict:
+    return {"comparisonItem": [{"keyword": t, "geo": geo, "time": timeframe} for t in terms],
+            "category": 0, "property": prop}
+
+
+def sample_rows(points: list, n: int = 14) -> list:
+    """At most ``n`` evenly spaced points, always keeping the first and the last."""
+    if len(points) <= n:
+        return list(points)
+    step = (len(points) - 1) / (n - 1)
+    return [points[round(i * step)] for i in range(n)]
+
+
+async def _trends_get(path: str, params: dict) -> dict:
+    """One Trends request, spaced from the last; a 429 is retried twice (5 s, then
+    15 s) on a fresh cookie before giving up."""
+    async with _TRENDS_GATE:
+        for backoff in (5, 15, 0):
+            wait = _TRENDS_MIN_INTERVAL - (time.time() - _TRENDS_STATE["last"])
+            if wait > 0:
+                await asyncio.sleep(wait)
+            headers = {"User-Agent": TRENDS_UA, "Accept-Language": "en-US,en;q=0.9"}
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=headers,
+                                         cookies=_TRENDS_STATE["cookies"] or {}) as c:
+                if not _TRENDS_STATE["cookies"] or time.time() - _TRENDS_STATE["at"] > 1800:
+                    # The page itself often answers 429, but it still sets the NID
+                    # cookie the API endpoints want.
+                    await c.get(f"{TRENDS}/explore", params={"q": "x"})
+                    _TRENDS_STATE.update(cookies=dict(c.cookies.items()), at=time.time())
+                r = await c.get(f"{TRENDS}/api/{path}", params={"hl": "en-US", "tz": "0", **params})
+            _TRENDS_STATE["last"] = time.time()
+            if r.status_code == 429 and backoff:
+                _TRENDS_STATE["cookies"] = None
+                await asyncio.sleep(backoff)
+                continue
+            if r.status_code == 429:
+                raise RuntimeError("Google Trends is rate-limiting this address (429). Try again in a few minutes.")
+            r.raise_for_status()
+            return trends_json(r.text)
+    raise RuntimeError("Google Trends did not answer.")
+
+
+def render_trends(terms: list[str], data: dict, *, label: str) -> str:
+    timeline = data.get("timelineData") or []
+    if not timeline:
+        return f"Google Trends has no data for {', '.join(terms)} ({label})."
+    avgs = data.get("averages") or []
+    lines = [f"## Google Trends — {label}",
+             "_0–100 = interest relative to the highest point in this comparison, not search counts._", ""]
+    if avgs:
+        lines += ["| Term | Average |", "|---|---|"]
+        lines += [f"| {t} | {a} |" for t, a in zip(terms, avgs)]
+        lines.append("")
+    lines += ["| Period | " + " | ".join(terms) + " |", "|---|" + "---|" * len(terms)]
+    for p in sample_rows(timeline):
+        when = p.get("formattedAxisTime") or p.get("formattedTime") or ""
+        vals = p.get("formattedValue") or [str(v) for v in p.get("value") or []]
+        lines.append(f"| {when}{' (partial)' if p.get('isPartial') else ''} | " + " | ".join(vals) + " |")
+    if len(timeline) > 14:
+        lines += ["", f"_{len(timeline)} data points in this range; 14 evenly spaced ones shown._"]
+    return NL.join(lines)
+
+
+def render_related(term: str, data: dict) -> str:
+    lists = (data.get("default") or {}).get("rankedList") or []
+    out = []
+    for title, lst in zip(("Top", "Rising"), lists[:2]):
+        items = (lst.get("rankedKeyword") or [])[:10]
+        if items:
+            out.append(f"**{title}:** " + " · ".join(
+                f"{k.get('query')} ({k.get('formattedValue')})" for k in items))
+    return NL.join([f"### Related searches for '{term}'", *(out or ["none"])])
+
+
 def register_keyword_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     from core.profiles import tool_filter
     mcp = tool_filter(mcp, allow)
@@ -314,3 +422,50 @@ def register_keyword_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         title = ("Keyword ideas from " if params.ideas else "Search volume: ") + ", ".join(kws[:5]) \
             + ("…" if len(kws) > 5 else "") + f" — {where}"
         return render(rows, title=title, source=source, show_monthly=len(rows) <= 5)
+
+    class TrendsInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        keywords: str = Field(..., min_length=1, max_length=400,
+                              description="1–5 terms to compare, comma-separated")
+        timeframe: Literal["7d", "1m", "3m", "12m", "5y", "all"] = Field(default="12m")
+        country: str = Field(default="", max_length=2, description="2-letter code (DE, US…) or empty = worldwide")
+        search_type: Literal["web", "youtube", "images", "news", "shopping"] = Field(
+            default="web", description="youtube = YouTube searches only")
+        related: bool = Field(default=False, description="Also list top and rising related searches per term")
+
+    @mcp.tool(name="trends_compare", annotations={"readOnlyHint": True, "openWorldHint": True})
+    async def trends_compare(params: TrendsInput) -> str:
+        """Compare interest in up to 5 terms over time with Google Trends (0–100
+        relative index, free, no key) — on Google web search or YouTube search.
+        Optional top/rising related searches."""
+        terms = [t.strip() for t in params.keywords.split(",") if t.strip()][:5]
+        if not terms:
+            return "Error: no keywords given."
+        geo = params.country.upper()
+        if geo and not re.fullmatch(r"[A-Z]{2}", geo):
+            return "Error: country must be a 2-letter code like DE or US."
+        req = trends_explore_request(terms, TIMEFRAMES[params.timeframe], geo, PROPERTIES[params.search_type])
+        try:
+            explore = await _trends_get("explore", {"req": json.dumps(req)})
+            widgets = explore.get("widgets") or []
+            ts = next((w for w in widgets if w.get("id") == "TIMESERIES"), None)
+            if ts is None:
+                return "Error: Google Trends returned no timeline for that request."
+            series = await _trends_get("widgetdata/multiline",
+                                       {"req": json.dumps(ts["request"]), "token": ts["token"]})
+            related = []
+            if params.related:
+                for i, term in enumerate(terms):
+                    w = next((w for w in widgets if w.get("id") in (f"RELATED_QUERIES_{i}", "RELATED_QUERIES")
+                              and (w.get("id") != "RELATED_QUERIES" or len(terms) == 1)), None)
+                    if w:
+                        rel = await _trends_get("widgetdata/relatedsearches",
+                                                {"req": json.dumps(w["request"]), "token": w["token"]})
+                        related.append(render_related(term, rel))
+        except RuntimeError as e:
+            return f"Error: {e}"
+        except Exception as e:
+            return _handle_error(e, "Google Trends")
+        label = f"{params.search_type} search · {geo or 'worldwide'} · {params.timeframe}"
+        out = render_trends(terms, series.get("default") or {}, label=label)
+        return (NL + NL).join([out, *related])

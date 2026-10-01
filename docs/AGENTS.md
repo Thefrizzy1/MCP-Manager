@@ -289,7 +289,8 @@ Placeholders in a playbook prompt: `{{LIBRARY}}` (your library folder) and
 > comments, autocomplete, tracking). Your own analytics — watch time, retention,
 > search terms, impressions/CTR — come from `youtube_analytics` / `youtube_reach`
 > once a Google account is connected (Settings → Google account). How many
-> people search Google for a topic at all is `keyword_volume` (Keyword Planner).
+> people search Google for a topic at all is `keyword_volume` (Keyword Planner);
+> `trends_compare` compares interest between topics for free, on Google or YouTube search.
 >
 > **Broad research:** `reach_doctor` shows which platforms are reachable right
 > now. Combine `exa_search` (web), `web_read` (any page as Markdown), Reddit/HN,

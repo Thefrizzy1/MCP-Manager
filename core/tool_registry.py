@@ -202,6 +202,7 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "rss_read": {"url": "https://hnrss.org/frontpage", "limit": 3},
     "v2ex_topics": {"feed": "hot", "limit": 3},
     "bilibili_search": {"query": "comfyui", "limit": 3},
+    "trends_compare": {"keywords": "comfyui, stable diffusion", "timeframe": "3m"},
 }
 TOOL_SMOKE_DEFAULTS.update(_PUB_DEFS)
 

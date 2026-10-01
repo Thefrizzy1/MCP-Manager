@@ -20,7 +20,7 @@ from __future__ import annotations
 # (jellyfin, *arr, immich, home assistant, nextcloud, obsidian, docker, omv,
 # ssh, smb, comfyui, n8n, syncthing, tailscale, ntfy, ...).
 _INTERNET_PREFIXES = ("pub_", "fal_", "habitica_", "youtube_", "search_console_",
-                      "exa_", "rss_", "twitter_", "bilibili_", "v2ex_", "keyword_")
+                      "exa_", "rss_", "twitter_", "bilibili_", "v2ex_", "keyword_", "trends_")
 _INTERNET_TOOLS = {
     "web_search", "web_fetch", "web_read", "google_search", "wikipedia_summary", "reach_doctor",
     "weather_current", "weather_forecast", "get_context",

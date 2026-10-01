@@ -440,6 +440,12 @@ SERVICES: list[dict] = [
             {"name":"twitter_user_posts","label":"Account + posts","params":[("user","@handle","text"),("limit","Posts","number")]},
             {"name":"twitter_tweet","label":"Post + replies","params":[("tweet","Tweet URL or id","text"),("replies","Replies","number")]}]},
 
+  {"id":"google_trends","label":"Google Trends","icon":"📈","tag":"search","section":"public",
+   "desc":"Compare interest in up to five terms over time — Google web search or YouTube search only — as Google's 0–100 relative index, with top and rising related searches. Free, no key",
+   "config_keys":[],"health_url":None,"health_headers":lambda: {},"configured_keys":(),
+   "documentation_url":"https://support.google.com/trends/answer/4365533",
+   "tools":[{"name":"trends_compare","label":"Compare interest","params":[("keywords","Terms (comma sep, ≤5)","text"),("search_type","web|youtube|images|news","text"),("timeframe","7d|1m|3m|12m|5y|all","text"),("country","Country (DE, US…)","text")]}]},
+
   {"id":"keyword_volume","label":"Keyword volume","icon":"📊","tag":"search","section":"public",
    "desc":"How many people search Google for a phrase — Keyword Planner's average monthly searches, the monthly trend, competition and bid range, plus related ideas. Google Ads API (developer token with Basic access + the Google login) or DataForSEO (pay per request)",
    "config_keys":[("GOOGLE_ADS_DEVELOPER_TOKEN","Google Ads developer token (Basic access)","",True),
@@ -560,7 +566,7 @@ SERVICE_LOGO_DOMAIN: dict[str, str] = {
     "currency": "ecb.europa.eu", "google": "google.com",
     "github": "github.com", "gitlab": "gitlab.com", "huggingface": "huggingface.co",
     "youtube": "youtube.com", "youtube_studio": "studio.youtube.com",
-    "agent_reach": "jina.ai", "twitter": "x.com", "keyword_volume": "ads.google.com",
+    "agent_reach": "jina.ai", "twitter": "x.com", "keyword_volume": "ads.google.com", "google_trends": "trends.google.com",
     # — dashboard bookmarks / public aggregates (no SERVICES row) —
     "pub_network": "httpbin.org", "pub_geo_time": "openstreetmap.org",
     "pub_finance_crypto": "coingecko.com", "pub_fun": "quotable.io",
@@ -582,7 +588,7 @@ SERVICE_ICON_SLUG: dict[str, str] = {
     "comfyui": "comfyui", "comfy_mcp": "comfyui", "ntfy": "ntfy", "maps": "openstreetmap", "websearch": "duckduckgo",
     "wikipedia": "wikipedia", "google": "google", "currency": "eurostat",
     "github": "github", "gitlab": "gitlab", "huggingface": "huggingface", "youtube": "youtube",
-    "youtube_studio": "youtube", "twitter": "x", "keyword_volume": "googleads",
+    "youtube_studio": "youtube", "twitter": "x", "keyword_volume": "googleads", "google_trends": "google",
     "pub_network": "cloudflare", "pub_geo_time": "openstreetmap", "pub_finance_crypto": "coingecko",
     "pub_fun": "steam", "pub_education": "wikimediafoundation", "pub_games": "nintendo",
     "pub_space": "nasa", "pub_dev_culture": "github",

@@ -96,7 +96,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "comfy":         ["comfy_"],
     "weather":       ["weather_", "get_context"],
     "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_", "search_console_",
-                      "exa_", "rss_", "keyword_volume"],
+                      "exa_", "rss_", "keyword_volume", "trends_"],
     "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_",
                       "twitter_", "bilibili_", "v2ex_"],
     # Source forges. Previously uncategorised, which meant the slicer could not

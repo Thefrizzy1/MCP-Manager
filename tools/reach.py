@@ -463,6 +463,8 @@ def doctor_rows() -> list[dict]:
             "public APIs", "ready", "Plutus extras, not in Agent Reach"),
         row("Search volume", "keyword_volume", kw["backend"] or "—",
             "ready" if kw["backend"] else "setup", kw["note"]),
+        row("Search interest", "trends_compare", "Google Trends (keyless)", "ready",
+            "0–100 relative index, web or YouTube search"),
         row("LinkedIn", "web_read", "Jina Reader (public pages)", "ready",
             "public profiles and posts only — Agent Reach's own fallback"),
         row("XiaoHongShu · Facebook · Instagram · Xueqiu · Boss Zhipin", "—", "OpenCLI",

@@ -238,7 +238,8 @@ tools/               One module per domain, each exposing `register_*_tools(mcp)
   social.py scrape.py comfy_mcp.py
   reach.py              Agent Reach's channels: Jina, Exa, RSS, X (twitter-cli),
                         Bilibili, V2EX, and reach_doctor.
-  keywords.py           keyword_volume — Keyword Planner via Google Ads or DataForSEO.
+  keywords.py           keyword_volume (Keyword Planner via Google Ads or DataForSEO)
+                        and trends_compare (Google Trends, keyless).
   agents.py rooms.py agent_db.py prompts.py resources.py apps.py
   mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
                         Plutus's own /mcp, applying the run's scope. This is how

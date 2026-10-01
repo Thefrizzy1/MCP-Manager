@@ -133,6 +133,9 @@ publishes no YouTube search volume at all.
   the OAuth client above, set the three `GOOGLE_ADS_*` values, then reconnect
   **Settings → Google account** so the login also grants the AdWords scope (it
   is only requested once a developer token is set).
+- **Free alternative — `trends_compare`:** Google Trends needs no setup. It
+  compares up to five terms as a 0–100 relative index (not counts), on Google
+  web search or YouTube search only, with top and rising related searches.
 - **DataForSEO** (pay per request, no approval): `DATAFORSEO_LOGIN` and
   `DATAFORSEO_PASSWORD` from app.dataforseo.com. Used when Google Ads is not set.
 
