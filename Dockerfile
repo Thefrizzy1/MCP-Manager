@@ -61,6 +61,17 @@ RUN if [ "$WITH_COMFY_MCP" = "1" ]; then \
 ENV COMFY_MCP_COMMAND=/opt/comfy-mcp/bin/comfy-mcp \
     COMFY_BIN=/opt/comfy-mcp/bin/comfy
 
+# twitter-cli — the X/Twitter backend Agent Reach prefers, driven by the
+# twitter_* tools with the cookies pasted on the X / Twitter card. Its own venv:
+# it pulls curl_cffi and browser-cookie3, which the app itself has no use for.
+# WITH_TWITTER_CLI=0 leaves it out; a missing path then reads "not installed".
+ARG WITH_TWITTER_CLI=1
+RUN if [ "$WITH_TWITTER_CLI" = "1" ]; then \
+      python -m venv /opt/twitter-cli \
+      && /opt/twitter-cli/bin/pip install --no-cache-dir "twitter-cli>=0.8.5"; \
+    fi
+ENV TWITTER_CLI_COMMAND=/opt/twitter-cli/bin/twitter
+
 # Copy source (ui/static/dist is .dockerignored, so it isn't clobbered below).
 COPY . .
 

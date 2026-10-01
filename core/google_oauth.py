@@ -39,6 +39,15 @@ SCOPES = (
     "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
     "https://www.googleapis.com/auth/webmasters.readonly",
 )
+# Keyword Planner (tools/keywords.py). Asked for only once a Google Ads developer
+# token is configured — nobody without an Ads account should be shown a consent
+# screen asking to manage one.
+ADS_SCOPE = "https://www.googleapis.com/auth/adwords"
+
+
+def requested_scopes() -> tuple[str, ...]:
+    from config import cfg
+    return SCOPES + ((ADS_SCOPE,) if (cfg.google_ads_developer_token or "").strip() else ())
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -124,7 +133,7 @@ def status(root: Path) -> dict:
         "channel_title": d.get("channel_title") or "",
         "channel_id": d.get("channel_id") or "",
         "connected_at": d.get("connected_at") or 0,
-        "missing_scopes": [s.rsplit("/", 1)[-1] for s in SCOPES if granted and s not in granted],
+        "missing_scopes": [s.rsplit("/", 1)[-1] for s in requested_scopes() if granted and s not in granted],
         "redirect_uri": redirect_uri(),
         "reach_job_created": d.get("reach_job_created") or "",
         "reach_job_error": d.get("reach_job_error") or "",
@@ -187,7 +196,7 @@ def start() -> dict:
         "client_id": cfg.google_oauth_client_id,
         "redirect_uri": redirect,
         "response_type": "code",
-        "scope": " ".join(SCOPES),
+        "scope": " ".join(requested_scopes()),
         "access_type": "offline",
         "prompt": "consent",
         "include_granted_scopes": "true",

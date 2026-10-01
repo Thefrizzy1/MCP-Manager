@@ -288,7 +288,12 @@ Placeholders in a playbook prompt: `{{LIBRARY}}` (your library folder) and
 > YouTube data with the `youtube_*` tools (transcripts, channel stats tables,
 > comments, autocomplete, tracking). Your own analytics — watch time, retention,
 > search terms, impressions/CTR — come from `youtube_analytics` / `youtube_reach`
-> once a Google account is connected (Settings → Google account).
+> once a Google account is connected (Settings → Google account). How many
+> people search Google for a topic at all is `keyword_volume` (Keyword Planner).
+>
+> **Broad research:** `reach_doctor` shows which platforms are reachable right
+> now. Combine `exa_search` (web), `web_read` (any page as Markdown), Reddit/HN,
+> `twitter_search` and `bilibili_search` for other audiences, then synthesise.
 
 Schedule kinds: `agent` (ad-hoc prompt), `task` (a playbook by id — edits to the
 playbook flow through), or `tool` (a single Plutus tool call).

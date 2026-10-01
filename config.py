@@ -209,6 +209,29 @@ class Config(BaseModel):
     firecrawl_api_key: str = _get("FIRECRAWL_API_KEY")
     firecrawl_api_url: str = _get("FIRECRAWL_API_URL")
 
+    # The Agent Reach channels (tools/reach.py). Every key here is optional:
+    # Jina Reader and Exa answer without one (a key only raises the rate limit),
+    # and X/Twitter is read through twitter-cli with the two cookies of a logged-in
+    # x.com session, exported by hand — Plutus never reads a browser's cookies.
+    jina_api_key: str = _get("JINA_API_KEY")
+    exa_api_key: str = _get("EXA_API_KEY")
+    twitter_auth_token: str = _get("TWITTER_AUTH_TOKEN")
+    twitter_ct0: str = _get("TWITTER_CT0")
+    # Empty = `twitter` on PATH. Not writable from the dashboard (_BLOCKED_UI_ENV_KEYS).
+    twitter_cli_command: str = _get("TWITTER_CLI_COMMAND", shutil.which("twitter") or "")
+
+    # Search volume (tools/keywords.py). Google's own numbers come from the Google
+    # Ads API's Keyword Planner: a developer token with Basic access, an Ads
+    # account id, and the Google login (which then also asks for the AdWords
+    # scope). DataForSEO resells the same Keyword Planner data, pay-as-you-go,
+    # with no Google approval step.
+    google_ads_developer_token: str = _get("GOOGLE_ADS_DEVELOPER_TOKEN")
+    google_ads_customer_id: str = _get("GOOGLE_ADS_CUSTOMER_ID")
+    google_ads_login_customer_id: str = _get("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
+    google_ads_api_version: str = _get("GOOGLE_ADS_API_VERSION", "v25")
+    dataforseo_login: str = _get("DATAFORSEO_LOGIN")
+    dataforseo_password: str = _get("DATAFORSEO_PASSWORD")
+
     hf_token: str = _get("HF_TOKEN")
     github_token: str = _get("GITHUB_TOKEN")
     gitlab_url: str = _get("GITLAB_URL", "https://gitlab.com")
@@ -308,6 +331,7 @@ _BLOCKED_UI_ENV_KEYS: frozenset[str] = frozenset(
         # are deployment settings (.env / the Docker image), never UI ones.
         "COMFY_MCP_COMMAND",
         "COMFY_BIN",
+        "TWITTER_CLI_COMMAND",
     }
 )
 

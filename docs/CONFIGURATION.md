@@ -73,6 +73,9 @@ Tools stay disabled until their required keys are present.
 | Google Search | `GOOGLE_API_KEY`, `GOOGLE_CSE_ID` |
 | YouTube | optional `YOUTUBE_API_KEY` (exact counts + publish dates; everything but trending works without it) |
 | YouTube Studio & Search Console | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, optional `GOOGLE_OAUTH_REDIRECT_URI` — then **Settings → Google account → Connect** |
+| Agent Reach (web_read, exa_search, rss_read, Bilibili, V2EX) | nothing required; optional `JINA_API_KEY`, `EXA_API_KEY` (higher rate limits) |
+| X / Twitter | `TWITTER_AUTH_TOKEN`, `TWITTER_CT0` (cookies of a logged-in x.com session); `TWITTER_CLI_COMMAND` (set in the Docker image; else `twitter` on PATH — **.env only**) |
+| Keyword volume | Google Ads: `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CUSTOMER_ID`, optional `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, `GOOGLE_ADS_API_VERSION` (default `v25`) — **or** DataForSEO: `DATAFORSEO_LOGIN`, `DATAFORSEO_PASSWORD` |
 | Weather | `WEATHER_DEFAULT_LOCATION` |
 | SSH hosts / SMB shares | `SSH_HOSTS`, `SMB_SHARES` (JSON arrays; managed via the dashboard) |
 
@@ -101,6 +104,37 @@ and Search Console are owner-only, so they need one Google sign-in:
 The refresh token is stored in `data/google_oauth.json` (0600). Connecting also
 registers YouTube's daily impressions report; the first files arrive ~48 h later
 with the previous 30 days backfilled.
+
+### Agent Reach channels and X / Twitter
+
+`web_read` (Jina Reader), `exa_search`, `rss_read`, `bilibili_*` and `v2ex_*` need
+no keys. `reach_doctor` lists every platform Agent Reach covers, the Plutus tools
+and backend serving it, and what is missing (`probe: true` checks the keyless ones
+live). XiaoHongShu, Facebook, Instagram, Xueqiu and Boss Zhipin are not served:
+Agent Reach reaches them only by driving a logged-in desktop Chrome.
+
+X has no keyless read path. The image ships `twitter-cli` in `/opt/twitter-cli`;
+paste the `auth_token` and `ct0` cookies of a logged-in x.com session (exported
+with a cookie-editor extension — use a spare account) on the *X / Twitter* card.
+The child process gets only those two cookies and a sandboxed home directory,
+so twitter-cli's fallback of reading browser cookie stores finds nothing. Build
+with `--build-arg WITH_TWITTER_CLI=0` to leave it out.
+
+### Keyword volume (search volume)
+
+`keyword_volume` returns Google Search volume — average monthly searches, the
+monthly series, competition and bid range — and related keyword ideas. Search
+Console cannot: it only covers searches that already show your own site. Google
+publishes no YouTube search volume at all.
+
+- **Google Ads API** (free): in a Google Ads *manager* account, Admin → API
+  Center → developer token, then apply for **Basic access** — Explorer access
+  excludes Keyword Planner. Enable **Google Ads API** in the same Cloud project as
+  the OAuth client above, set the three `GOOGLE_ADS_*` values, then reconnect
+  **Settings → Google account** so the login also grants the AdWords scope (it
+  is only requested once a developer token is set).
+- **DataForSEO** (pay per request, no approval): `DATAFORSEO_LOGIN` and
+  `DATAFORSEO_PASSWORD` from app.dataforseo.com. Used when Google Ads is not set.
 
 ### ComfyUI MCP (comfy-mcp)
 

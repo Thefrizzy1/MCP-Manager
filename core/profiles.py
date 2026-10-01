@@ -95,8 +95,10 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     # go — they are the largest single block in the manifest when on.
     "comfy":         ["comfy_"],
     "weather":       ["weather_", "get_context"],
-    "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_", "search_console_"],
-    "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_"],
+    "search":        ["web_", "wikipedia_", "google_search", "maps_", "firecrawl_", "search_console_",
+                      "exa_", "rss_", "keyword_volume"],
+    "social":        ["reddit_", "hackernews_", "lemmy_", "mastodon_", "bluesky_", "stackexchange_",
+                      "twitter_", "bilibili_", "v2ex_"],
     # Source forges. Previously uncategorised, which meant the slicer could not
     # remove them at all: 26 GitHub/GitLab schemas rode along in every single
     # agent prompt — ~4k tokens a request — even for a run about the weather.
@@ -121,7 +123,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "crypto":        ["pub_coingecko_price", "pub_binance_ticker", "pub_coincap_assets", "pub_blockchain_btc_ticker", "pub_er_api_latest"],
     # agent_* is delegation: a coordinator handing work to cheap workers.
     # Meta rather than a domain — it is about *how* work gets done, not what.
-    "meta":          ["plutus_tool_slicer", "test_all_tools", "agent_", "room_",
+    "meta":          ["plutus_tool_slicer", "test_all_tools", "agent_", "room_", "reach_doctor",
                       "plutus_status", "nextcloud_get_user_info"],
 }
 

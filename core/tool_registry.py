@@ -84,6 +84,8 @@ _TOOL_PREFIX_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("fal_", ("fal_key",)),
     ("youtube_", ()),
     ("comfy_", ("comfy_mcp_command",)),
+    # X has no keyless path; the two exported x.com cookies are the configuration.
+    ("twitter_", ("twitter_auth_token", "twitter_ct0")),
     ("pub_", ()),
 )
 
@@ -193,6 +195,13 @@ TOOL_SMOKE_DEFAULTS: dict[str, dict] = {
     "reddit_home_feed": {"limit": 5},
     "reddit_my_posts": {"kind": "saved", "limit": 5},
     "agent_list_workers": {},
+    # The Agent Reach channels: keyless, so a smoke run tests them for real.
+    "reach_doctor": {},
+    "web_read": {"url": "https://example.com", "max_chars": 500},
+    "exa_search": {"query": "self-hosted MCP server", "num_results": 2},
+    "rss_read": {"url": "https://hnrss.org/frontpage", "limit": 3},
+    "v2ex_topics": {"feed": "hot", "limit": 3},
+    "bilibili_search": {"query": "comfyui", "limit": 3},
 }
 TOOL_SMOKE_DEFAULTS.update(_PUB_DEFS)
 
@@ -257,6 +266,13 @@ SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
         "youtube_ask_video",
         # Downloads up to 60 daily report files — a real read, but not a probe.
         "youtube_reach",
+        # Reads as the user's X account: every call counts against its rate limit,
+        # and a burst from a test button is how an account gets flagged.
+        "twitter_search",
+        "twitter_user_posts",
+        "twitter_tweet",
+        # DataForSEO bills per request.
+        "keyword_volume",
     }
 )
 
@@ -340,6 +356,9 @@ NEEDS_LOCAL_ID: frozenset[str] = frozenset({
     # A specific Reddit thread. Any permalink hard-coded here is one deletion
     # away from a false failure.
     "reddit_post_comments",
+    # Same for one V2EX topic or Bilibili video.
+    "v2ex_topic",
+    "bilibili_video",
 })
 
 

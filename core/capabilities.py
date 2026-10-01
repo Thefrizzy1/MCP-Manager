@@ -50,13 +50,14 @@ def _fine_capability(name: str) -> str | None:
         return "home"
     if n.startswith(("jellyfin_", "sonarr_", "radarr_", "lidarr_", "jellyseerr_", "qbittorrent_")):
         return "media"
-    if n.startswith("youtube_"):
+    if n.startswith(("youtube_", "twitter_", "bilibili_", "v2ex_")):
         return "social"
     if n.startswith("huggingface_"):
         return "models"
     if n.startswith(("github_", "gitlab_")):
         return "code"
-    if n in {"web_search", "web_fetch", "google_search", "wikipedia_summary"} or n.startswith("search_console_"):
+    if n in {"web_search", "web_fetch", "web_read", "google_search", "wikipedia_summary",
+             "keyword_volume", "reach_doctor"} or n.startswith(("search_console_", "exa_", "rss_")):
         return "search"
     if n.startswith("weather_") or n == "get_context":
         return "weather"

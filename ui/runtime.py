@@ -57,6 +57,8 @@ from tools.utilities import register_utility_tools
 from tools.youtube import register_youtube_tools
 from tools.youtube_studio import register_youtube_studio_tools
 from tools.comfy_mcp import register_comfy_mcp_tools
+from tools.reach import register_reach_tools
+from tools.keywords import register_keyword_tools
 from tools.huggingface import register_huggingface_tools
 from tools.github import register_github_tools
 from tools.gitlab import register_gitlab_tools
@@ -68,7 +70,9 @@ log = logging.getLogger("plutus")
 _MCP_INSTRUCTIONS = (
     "Plutus homelab MCP. Self-hosted: Jellyfin, *arrs, Immich, HA, Nextcloud, "
     "Habitica, Docker, OMV, ComfyUI, n8n, Syncthing, Obsidian. Public: fal.ai, "
-    "weather, maps, web search."
+    "weather, maps, web search, and the Agent Reach channels (web_read, exa_search, "
+    "rss_read, X/Twitter, Bilibili, V2EX) — reach_doctor maps which platform each "
+    "tool serves."
 )
 
 
@@ -117,6 +121,8 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_gitlab_tools(m, allow=allow)
     register_social_tools(m, allow=allow)
     register_scrape_tools(m, allow=allow)
+    register_reach_tools(m, allow=allow)
+    register_keyword_tools(m, allow=allow)
     register_agent_tools(m, allow=allow)
     register_ssh_smb_tools(m, allow=allow)
     register_prompt_tools(m, allow=allow)
