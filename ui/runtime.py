@@ -62,6 +62,7 @@ from tools.keywords import register_keyword_tools
 from tools.huggingface import register_huggingface_tools
 from tools.github import register_github_tools
 from tools.gitlab import register_gitlab_tools
+from tools.trend_radar import register_trend_radar_tools
 
 ROOT = Path(__file__).resolve().parent.parent
 logging.basicConfig(level=os.getenv("PLUTUS_LOG_LEVEL", "INFO").upper())
@@ -123,6 +124,7 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_scrape_tools(m, allow=allow)
     register_reach_tools(m, allow=allow)
     register_keyword_tools(m, allow=allow)
+    register_trend_radar_tools(m, allow=allow)
     register_agent_tools(m, allow=allow)
     register_ssh_smb_tools(m, allow=allow)
     register_prompt_tools(m, allow=allow)
@@ -363,7 +365,7 @@ def _run_agent_bg(prompt: str, label: str = "agent", *,
                   provider: str = "", account_id: str = "",
                   allow_write: bool = True, allow_publish: bool = False,
                   preset: str | None = None,
-                  smart_fallback: bool = True) -> None:
+                  smart_fallback: bool = True, cwd: str | None = None) -> None:
     # mcp_services=None means "no per-connection restriction" (back-compat for
     # callers and older schedules that never stored a selection). `profile` is no
     # longer offered in the UI; it stays here so schedules saved before it was
@@ -377,7 +379,7 @@ def _run_agent_bg(prompt: str, label: str = "agent", *,
                    | set(_agent_capability_disallow(allow_write, allow_publish)))
     _enqueue_agent(prompt, label, model=model, force=force, extra_disallowed=extra,
                    mcp_services=mcp_services, provider=provider, account_id=account_id,
-                   smart_fallback=smart_fallback)
+                   smart_fallback=smart_fallback, cwd=cwd)
 
 
 _run_tool_scheduled = agent_orchestrator.run_tool_scheduled

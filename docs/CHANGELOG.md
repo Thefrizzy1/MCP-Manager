@@ -2,6 +2,28 @@
 
 Notable changes to Plutus. Dates are approximate; this project is single-maintainer.
 
+## Unreleased: Trends tab (Trend Radar + Idea Studio)
+
+### Added
+
+- **Trends tab** with Radar, Ideas, Studio, Research, Backtest and Settings. See
+  `docs/TREND_RADAR.md`.
+- **Trend Radar**: collectors for Hugging Face org repos and GGUF quants,
+  Diffusers/ComfyUI pull requests, arXiv, HF daily papers, Reddit, Hacker News
+  and competitor YouTube channels, scored 0-100 by release stage, momentum,
+  excitement, demand, niche fit and a saturation penalty that counts low-VRAM
+  coverage separately. Repeat confirmations and repeat idea catches raise it.
+- **Backtest and backfill**: import a past model's dated history and replay the
+  score to see when it would have alerted versus the weights, the first
+  competitor video and your own upload.
+- **Idea Studio**: a scheduled Claude run in its own folder (CLAUDE.md, uploaded
+  skills, knowledge files) that writes ideas with titles, hook, description,
+  script and an SVG thumbnail mock. Duplicates merge; stale ideas archive with a
+  reason; ideas your uploads already cover are suggested as done.
+- **ComfyUI auto-benchmark** from per-family API-format workflow templates.
+- 14 `trend_radar_*` MCP tools, so the same list is available in any MCP client.
+- Agent runs accept a working directory (`cwd`), used by the Idea Studio.
+
 ## 6.0.0 — full rebuild: new React UI, MCP primitives, token slicer
 
 A ground-up rebuild. The framework-free teal SPA (the "Unreleased" notes below)

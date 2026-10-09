@@ -219,6 +219,13 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     google_oauth.py        One Google login (PKCE, refresh token in data/) for
                            YouTube Analytics, reach reports and Search Console.
 
+  Trend Radar
+    trend_radar.py         New-model radar: signals, regex model matching, the
+                           0-100 hot score, the backtest replay, Idea Studio
+                           ideas (merge + catches), "looks finished" and the
+                           studio folder (CLAUDE.md, skills, knowledge).
+                           Network-free; collectors live in tools/trend_radar.py.
+
   Scheduling & misc
     schedule_store.py      Persistent CRUD + cron validation.
     scheduler.py           APScheduler runtime firing agent/tool schedules.
@@ -240,6 +247,9 @@ tools/               One module per domain, each exposing `register_*_tools(mcp)
                         Bilibili, V2EX, and reach_doctor.
   keywords.py           keyword_volume (Keyword Planner via Google Ads or DataForSEO)
                         and trends_compare (Google Trends, keyless).
+  trend_radar.py        Trend Radar collectors (HF, GitHub PRs, arXiv, Reddit, HN,
+                        YouTube), title research, backfill, ComfyUI benchmark and
+                        the trend_radar_* tools. See docs/TREND_RADAR.md.
   agents.py rooms.py agent_db.py prompts.py resources.py apps.py
   mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
                         Plutus's own /mcp, applying the run's scope. This is how

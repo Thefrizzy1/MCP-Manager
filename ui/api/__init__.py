@@ -25,6 +25,7 @@ from ui.api import (
     public,
     settings,
     system,
+    trends,
     workforce,
 )
 from ui.api.deps import csrf_origin_guard
@@ -56,6 +57,7 @@ _AUTHED_ROUTERS = (
     auth.router,
     settings.router,
     system.router,
+    trends.router,
     workforce.router,
 )
 

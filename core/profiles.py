@@ -91,6 +91,8 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
                       "proton_bridge_status", "nextcloud_get_activity"],
     "system_ops":    ["docker_", "omv_", "ssh_", "fail2ban_", "tailscale_"],
     "ai":            ["comfyui_", "fal_", "huggingface_"],
+    # The Trend Radar is its own slice: the Idea Studio run needs exactly these.
+    "trends":        ["trend_radar_"],
     # comfy-mcp's ~40 tools, apart from "ai" so they can be switched off in one
     # go — they are the largest single block in the manifest when on.
     "comfy":         ["comfy_"],
