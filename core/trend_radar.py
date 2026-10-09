@@ -107,6 +107,18 @@ DEFAULT_CONFIG: dict = {
     "studio_max_candidates": 4,
     "studio_model": "",
     "studio_prompt": "",
+    # VibeVoice through ComfyUI: an API-format workflow with {{text}} (plain
+    # narration), {{line}} ("[N]: narration") and {{seed}} placeholders.
+    "voice": {"template": {}, "timeout_min": 20},
+    # Where finished packages are copied (a NAS share the Windows PC can see).
+    "export_dir": "",
+    # Wake the ComfyUI machine before a night run (Wake-on-LAN).
+    "wake": {"mac": "", "broadcast": "255.255.255.255", "wait_min": 4},
+    # Off by default: every step is a button. On, the night run voices, renders
+    # and packages productions you approved for auto, and drafts explainers for
+    # shortlisted ideas if that switch is on too.
+    "auto": {"enabled": False, "cron": "0 2 * * *", "explainers": False, "voice": True,
+             "render": True, "package": True, "max_items": 2},
     "benchmark": {
         "enabled": False,
         "auto_min_hot": 75,
@@ -264,6 +276,22 @@ def _validate(c: dict) -> None:
         ok, err = validate_cron(c[k])
         if not ok:
             raise ValueError(f"{k}: {err}")
+    a = c.get("auto")
+    if not isinstance(a, dict):
+        raise ValueError("auto must be an object")
+    ok, err = validate_cron(str(a.get("cron", "")))
+    if not ok:
+        raise ValueError(f"auto.cron: {err}")
+    v = c.get("voice")
+    if not isinstance(v, dict) or not isinstance(v.get("template", {}), dict):
+        raise ValueError("voice.template must be ComfyUI API-format JSON")
+    if v.get("template") and "{{text}}" not in json.dumps(v["template"]) and "{{line}}" not in json.dumps(v["template"]):
+        raise ValueError("voice.template needs a {{text}} or {{line}} placeholder where the narration goes")
+    w = c.get("wake") or {}
+    if w.get("mac") and not re.fullmatch(r"([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}", w["mac"]):
+        raise ValueError("wake.mac must look like AA:BB:CC:DD:EE:FF")
+    if not isinstance(c.get("export_dir"), str):
+        raise ValueError("export_dir must be text")
     b = c.get("benchmark")
     if not isinstance(b, dict) or not isinstance(b.get("templates", {}), dict):
         raise ValueError("benchmark.templates must be an object")

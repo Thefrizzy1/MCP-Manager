@@ -160,11 +160,23 @@ function CopyBlock({ label, text }: { label: string; text?: string }) {
   )
 }
 
-export function IdeaModal({ id, onClose }: { id: number | null; onClose: () => void }) {
+export function IdeaModal({ id, onClose, onProduce }: { id: number | null; onClose: () => void; onProduce?: () => void }) {
   const qc = useQueryClient()
   const toast = useToast()
   const [editTitle, setEditTitle] = useState<string | null>(null)
   const [reason, setReason] = useState('')
+  const [refUrl, setRefUrl] = useState('')
+
+  async function explainer() {
+    if (id === null) return
+    try {
+      await api.post(`/api/v1/trends/ideas/${id}/explainer`, { reference_url: refUrl })
+      toast.success('Claude is writing the explainer. It lands on the Produce tab.')
+      onProduce?.()
+    } catch (e) {
+      toast.error(String(e))
+    }
+  }
   const q = useQuery({
     queryKey: ['trend-idea', id],
     queryFn: () => api.get<{ idea: Idea }>(`/api/v1/trends/ideas/${id}`),
@@ -211,6 +223,10 @@ export function IdeaModal({ id, onClose }: { id: number | null; onClose: () => v
             </Button>
             <Button size="sm" onClick={() => update({ status: 'published' }, 'Marked published')}>
               Published
+            </Button>
+            <Input placeholder="reference video URL (optional)" value={refUrl} onChange={(e) => setRefUrl(e.target.value)} className="w-56" />
+            <Button size="sm" variant="primary" onClick={explainer}>
+              <Clapperboard size={13} /> Make explainer
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <Input placeholder="why archive?" value={reason} onChange={(e) => setReason(e.target.value)} className="w-48" />

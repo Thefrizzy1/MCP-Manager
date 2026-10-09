@@ -23,6 +23,16 @@ Notable changes to Plutus. Dates are approximate; this project is single-maintai
 - **ComfyUI auto-benchmark** from per-family API-format workflow templates.
 - 14 `trend_radar_*` MCP tools, so the same list is available in any MCP client.
 - Agent runs accept a working directory (`cwd`), used by the Idea Studio.
+- **Produce tab**: "Make explainer" on an idea has Claude write a scene-by-scene
+  production (optionally shaped like a reference video). Voice it with VibeVoice
+  on the ComfyUI machine, render it with Remotion on the server, or download a
+  StudioForge-ready package (`script.md`, voice, benchmarks table, graphics import
+  JSON, Remotion project). Optional export folder on a NAS share.
+- **Benchmarks tab**: auto and manual runs per model, A/B comparison with delta,
+  StudioForge notes-table import and graphics export. Explainer benchmark scenes
+  reference measured rows only.
+- **Auto mode** (off by default): a night run that wakes the ComfyUI PC
+  (Wake-on-LAN), voices, renders and packages productions you approved.
 
 ## 6.0.0 — full rebuild: new React UI, MCP primitives, token slicer
 

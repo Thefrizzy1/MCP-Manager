@@ -63,6 +63,7 @@ from tools.huggingface import register_huggingface_tools
 from tools.github import register_github_tools
 from tools.gitlab import register_gitlab_tools
 from tools.trend_radar import register_trend_radar_tools
+from tools.production import register_production_tools
 
 ROOT = Path(__file__).resolve().parent.parent
 logging.basicConfig(level=os.getenv("PLUTUS_LOG_LEVEL", "INFO").upper())
@@ -125,6 +126,7 @@ def register_all_tools(m, allow: "set[str] | None" = None) -> None:
     register_reach_tools(m, allow=allow)
     register_keyword_tools(m, allow=allow)
     register_trend_radar_tools(m, allow=allow)
+    register_production_tools(m, allow=allow)
     register_agent_tools(m, allow=allow)
     register_ssh_smb_tools(m, allow=allow)
     register_prompt_tools(m, allow=allow)

@@ -29,6 +29,7 @@ router = APIRouter(dependencies=[Depends(verify_auth)])
 
 COLLECT_ORIGIN = "trend_radar_collect"
 STUDIO_ORIGIN = "trend_radar_studio"
+AUTO_ORIGIN = "trend_radar_auto"
 STUDIO_LABEL = "Idea Studio"
 
 # One slot per kind of background job; a second click while one runs is refused.
@@ -92,6 +93,11 @@ def sync_schedules(conf: dict) -> dict:
                         "cwd": str(tr.studio_dir(ROOT)), "model": conf.get("studio_model") or None,
                         "allow_write": True, "allow_publish": False, "smart_fallback": True},
         },
+        AUTO_ORIGIN: {
+            "name": "Trend Radar · night run", "kind": "tool", "cron": conf["auto"]["cron"],
+            "enabled": bool(conf["auto"].get("enabled")),
+            "payload": {"origin": AUTO_ORIGIN, "tool": "trend_radar_auto_run", "params": {"wait": False}},
+        },
     }
     out = {}
     for origin, entry in wanted.items():
@@ -115,7 +121,7 @@ def _schedule_info() -> dict:
     except Exception:
         nxt = {}
     info = {}
-    for key, origin in (("collect", COLLECT_ORIGIN), ("studio", STUDIO_ORIGIN)):
+    for key, origin in (("collect", COLLECT_ORIGIN), ("studio", STUDIO_ORIGIN), ("auto", AUTO_ORIGIN)):
         s = _find_schedule(origin)
         info[key] = None if not s else {
             "id": s["id"], "cron": s["cron"], "enabled": s["enabled"], "next": nxt.get(s["id"]),
@@ -130,7 +136,7 @@ def _schedule_info() -> dict:
 @router.get("/api/v1/trends/overview")
 async def api_trends_overview():
     conf = tr.load_config(ROOT)
-    if _find_schedule(COLLECT_ORIGIN) is None:
+    if _find_schedule(COLLECT_ORIGIN) is None or _find_schedule(AUTO_ORIGIN) is None:
         sync_schedules(conf)                  # first open: create the schedules once
     cands = tr.candidates(ROOT, limit=150)
     runs = tr.runs(ROOT, 6)
@@ -458,3 +464,287 @@ async def api_trends_done_apply(body: DoneBody):
     res = tr.apply_done(ROOT, body.idea_ids, body.slugs)
     tr.rescore(ROOT, tr.load_config(ROOT))
     return {"ok": True, **res}
+
+
+# ── Produce: explainer productions ───────────────────────────────────────────
+
+from core import production as pr  # noqa: E402
+
+
+def _launch_explainer(prompt: str, label: str) -> None:
+    from ui.runtime import _run_agent_bg
+    conf = tr.load_config(ROOT)
+    _run_agent_bg(prompt, label, model=conf.get("studio_model") or None, force=True,
+                  allow_write=True, allow_publish=False, cwd=str(tr.studio_dir(ROOT)))
+
+
+def _install_launcher() -> None:
+    """tools/ cannot import the UI; the UI hands it the one function it needs."""
+    try:
+        from tools import production as tp
+        tp.EXPLAINER_LAUNCHER["fn"] = _launch_explainer
+    except Exception:
+        pass
+
+
+_install_launcher()
+
+
+def _jobs_view() -> dict:
+    from tools import production as tp
+    return {k: {kk: (vv[-40:] if kk == "log" else vv) for kk, vv in v.items()} for k, v in tp.JOBS.items()}
+
+
+@router.get("/api/v1/trends/productions")
+async def api_prod_list():
+    from tools import production as tp
+    return {"productions": pr.productions(ROOT), "jobs": _jobs_view(), "render": tp.render_available(),
+            "comfy_up": await tp.comfy_up(), "voice_ready": bool(tr.load_config(ROOT)["voice"].get("template"))}
+
+
+@router.get("/api/v1/trends/productions/{pid}")
+async def api_prod_get(pid: int):
+    p = pr.get_production(ROOT, pid)
+    if not p:
+        raise HTTPException(404, "production not found")
+    bench = pr.resolve_bench(ROOT, p["scenes"])
+    return {"production": p, "voice_script": pr.voice_script(p["scenes"]),
+            "bench": {str(k): v for k, v in bench.items()},
+            "has_video": (pr.prod_dir(ROOT, pid, create=False) / "out" / "explainer.mp4").exists()}
+
+
+@router.post("/api/v1/trends/productions")
+async def api_prod_create(body: dict):
+    try:
+        p = pr.save_production(ROOT, body or {})
+    except (ValueError, KeyError) as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "production": p}
+
+
+@router.post("/api/v1/trends/productions/{pid}")
+async def api_prod_save(pid: int, body: dict):
+    try:
+        p = pr.save_production(ROOT, body or {}, pid)
+    except KeyError:
+        raise HTTPException(404, "production not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "production": p}
+
+
+@router.delete("/api/v1/trends/productions/{pid}")
+async def api_prod_delete(pid: int):
+    if not pr.delete_production(ROOT, pid):
+        raise HTTPException(404, "production not found")
+    return {"ok": True}
+
+
+class AutoBody(BaseModel):
+    on: bool
+
+
+@router.post("/api/v1/trends/productions/{pid}/auto")
+async def api_prod_auto(pid: int, body: AutoBody):
+    try:
+        return {"ok": True, "production": pr.set_auto(ROOT, pid, body.on)}
+    except KeyError:
+        raise HTTPException(404, "production not found")
+
+
+class VoiceBody(BaseModel):
+    scene_ids: list[str] = Field(default_factory=list)
+    redo: bool = False
+
+
+@router.post("/api/v1/trends/productions/{pid}/voice")
+async def api_prod_voice(pid: int, body: VoiceBody):
+    from tools import production as tp
+    if not pr.get_production(ROOT, pid):
+        raise HTTPException(404, "production not found")
+    try:
+        return {"ok": True, "job": tp._spawn("voice", tp.voice_production(ROOT, pid, only=body.scene_ids or None,
+                                                                          redo=body.redo))}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/api/v1/trends/productions/{pid}/render")
+async def api_prod_render(pid: int):
+    from tools import production as tp
+    if not pr.get_production(ROOT, pid):
+        raise HTTPException(404, "production not found")
+    try:
+        return {"ok": True, "job": tp._spawn("render", tp.render_production(ROOT, pid))}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@router.post("/api/v1/trends/productions/{pid}/package")
+async def api_prod_package(pid: int):
+    from tools import production as tp
+    try:
+        return {"ok": True, **tp.export_package(ROOT, pid)}
+    except KeyError:
+        raise HTTPException(404, "production not found")
+
+
+@router.get("/api/v1/trends/productions/{pid}/download")
+async def api_prod_download(pid: int):
+    from fastapi.responses import Response
+    from tools import production as tp
+    try:
+        info = tp.export_package(ROOT, pid)
+    except KeyError:
+        raise HTTPException(404, "production not found")
+    data = (pr.prod_dir(ROOT, pid) / "out" / info["file"]).read_bytes()
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{info["file"]}"'})
+
+
+def _prod_file(pid: int, sub: str, name: str):
+    from fastapi.responses import FileResponse
+    base = (pr.prod_dir(ROOT, pid, create=False) / sub).resolve()
+    f = (base / name).resolve()
+    if base not in f.parents or not f.is_file():
+        raise HTTPException(404, "file not found")
+    return FileResponse(f)
+
+
+@router.get("/api/v1/trends/productions/{pid}/audio/{name}")
+async def api_prod_audio(pid: int, name: str):
+    return _prod_file(pid, "audio", name)
+
+
+@router.get("/api/v1/trends/productions/{pid}/video")
+async def api_prod_video(pid: int):
+    return _prod_file(pid, "out", "explainer.mp4")
+
+
+@router.post("/api/v1/trends/productions/{pid}/assets")
+async def api_prod_asset(pid: int, file: UploadFile = File(...)):
+    """An image or clip a scene can show (visual.image / visual.clip = its name)."""
+    if not pr.get_production(ROOT, pid):
+        raise HTTPException(404, "production not found")
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", (file.filename or "asset").split("/")[-1])
+    if not name.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mov", ".webm")):
+        raise HTTPException(400, "images (.png .jpg .webp .gif) or clips (.mp4 .mov .webm)")
+    data = await file.read()
+    if len(data) > 300 * 1024 * 1024:
+        raise HTTPException(400, "over 300 MB")
+    (pr.prod_dir(ROOT, pid) / "assets" / name).write_bytes(data)
+    return {"ok": True, "name": name}
+
+
+class ExplainerBody(BaseModel):
+    reference_url: str = Field(default="", max_length=300)
+
+
+@router.post("/api/v1/trends/ideas/{iid}/explainer")
+async def api_idea_explainer(iid: int, body: ExplainerBody):
+    from tools import production as tp
+    if not tr.get_idea(ROOT, iid):
+        raise HTTPException(404, "idea not found")
+    _launch_explainer(tp.explainer_prompt(iid, body.reference_url.strip()), f"Idea Studio: explainer #{iid}")
+    return {"ok": True}
+
+
+@router.get("/api/v1/trends/comfy")
+async def api_comfy_status():
+    from tools import production as tp
+    conf = tr.load_config(ROOT)
+    return {"up": await tp.comfy_up(), "wake_configured": bool(conf["wake"].get("mac"))}
+
+
+@router.post("/api/v1/trends/comfy/wake")
+async def api_comfy_wake():
+    from tools import production as tp
+    return {"ok": True, "state": await tp.wake_comfy(tr.load_config(ROOT))}
+
+
+@router.post("/api/v1/trends/auto/run")
+async def api_auto_run():
+    from tools import production as tp
+    try:
+        return {"ok": True, "job": tp._spawn("auto", tp.auto_run(ROOT))}
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+# ── Benchmarks: comparisons ──────────────────────────────────────────────────
+
+@router.get("/api/v1/trends/benchmarks")
+async def api_bench_list(slug: str = ""):
+    return {"benchmarks": pr.all_benchmarks(ROOT, slug=slug),
+            "models": [{"slug": c["slug"], "name": c["name"]} for c in tr.candidates(ROOT, include_dismissed=True)]}
+
+
+class BenchAdd(BaseModel):
+    slug: str = ""
+    label: str
+    time: str = ""
+    status: str = "ok"
+    vram_gb: float | None = None
+    hw: str = ""
+    group: str = ""
+    file: str = ""
+    mark: bool = False
+    notes: str = ""
+
+
+@router.post("/api/v1/trends/benchmarks")
+async def api_bench_add(body: BenchAdd):
+    try:
+        return {"ok": True, "benchmark": pr.add_manual_benchmark(ROOT, body.model_dump())}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class BenchImport(BaseModel):
+    text: str = Field(..., max_length=200_000)
+    slug: str = ""
+    hw: str = ""
+
+
+@router.post("/api/v1/trends/benchmarks/import")
+async def api_bench_import(body: BenchImport):
+    try:
+        return {"ok": True, "imported": pr.import_notes_table(ROOT, body.text, slug=body.slug, hw=body.hw)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class BenchExport(BaseModel):
+    ids: list[int] = Field(default_factory=list)
+    pair: list[int] = Field(default_factory=list)
+    heading: str = "Render time"
+    subheading: str = ""
+    specs: list[dict] = Field(default_factory=list)
+
+
+@router.post("/api/v1/trends/benchmarks/export")
+async def api_bench_export(body: BenchExport):
+    rows = {b["id"]: b for b in pr.all_benchmarks(ROOT)}
+    runs = [rows[i] for i in body.ids if i in rows]
+    pair = tuple(rows[i] for i in body.pair if i in rows)
+    return {"studioforge": pr.studioforge_graphics(runs, heading=body.heading, subheading=body.subheading,
+                                                   specs=body.specs, pair=pair if len(pair) == 2 else None),
+            "notes_table": pr.notes_table(runs),
+            "comparison": pr.compare(*pair) if len(pair) == 2 else None}
+
+
+@router.post("/api/v1/trends/benchmarks/{bid}")
+async def api_bench_update(bid: int, body: dict):
+    try:
+        return {"ok": True, "benchmark": pr.update_benchmark(ROOT, bid, dict(body or {}))}
+    except KeyError:
+        raise HTTPException(404, "benchmark not found")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.delete("/api/v1/trends/benchmarks/{bid}")
+async def api_bench_delete(bid: int):
+    if not pr.delete_benchmark(ROOT, bid):
+        raise HTTPException(404, "benchmark not found")
+    return {"ok": True}

@@ -225,6 +225,9 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
                            ideas (merge + catches), "looks finished" and the
                            studio folder (CLAUDE.md, skills, knowledge).
                            Network-free; collectors live in tools/trend_radar.py.
+    production.py          Explainer productions (scenes -> StudioForge script.md,
+                           VibeVoice script, Remotion project, download zip) and
+                           benchmark comparisons / StudioForge graphics export.
 
   Scheduling & misc
     schedule_store.py      Persistent CRUD + cron validation.
@@ -250,6 +253,8 @@ tools/               One module per domain, each exposing `register_*_tools(mcp)
   trend_radar.py        Trend Radar collectors (HF, GitHub PRs, arXiv, Reddit, HN,
                         YouTube), title research, backfill, ComfyUI benchmark and
                         the trend_radar_* tools. See docs/TREND_RADAR.md.
+  production.py         VibeVoice via ComfyUI, Remotion render, Wake-on-LAN, the
+                        night run and the production / benchmark MCP tools.
   agents.py rooms.py agent_db.py prompts.py resources.py apps.py
   mcp_stdio_bridge.py   Not a tool module: a stdio MCP server that relays to
                         Plutus's own /mcp, applying the run's scope. This is how

@@ -9,6 +9,9 @@ import { Switch } from '@/components/ui/Switch'
 import { useToast } from '@/components/ui/Toast'
 
 type Conf = Record<string, unknown> & {
+  voice: { template: Record<string, unknown>; timeout_min: number }
+  wake: { mac: string; broadcast: string; wait_min: number }
+  auto: { enabled: boolean; cron: string; explainers: boolean; voice: boolean; render: boolean; package: boolean; max_items: number }
   weights: Record<string, number>
   benchmark: { enabled: boolean; auto_min_hot: number; timeout_min: number; templates: Record<string, unknown> }
 }
@@ -39,11 +42,13 @@ export function SettingsPanel() {
   const [c, setC] = useState<Conf | null>(null)
   const [text, setText] = useState<Record<string, string>>({})
   const [tpl, setTpl] = useState('')
+  const [voiceTpl, setVoiceTpl] = useState('')
   useEffect(() => {
     if (q.data && !c) {
       setC(q.data.config)
       setText(Object.fromEntries(LISTS.map(([k]) => [k, lines(q.data.config[k])])))
       setTpl(JSON.stringify(q.data.config.benchmark.templates ?? {}, null, 2))
+      setVoiceTpl(JSON.stringify(q.data.config.voice?.template ?? {}, null, 2))
     }
   }, [q.data, c])
   if (!c) return <div className="text-[13px] text-ink-3">Loading…</div>
@@ -58,7 +63,14 @@ export function SettingsPanel() {
       toast.error('Benchmark templates are not valid JSON')
       return
     }
-    const body: Record<string, unknown> = { ...c }
+    let vt: Record<string, unknown>
+    try {
+      vt = JSON.parse(voiceTpl || '{}')
+    } catch {
+      toast.error('Voice workflow is not valid JSON')
+      return
+    }
+    const body: Record<string, unknown> = { ...c, voice: { ...c!.voice, template: vt } }
     for (const [k] of LISTS) body[k] = unlines(text[k] ?? '')
     body.benchmark = { ...c!.benchmark, templates }
     try {
@@ -123,6 +135,50 @@ export function SettingsPanel() {
               onChange={(e) => set('studio_prompt', e.target.value)}
               className="font-mono text-[12px]"
             />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Auto mode (night run)"
+          subtitle="Off by default: every step is a button you press. On, the night run does the steps ticked here for productions you switched to Night run."
+        />
+        <div className="flex flex-wrap items-end gap-4 px-4 pb-4">
+          <Switch checked={c.auto.enabled} onChange={(v) => setC({ ...c, auto: { ...c.auto, enabled: v } })} label="Auto mode" hint="Master switch for the night run." />
+          <Field label="Night cron" hint="Default 02:00">
+            <Input value={c.auto.cron} onChange={(e) => setC({ ...c, auto: { ...c.auto, cron: e.target.value } })} className="w-36" />
+          </Field>
+          <Switch checked={c.auto.explainers} onChange={(v) => setC({ ...c, auto: { ...c.auto, explainers: v } })} label="Draft explainers" hint="For shortlisted ideas without one (uses your Claude)." />
+          <Switch checked={c.auto.voice} onChange={(v) => setC({ ...c, auto: { ...c.auto, voice: v } })} label="Voice" hint="VibeVoice on ComfyUI, wakes the PC first." />
+          <Switch checked={c.auto.render} onChange={(v) => setC({ ...c, auto: { ...c.auto, render: v } })} label="Render" hint="Remotion on this server, CPU." />
+          <Switch checked={c.auto.package} onChange={(v) => setC({ ...c, auto: { ...c.auto, package: v } })} label="Package" hint="Zip into the export folder." />
+          <Field label="Max per night">
+            <Input type="number" min={1} max={10} value={String(c.auto.max_items)} onChange={(e) => setC({ ...c, auto: { ...c.auto, max_items: Number(e.target.value) } })} className="w-20" />
+          </Field>
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Voice (VibeVoice on ComfyUI) and hand-off"
+          subtitle="Runs on COMFYUI_URL, your Windows PC. In ComfyUI build the VibeVoice workflow, put {{line}} ([1]: text) or {{text}} in the text field, optionally {{seed}}, end with SaveAudio (FLAC), then Save (API) and paste it here."
+        />
+        <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
+          <Field label="VibeVoice workflow (API JSON)" className="md:col-span-2">
+            <Textarea rows={8} value={voiceTpl} onChange={(e) => setVoiceTpl(e.target.value)} className="font-mono text-[11.5px]" />
+          </Field>
+          <Field label="Wake-on-LAN MAC of the PC" hint="Needs Plutus on the host network for the broadcast to reach the LAN.">
+            <Input value={c.wake.mac} placeholder="AA:BB:CC:DD:EE:FF" onChange={(e) => setC({ ...c, wake: { ...c.wake, mac: e.target.value } })} />
+          </Field>
+          <Field label="Broadcast / wait (min)">
+            <div className="flex gap-2">
+              <Input value={c.wake.broadcast} onChange={(e) => setC({ ...c, wake: { ...c.wake, broadcast: e.target.value } })} />
+              <Input type="number" value={String(c.wake.wait_min)} onChange={(e) => setC({ ...c, wake: { ...c.wake, wait_min: Number(e.target.value) } })} className="w-20" />
+            </div>
+          </Field>
+          <Field label="Export folder on this server" hint="A NAS share your PC can open, e.g. /srv/share/youtube/inbox. Packages land there ready for StudioForge." className="md:col-span-2">
+            <Input value={String(c.export_dir ?? '')} onChange={(e) => set('export_dir', e.target.value)} />
           </Field>
         </div>
       </Card>

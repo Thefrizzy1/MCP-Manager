@@ -15,12 +15,16 @@ import { DoneBanner, FinishedDrawer } from '@/components/trends/Finished'
 import { StudioPanel } from '@/components/trends/Studio'
 import { BacktestPanel, ResearchPanel } from '@/components/trends/Research'
 import { SettingsPanel } from '@/components/trends/Settings'
+import { ProducePanel } from '@/components/trends/Produce'
+import { BenchmarksPanel } from '@/components/trends/Benchmarks'
 import { ago, type Candidate, type Overview } from '@/components/trends/types'
 
 const TABS = [
   ['radar', 'Radar'],
   ['ideas', 'Ideas'],
   ['studio', 'Studio'],
+  ['produce', 'Produce'],
+  ['benchmarks', 'Benchmarks'],
   ['research', 'Research'],
   ['backtest', 'Backtest'],
   ['settings', 'Settings'],
@@ -107,6 +111,7 @@ export function Trends() {
   const [ideaId, setIdeaId] = useState<number | null>(null)
   const [finishedOpen, setFinishedOpen] = useState(false)
   const [showArchived, setShowArchived] = useState(false)
+  const [prodId, setProdId] = useState<number | null>(null)
 
   const ov = useQuery({
     queryKey: ['trend-overview'],
@@ -207,12 +212,14 @@ export function Trends() {
           </>
         )}
         {tab === 'studio' && <StudioPanel />}
+        {tab === 'produce' && <ProducePanel openId={prodId} setOpenId={setProdId} />}
+        {tab === 'benchmarks' && <BenchmarksPanel />}
         {tab === 'research' && <ResearchPanel />}
         {tab === 'backtest' && <BacktestPanel job={d?.jobs.backfill} />}
         {tab === 'settings' && <SettingsPanel />}
       </PageBody>
       <CandidateDrawer slug={slug} onClose={() => setSlug(null)} onOpenIdea={setIdeaId} threshold={d?.stats.threshold ?? 70} />
-      <IdeaModal id={ideaId} onClose={() => setIdeaId(null)} />
+      <IdeaModal id={ideaId} onClose={() => setIdeaId(null)} onProduce={() => { setIdeaId(null); setTab('produce') }} />
       <FinishedDrawer open={finishedOpen} onClose={() => setFinishedOpen(false)} onOpenIdea={setIdeaId} />
     </>
   )

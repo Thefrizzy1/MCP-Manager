@@ -72,13 +72,64 @@ Recorded: wall time from ComfyUI's own execution timestamps, peak VRAM (sampled
 from `/system_stats`), and the outcome: `ok`, `oom`, `missing_model`, `invalid`,
 `error` or `timeout`. The model files must already be on the ComfyUI machine.
 
+## Produce: explainers, VibeVoice, Remotion
+
+*Make explainer* on an idea queues a Claude run (studio folder, your skills) that
+saves a production: scenes with a chapter, speaker, spoken narration and a
+visual (`title`, `bullets`, `code`, `benchmark`, `comparison`, `image`,
+`quote`, `clip`). With a reference video URL it reads that video's shape
+(chapter count and length, words per minute, hook length, most-replayed
+moments) and matches it; it never gets the transcript to copy.
+
+From the scenes Plutus derives:
+
+- `script.md` in StudioForge's format (`##` chapters, `_(stage directions)_`);
+- the VibeVoice script (`[1]: line`);
+- a Remotion project in the channel colours (cyan chapters, yellow stats, red
+  errors), with scene lengths taken from the real audio.
+
+**Voice.** Runs on `COMFYUI_URL` (the Windows PC). Build the VibeVoice workflow in
+ComfyUI, put `{{line}}` (or `{{text}}`) in the text input and optionally
+`{{seed}}`, end with SaveAudio (FLAC gives exact lengths), export with
+*Save (API)* and paste it under Settings → Voice. One job per scene; re-voicing
+one scene keeps the rest.
+
+**Render.** *Render here* uses the Node in the Plutus image
+(`npx remotion render`). Remotion downloads its own headless browser on the
+first render; a local Chrome/Chromium is used when present
+(`REMOTION_BROWSER` to point at one). CPU-only, so expect minutes, not seconds.
+
+**Download / export.** The package zip holds `script.md`, `voice/`,
+`benchmarks.md`, `studioforge_import.json`, `titles.md`, the thumbnail mock and
+`remotion/`. With an export folder set (a NAS share the PC sees) it is copied
+there too.
+
+## Benchmarks
+
+Auto runs (ComfyUI) and manual runs live in one table. Add a run, or paste a
+StudioForge notes table (`group | label | file | time | mark`). Pick A and B for
+a delta. *StudioForge export* gives the `{"graphics": [...]}` document its
+benchmark/comparison comps import. Explainer benchmark scenes reference these
+rows by id, so a video only ever shows a measured time.
+
+## Auto mode
+
+Off by default; every step is a button. With it on, the schedule
+"Trend Radar · night run" (02:00) wakes the PC (Wake-on-LAN, needs the
+container on the host network), then voices, renders and packages productions
+whose *Night run* switch is on, up to *max per night*. Optionally it also drafts
+explainers for shortlisted ideas.
+
 ## MCP tools
 
 `trend_radar_list`, `trend_radar_candidate`, `trend_radar_signals`,
 `trend_radar_ideas`, `trend_radar_idea`, `trend_radar_save_idea`,
 `trend_radar_set_status`, `trend_radar_done`, `trend_radar_title_research`,
 `trend_radar_backfill`, `trend_radar_backtest`, `trend_radar_benchmark`,
-`trend_radar_collect`. They are in the `trends` slice of the tool slicer.
+`trend_radar_collect`, `trend_radar_production`, `trend_radar_save_production`,
+`trend_radar_reference`, `trend_radar_voice`, `trend_radar_render`,
+`trend_radar_benchmarks`, `trend_radar_add_benchmark`, `trend_radar_auto_run`.
+They are in the `trends` slice of the tool slicer.
 
 ## Keys it uses
 
