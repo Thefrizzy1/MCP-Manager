@@ -319,3 +319,113 @@ def test_idea_similarity_merges_same_angle_not_same_model_only():
     assert tr.idea_similarity(a, b) >= tr.MERGE_AT
     assert tr.idea_similarity(a, c) < tr.MERGE_AT
     assert tr.idea_similarity(c, d) < tr.MERGE_AT          # sharing only the model name is not a duplicate
+
+
+# ── matcher v2: real titles from a live collect ──────────────────────────────
+
+def test_subject_and_mentions_from_real_titles():
+    fams = tr.load_config.__globals__["DEFAULT_CONFIG"]["families"]
+    m = tr.match_all("Krea 2 Beats Z Image & Boogu Image? Full ComfyUI Comparison & Workflow", fams)
+    assert m[0][0] == "krea-2" and {x[0] for x in m[1:]} == {"z-image", "boogu"}
+    m = tr.match_all("Forget Z-Image! Boogu Image Just Changed Everything (ComfyUI Workflow)", fams)
+    assert m[0][0] == "boogu" and m[1][0] == "z-image"            # "Forget X" makes X the foil
+    m = tr.match_all("ComfyUI INT8 Performance Boost! Boogu, Krea2 & Z-Image (Ep25)", fams)
+    assert {x[0] for x in m} == {"boogu", "krea-2", "z-image"}
+    assert tr.match("Wan-AI / Wan2.2-T2V-A14B", fams)[0] == "wan-2.2"
+    assert [x[0] for x in tr.match_all("HunyuanVideo 1.5 vs Hunyuan", fams)] == ["hunyuanvideo-1.5", "hunyuan"]
+
+
+def test_pr_body_never_matches_and_titles_teach_new_models(tmp_path):
+    conf = tr.load_config(tmp_path)
+    fams = tr.known_families(tmp_path, conf)
+    pr = {"source": "github:huggingface/diffusers", "ext_id": "14991", "kind": "code", "ts": 1,
+          "title": "Add Bria fibo-2", "match_text": "Follows the Z-Image pipeline layout"}
+    assert tr.add_signal(tmp_path, pr, families=fams, allow_new_family=True) == "fibo-2"
+    old = {"source": "github:city96/ComfyUI-GGUF", "ext_id": "425", "kind": "code", "ts": 1,
+           "title": "Enhance loader compatibility for sdcpp exports", "match_text": "tested with Z-Image"}
+    assert tr.add_signal(tmp_path, old, families=fams, allow_new_family=True) == ""
+    assert tr.name_from_title("[Pipeline] Add Boogu Image") == ("boogu-image", "Boogu Image")
+    for title in ("Add LoRA support for Wan", "Add tests for flux", "Support FP8 on MPS", "Fix typo"):
+        assert tr.name_from_title(title) is None, title
+
+
+def test_mention_counts_only_as_coverage(tmp_path):
+    conf = tr.load_config(tmp_path)
+    fams = tr.known_families(tmp_path, conf)
+    now = int(time.time())
+    tr.add_signal(tmp_path, {"source": "hf:alibaba-pai", "ext_id": "z", "kind": "weights", "ts": now - 86400,
+                             "title": "alibaba-pai / Z-Image-Fun-Lora-Distill"}, families=fams)
+    tr.add_signal(tmp_path, {"source": "youtube:@sotaihub", "ext_id": "v", "kind": "video", "ts": now - 3600,
+                             "title": "Krea 2 Beats Z Image & Boogu Image?", "metrics": {"views": 1000}},
+                  families=fams)
+    tr.add_signal(tmp_path, {"source": "github:huggingface/diffusers", "ext_id": "p", "kind": "code",
+                             "ts": now - 600, "title": "Add Krea 2 vs Z-Image docs"}, families=fams)
+    tr.rescore(tmp_path, conf)
+    z = {s["ext_id"]: s["role"] for s in tr.signals_for(tmp_path, "z-image")}
+    assert z == {"z": "subject", "v": "mention", "p": "mention"}
+    assert [s["ext_id"] for s in tr.signals_for(tmp_path, "krea-2") if s["role"] == "subject"] == ["v", "p"]
+    parts = tr.get_candidate(tmp_path, "z-image")["score"]
+    assert parts["creator_videos_10d"] == 1                 # the comparison video is coverage for Z-Image
+    assert tr.get_candidate(tmp_path, "z-image")["stage"] == "weights"   # the Krea PR did not move it
+
+
+def test_rematch_fixes_old_data_and_keeps_merges(tmp_path):
+    conf = tr.load_config(tmp_path)
+    with tr._connect(tmp_path) as con:                      # rows as matcher v1 filed them
+        for eid, title, cand in [("14991", "Add Bria fibo-2", "z-image"),
+                                 ("v", "Krea 2 Beats Z Image & Boogu Image?", "z-image"),
+                                 ("w", "LTXV 2 is out", "ltxv-2")]:
+            con.execute("INSERT INTO signals (source, ext_id, kind, title, ts, seen, candidate) VALUES (?,?,?,?,?,?,?)",
+                        ("github:huggingface/diffusers" if eid == "14991" else "youtube:x", eid,
+                         "code" if eid == "14991" else "video", title, 1, 1, cand))
+        for slug, fam in (("z-image", "z-image"), ("ltxv-2", "ltxv"), ("ltx-2", "ltx")):
+            con.execute("INSERT INTO candidates (slug, name, family, first_ts) VALUES (?,?,?,1)", (slug, slug, fam))
+    tr.merge(tmp_path, "ltxv-2", "ltx-2")
+    assert tr.matcher_outdated(tmp_path)
+    res = tr.rematch_all(tmp_path, conf)
+    by = {s["ext_id"]: s for s in tr.recent_signals(tmp_path)}
+    assert by["14991"]["candidate"] == "fibo-2" and by["v"]["candidate"] == "krea-2"
+    assert set(by["v"]["mentions"].split(",")) == {"z-image", "boogu"}
+    assert by["w"]["candidate"] == "ltx-2"                  # merge survived the rematch
+    assert not tr.matcher_outdated(tmp_path) and res["moved"] >= 2
+
+
+# ── Idea Studio works on runtimes that don't read the folder (Codex) ─────────
+
+def test_studio_context_inlines_brief_and_skills(tmp_path):
+    tr.save_studio_brief(tmp_path, "# Brief\nNo em dashes.")
+    tr.install_skill(tmp_path, "thumbnail", {"SKILL.md": b"---\nname: thumbnail\n---\nDark editorial.",
+                                             "references/style.md": b"yellow accent"})
+    tr.save_knowledge(tmp_path, "analytics.csv", b"video,ctr\n")
+    p = tr.studio_prompt(tr.load_config(tmp_path), tmp_path)
+    assert "No em dashes." in p and "Dark editorial." in p
+    assert ".claude/skills/thumbnail/references/style.md" in p and "knowledge/analytics.csv" in p
+    assert p.index("Dark editorial.") < p.index("trend_radar_ideas")        # context first, then the task
+    assert tr.read_studio_file(tmp_path, ".claude/skills/thumbnail/references/style.md") == "yellow accent"
+    with pytest.raises(FileNotFoundError):
+        tr.read_studio_file(tmp_path, "../../.env")
+
+
+def test_studio_runs_are_scoped_and_schedule_builds_prompt_at_fire_time(tmp_path, monkeypatch):
+    from ui.api import trends as T
+    import ui.runtime as rt
+
+    monkeypatch.setattr(T, "ROOT", tmp_path)
+    calls = []
+    monkeypatch.setattr(rt, "_run_agent_bg", lambda prompt, label, **kw: calls.append((prompt, label, kw)))
+    T._launch_explainer(tr.studio_prompt(tr.load_config(tmp_path), tmp_path), "sched:Idea Studio")
+    prompt, _, kw = calls[0]
+    assert "trend_radar" in kw["mcp_services"] and "jellyfin" not in kw["mcp_services"]
+    assert kw["cwd"].endswith("trend_radar_studio") and "Channel brief" in prompt
+    denied = set(rt._agent_service_disallow(kw["mcp_services"]))
+    assert not any(t.startswith("mcp__plutus__trend_radar_") for t in denied)
+    assert "mcp__plutus__jellyfin_search" in denied
+
+    monkeypatch.setattr(T, "_schedule_info", lambda: {})
+    import core.schedule_store as ss
+    store = {}
+    monkeypatch.setattr(ss, "load_schedules", lambda root: list(store.values()))
+    monkeypatch.setattr(ss, "add_schedule", lambda root, e: store.setdefault(e["payload"]["origin"], {**e, "id": "x"}))
+    T.sync_schedules(tr.load_config(tmp_path))
+    studio = store[T.STUDIO_ORIGIN]
+    assert studio["kind"] == "tool" and studio["payload"]["tool"] == "trend_radar_studio_run"

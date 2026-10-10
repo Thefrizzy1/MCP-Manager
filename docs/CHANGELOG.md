@@ -4,6 +4,21 @@ Notable changes to Plutus. Dates are approximate; this project is single-maintai
 
 ## Unreleased: Trends tab (Trend Radar + Idea Studio)
 
+### Fixed
+
+- **Signals filed under the wrong model.** Matching reads titles only (PR
+  descriptions named other models: "Add Bria fibo-2" landed on Z-Image). A title
+  naming several models files under its subject ("Forget Z-Image! Boogu ..." is
+  Boogu) and records the rest as mentions, which count only as coverage. New
+  names are learned from "Add <Model>" PRs and visual GGUF uploads. Existing
+  data is re-matched once on the next collect; merges are remembered.
+- **Idea Studio on Codex.** The brief and skills are inlined in the prompt and
+  extra files are read with `trend_radar_studio_file`, so runtimes that ignore
+  `CLAUDE.md` / `.claude/skills` or sandbox the filesystem still get them.
+  Studio runs are scoped to the services they need (97 tools instead of 309,
+  under OpenAI's per-request tool cap). The schedule builds the prompt when it
+  fires, so skills uploaded later are included.
+
 ### Added
 
 - **Trends tab** with Radar, Ideas, Studio, Research, Backtest and Settings. See

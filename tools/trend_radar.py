@@ -69,6 +69,8 @@ def hf_signal(m: dict, *, source: str, quant: bool = False) -> dict | None:
               or any(w in name_low for w in ("video", "t2v", "i2v", "image", "diffusion", "flux", "wan", "ltx")))
     if not visual and not quant:
         return None
+    # Quant uploaders also publish LLM GGUFs; those may refresh a known model but
+    # must never invent a new candidate (see collect_hf).
     files = [s.get("rfilename", "") for s in (m.get("siblings") or [])]
     is_gguf = "gguf" in name_low or any(f.endswith(".gguf") for f in files) or "gguf" in tags
     has_weights = any(f.endswith(WEIGHT_EXT) for f in files)
@@ -81,7 +83,8 @@ def hf_signal(m: dict, *, source: str, quant: bool = False) -> dict | None:
             "url": f"https://huggingface.co/{rid}", "author": rid.split("/")[0],
             "ts": iso_ts(m.get("createdAt")) or int(time.time()),
             "metrics": {"likes": m.get("likes"), "downloads": m.get("downloads"),
-                        "pipeline": pipe, "tags": tags[:20], "files": len(files)}}
+                        "pipeline": pipe, "tags": tags[:20], "files": len(files)},
+            "visual": bool(visual)}
 
 
 def gh_pr_signal(pr: dict, repo: str) -> dict:
@@ -238,7 +241,9 @@ async def collect_hf(client, conf) -> list[tuple[dict, bool]]:
         for m in r.json():
             s = hf_signal(m, source=f"hfq:{author}", quant=True)
             if s:
-                out.append((s, False))
+                # A GGUF of a model nobody listed yet is often the first sign it
+                # runs on small cards: learn its name, but only for visual models.
+                out.append((s, s.get("visual", False)))
     return out
 
 
@@ -271,7 +276,7 @@ async def collect_github(client, conf) -> list[tuple[dict, bool]]:
     for repo in conf["github_repos"]:
         r = await _get(client, f"{GH}/repos/{repo}/pulls", headers=_gh_headers(),
                        params={"state": "all", "sort": "created", "direction": "desc", "per_page": 40})
-        out += [(gh_pr_signal(pr, repo), False) for pr in r.json()]
+        out += [(gh_pr_signal(pr, repo), True) for pr in r.json()]
     for user in conf["github_users"]:
         r = await _get(client, f"{GH}/users/{user}/repos", headers=_gh_headers(),
                        params={"sort": "created", "direction": "desc", "per_page": 15})
@@ -367,6 +372,8 @@ async def run_collect(root: Path, *, only: list[str] | None = None, benchmark: b
     conf = tr.load_config(root)
     run_id = tr.start_run(root)
     detail: dict = {"sources": {}}
+    if tr.matcher_outdated(root):
+        detail["rematch"] = tr.rematch_all(root, conf)
     families = tr.known_families(root, conf)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
         for name, fn in COLLECTORS.items():
@@ -920,6 +927,33 @@ def register_trend_radar_tools(mcp: FastMCP, *, allow: "set[str] | None" = None)
         except (ValueError, KeyError) as e:
             return f"Error: {e}"
         return "Error: give idea_id or slug."
+
+    class StudioFileInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        path: str = Field(..., min_length=1, max_length=300,
+                          description="Relative to the studio folder, e.g. .claude/skills/thumbnail/references/style.md "
+                                      "or knowledge/analytics.csv")
+
+    @mcp.tool(name="trend_radar_studio_file", annotations={"readOnlyHint": True})
+    async def trend_radar_studio_file(params: StudioFileInput) -> str:
+        """Read one file from the Idea Studio folder: skill references and knowledge files."""
+        try:
+            return tr.read_studio_file(_ROOT, params.path)
+        except FileNotFoundError:
+            files = [f"knowledge/{k['name']}" for k in tr.list_knowledge(_ROOT)]
+            return f"Error: no such file. Knowledge files: {', '.join(files) or 'none'}"
+
+    @mcp.tool(name="trend_radar_studio_run",
+              annotations={"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False})
+    async def trend_radar_studio_run() -> str:
+        """Start an Idea Studio run now (what the daily schedule calls). The prompt is
+        built at this moment, so skills and knowledge uploaded since are included."""
+        from tools import production as tp
+        fn = tp.EXPLAINER_LAUNCHER["fn"]
+        if not fn:
+            return "Error: studio runs start from the Plutus dashboard or its scheduler (Trends > Studio > Run now)."
+        fn(tr.studio_prompt(tr.load_config(_ROOT), _ROOT), "sched:Idea Studio")
+        return "Idea Studio run queued."
 
     class DoneInput(BaseModel):
         model_config = ConfigDict(extra="forbid")

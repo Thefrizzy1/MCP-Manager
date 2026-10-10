@@ -352,7 +352,7 @@ async def auto_run(root: Path) -> dict:
 
 EXPLAINER_PROMPT = """\
 Write an explainer production for Trend Radar idea #{idea_id} for the_frizzy1.
-Read CLAUDE.md and your skills first (youtube-script / frizzy-youtube rules apply).
+Your brief and skills are above (youtube-script / frizzy-youtube rules apply).
 
 1. trend_radar_idea {idea_id} for the angle, hook and evidence.
 2. {reference_step}
@@ -368,11 +368,12 @@ Read CLAUDE.md and your skills first (youtube-script / frizzy-youtube rules appl
 """
 
 
-def explainer_prompt(idea_id: int, reference_url: str = "") -> str:
+def explainer_prompt(idea_id: int, reference_url: str = "", root: Path | None = None) -> str:
     ref = (f"trend_radar_reference with {reference_url}: match its shape (chapter count, "
            "chapter length, pace, where the payoff lands), not its words."
            if reference_url else "No reference video: use the channel's usual structure.")
-    return EXPLAINER_PROMPT.format(idea_id=idea_id, reference_step=ref)
+    task = EXPLAINER_PROMPT.format(idea_id=idea_id, reference_step=ref)
+    return f"{tr.studio_context(root)}\n---\n\n{task}" if root is not None else task
 
 
 # The UI process installs a callable here that queues an agent run in the studio
@@ -384,7 +385,7 @@ def queue_explainer(root: Path, idea_id: int, reference_url: str = "") -> bool:
     fn = EXPLAINER_LAUNCHER["fn"]
     if not fn:
         return False
-    fn(explainer_prompt(idea_id, reference_url), f"Idea Studio: explainer #{idea_id}")
+    fn(explainer_prompt(idea_id, reference_url, root), f"Idea Studio: explainer #{idea_id}")
     return True
 
 

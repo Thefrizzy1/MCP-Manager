@@ -59,7 +59,8 @@ DEFAULT_CONFIG: dict = {
         "kandinsky", "step-video", "seedvr", "chroma", "hidream", "omnigen",
         "longcat", "lumina", "sana", "cosmos", "ovi", "infinitetalk", "multitalk",
         "fantasytalking", "uni3c", "phantom", "minimax", "kling", "veo", "sora",
-        "seedance", "hailuo", "pixverse", "ideogram",
+        "seedance", "hailuo", "pixverse", "ideogram", "krea", "boogu", "fibo",
+        "hunyuanimage", "seedream", "nano banana", "omnigen", "bagel", "uso",
     ],
     # Closed/API-only families: still worth watching, but a local-first channel
     # cannot benchmark them, so niche fit is lowered.
@@ -141,7 +142,16 @@ CREATE TABLE IF NOT EXISTS signals (
     seen      INTEGER NOT NULL,
     metrics   TEXT NOT NULL DEFAULT '{}',
     candidate TEXT NOT NULL DEFAULT '',
+    mentions  TEXT NOT NULL DEFAULT '',
     UNIQUE (source, ext_id)
+);
+CREATE TABLE IF NOT EXISTS aliases (
+    src TEXT PRIMARY KEY,
+    dst TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS signals_cand ON signals (candidate, ts);
 CREATE INDEX IF NOT EXISTS signals_ts ON signals (ts);
@@ -226,6 +236,9 @@ def load_config(root: Path) -> dict:
             out[k] = {**out[k], **v}
         else:
             out[k] = v
+    # Saving Settings stores the whole family list, which used to freeze it:
+    # names added to the defaults in an update never reached that install.
+    out["families"] = sorted(set(out.get("families") or []) | set(DEFAULT_CONFIG["families"]))
     return out
 
 
@@ -312,33 +325,82 @@ _VERSION = r"[\s\-_.]*v?(\d{1,2}(?:\.\d{1,2}){0,2})(?![\d])"
 _NOT_A_VERSION = re.compile(r"^\s*(?:b\b|m\b|k\b|gb|fps|p\b|x\d|s\b|bit|steps?)", re.I)
 
 
-def match(text: str, families: list[str]) -> tuple[str, str, str] | None:
-    """(slug, display name, family) for the model named in ``text``.
+# A model named right after one of these is what the title compares *against*:
+# "Forget Z-Image! Boogu Image just changed everything" is about Boogu.
+_FOIL = re.compile(r"(?:forget|vs\.?|versus|beats?|beating|than|over|replac\w*|kills?|instead of|like|"
+                   r"alternative to|better than|bye)\s*[!:,.]*\s*$", re.I)
+MATCHER_VERSION = 2
 
-    A versioned mention beats a bare one anywhere in the text ("Wan-AI /
-    Wan2.2-T2V" is Wan 2.2, not the org name). The version is optional;
-    ``14B``/``720p``/``8GB`` after a family are size or resolution and are
-    rejected, so "Wan 14B" stays ``wan``.
+
+def match_all(text: str, families: list[str]) -> list[tuple[str, str, str]]:
+    """Every model named in ``text`` as (slug, display name, family), subject first.
+
+    One match per family: a versioned mention beats a bare one ("Wan-AI /
+    Wan2.2-T2V" is Wan 2.2, not the org name). ``14B``/``720p``/``8GB`` after a
+    family are size or resolution, not a version. Overlapping hits keep the
+    longer family ("HunyuanVideo" is not also "Hunyuan"). The subject is the
+    first model not introduced as a foil ("Forget X", "beats X", "X vs").
     """
     if not text:
-        return None
+        return []
     low = text.lower()
-    found: list[tuple[int, int, int, str, str | None, str]] = []
-    for fam in sorted({f.lower() for f in families if f}, key=len, reverse=True):
+    hits = []
+    for fam in {f.lower() for f in families if f}:
         pat = re.compile(r"(?<![a-z0-9])(" + _family_pattern(fam) + r")(?![a-z])(?:" + _VERSION + r")?")
         for m in pat.finditer(low):
             ver = m.group(2)
             if ver and _NOT_A_VERSION.match(low[m.end(2):]):
                 ver = None
-            # versioned first, then earliest, then the longer family name
-            found.append((0 if ver else 1, m.start(1), -len(fam), fam, ver, text[m.start(1):m.end(1)]))
-    if not found:
+            end = m.end(2) if ver else m.end(1)
+            hits.append({"fam": fam, "ver": ver.rstrip(".") if ver else None, "start": m.start(1), "end": end,
+                         "raw": text[m.start(1):m.end(1)]})
+    kept = []
+    for h in sorted(hits, key=lambda h: (h["start"], -(h["end"] - h["start"]))):
+        if any(h["start"] < k["end"] and k["start"] < h["end"] for k in kept):
+            continue
+        kept.append(h)
+    best: dict[str, dict] = {}
+    for h in kept:
+        cur = best.get(h["fam"])
+        if cur is None or (h["ver"] and not cur["ver"]):
+            best[h["fam"]] = h
+    for h in best.values():
+        h["foil"] = bool(_FOIL.search(low[max(0, h["start"] - 24):h["start"]]))
+    ordered = sorted(best.values(), key=lambda h: (h["foil"], h["start"]))
+    out = []
+    for h in ordered:
+        slug = f"{h['fam']}-{h['ver']}" if h["ver"] else h["fam"]
+        name = (h["raw"] if h["raw"][:1].isupper() else h["fam"].title()) + (f" {h['ver']}" if h["ver"] else "")
+        out.append((slug.replace(" ", "-"), name, h["fam"].replace(" ", "-")))
+    return out
+
+
+def match(text: str, families: list[str]) -> tuple[str, str, str] | None:
+    """The subject model of ``text`` (see match_all)."""
+    found = match_all(text, families)
+    return found[0] if found else None
+
+
+_LEARN = re.compile(
+    r"^(?:\[[^\]]*\]\s*)*(?i:add(?:ed|ing|s)?|support|introduce|implement)\s+(?i:support\s+for\s+|the\s+)?"
+    r"(?P<name>[A-Z][\w.]*(?:[\s\-][\w.]+){0,2}?)"
+    r"(?:\s+(?i:pipelines?|models?|support|transformer|t2v|i2v|nodes?|weights))*\s*(?:\(#\d+\))?\s*$")
+_NOT_A_MODEL = {"lora", "loras", "tests", "test", "docs", "doc", "ci", "typing", "controlnet", "ip-adapter",
+                "fp8", "gguf", "support", "option", "options", "readme", "example", "examples", "type", "types",
+                "a", "an", "new", "more", "missing", "torch", "cuda", "mps", "xpu", "npu", "rocm", "attention"}
+
+
+def name_from_title(title: str) -> tuple[str, str] | None:
+    """(slug, name) of a new model from a pull request title like "Add Bria Fibo-2"
+    or "[Pipeline] Add Boogu Image". Strict on purpose: only capitalised names
+    right after add/support, and never utility words (LoRA, tests, FP8 ...)."""
+    m = _LEARN.match((title or "").strip())
+    if not m:
         return None
-    _, _, _, fam, ver, raw = min(found)
-    ver = ver.rstrip(".") if ver else None
-    slug = f"{fam}-{ver}" if ver else fam
-    name = (raw if raw[:1].isupper() else fam.title()) + (f" {ver}" if ver else "")
-    return slug, name, fam
+    name = m.group("name").strip(" .-")
+    if name.split()[0].lower().strip(".") in _NOT_A_MODEL or len(name) < 3:
+        return None
+    return re.sub(r"[^a-z0-9.]+", "-", name.lower()).strip("-"), name
 
 
 _REPO_NOISE = re.compile(
@@ -381,6 +443,9 @@ def _connect(root: Path) -> sqlite3.Connection:
     con = sqlite3.connect(db_path(root), timeout=15)
     con.row_factory = sqlite3.Row
     con.executescript(_SCHEMA)
+    # Databases from before a column existed: CREATE TABLE IF NOT EXISTS does not add it.
+    if "mentions" not in {r[1] for r in con.execute("PRAGMA table_info(signals)")}:
+        con.execute("ALTER TABLE signals ADD COLUMN mentions TEXT NOT NULL DEFAULT ''")
     return con
 
 
@@ -390,47 +455,134 @@ def known_families(root: Path, cfg: dict) -> list[str]:
     return sorted(set(cfg.get("families", [])) | set(found))
 
 
+def _aliases(con) -> dict[str, str]:
+    return dict(con.execute("SELECT src, dst FROM aliases").fetchall())
+
+
+def classify(sig: dict, families: list[str], *, allow_new_family: bool = False,
+             aliases: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
+    """The models a signal is about, subject first.
+
+    Titles only. Pull request descriptions, paper abstracts and repo tags name
+    other models all the time ("same layout as the Z-Image pipeline"), so they
+    are never matched: that is how "Add Bria fibo-2" used to land on Z-Image.
+    Unknown names are learned from watched-org repo ids, quant uploads and
+    "Add <Model>" pull requests, never from free text.
+    """
+    found = match_all(sig.get("title") or "", families)
+    if not found and allow_new_family:
+        guess = None
+        if sig.get("repo_id"):
+            guess = name_from_repo(sig["repo_id"])
+        elif sig.get("kind") == "code":
+            guess = name_from_title(sig.get("title") or "")
+        if guess:
+            found = [(guess[0], guess[1], family_of(guess[0]))]
+    out, seen = [], set()
+    for slug, name, fam in found:
+        slug = (aliases or {}).get(slug, slug)
+        if slug not in seen:
+            seen.add(slug)
+            out.append((slug, name, fam))
+    return out
+
+
 def add_signal(root: Path, sig: dict, *, families: list[str], allow_new_family: bool = False) -> str:
     """Store one observation; returns the candidate slug it landed on ('' if none).
 
     A signal already stored (same source + ext_id) only has its metrics refreshed:
-    the score of a Reddit thread grows, its time of posting does not.
+    the score of a Reddit thread grows, its time of posting does not. A signal can
+    name several models; the subject owns it, the others record a mention.
     """
     title = sig.get("title") or ""
-    m = match(title + " " + (sig.get("match_text") or ""), families)
-    if m is None and allow_new_family and sig.get("repo_id"):
-        guess = name_from_repo(sig["repo_id"])
-        if guess:
-            m = (guess[0], guess[1], family_of(guess[0]))
-    slug = m[0] if m else ""
     now = int(time.time())
     ts = int(sig.get("ts") or now)
     metrics = json.dumps(sig.get("metrics") or {})
     with _LOCK, _connect(root) as con:
-        cur = con.execute("SELECT id, candidate FROM signals WHERE source=? AND ext_id=?",
-                          (sig["source"], str(sig["ext_id"])))
-        row = cur.fetchone()
+        models = classify(sig, families, allow_new_family=allow_new_family, aliases=_aliases(con))
+        slug = models[0][0] if models else ""
+        mentions = ",".join(m[0] for m in models[1:])
+        row = con.execute("SELECT id, candidate FROM signals WHERE source=? AND ext_id=?",
+                          (sig["source"], str(sig["ext_id"]))).fetchone()
         if row:
             con.execute("UPDATE signals SET metrics=?, seen=? WHERE id=?", (metrics, now, row["id"]))
-            slug = row["candidate"] or slug
-        else:
-            con.execute(
-                "INSERT INTO signals (source, ext_id, kind, title, url, author, ts, seen, metrics, candidate)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (sig["source"], str(sig["ext_id"]), sig["kind"], title[:400],
-                 (sig.get("url") or "")[:600], (sig.get("author") or "")[:120], ts, now,
-                 metrics, slug))
-        if slug and m:
-            con.execute(
-                "INSERT INTO candidates (slug, name, family, first_ts, updated) VALUES (?,?,?,?,?)"
-                " ON CONFLICT(slug) DO UPDATE SET first_ts=MIN(first_ts, excluded.first_ts)",
-                (slug, m[1], m[2], ts, now))
+            return row["candidate"]
+        con.execute(
+            "INSERT INTO signals (source, ext_id, kind, title, url, author, ts, seen, metrics, candidate, mentions)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (sig["source"], str(sig["ext_id"]), sig["kind"], title[:400],
+             (sig.get("url") or "")[:600], (sig.get("author") or "")[:120], ts, now, metrics, slug, mentions))
+        for m in models:
+            _ensure_candidate(con, m, ts, now)
     return slug
 
 
-def signals_for(root: Path, slug: str) -> list[dict]:
+def _ensure_candidate(con, m: tuple[str, str, str], ts: int, now: int) -> None:
+    con.execute("INSERT INTO candidates (slug, name, family, first_ts, updated) VALUES (?,?,?,?,?)"
+                " ON CONFLICT(slug) DO UPDATE SET first_ts=MIN(first_ts, excluded.first_ts)",
+                (m[0], m[1], m[2], ts, now))
+
+
+def rematch_all(root: Path, cfg: dict) -> dict:
+    """Re-file every stored signal with the current matcher and family list.
+
+    Runs on its own after an update that changes matching (MATCHER_VERSION) and
+    after the family list is edited. Merges you made are kept (aliases). Models
+    left with no signals are removed unless you pinned, dismissed or covered
+    them, or they carry ideas.
+    """
+    families = known_families(root, cfg)
+    moved = 0
+    now = int(time.time())
     with _LOCK, _connect(root) as con:
-        rows = con.execute("SELECT * FROM signals WHERE candidate=? ORDER BY ts", (slug,)).fetchall()
+        aliases = _aliases(con)
+        learnable = {f"hf:{o}" for o in cfg.get("hf_orgs", [])}
+        for r in con.execute("SELECT id, source, kind, title, url, ts, candidate, mentions FROM signals").fetchall():
+            sig = dict(r)
+            if sig["source"].startswith(("hf:", "hfq:")):
+                sig["repo_id"] = sig["title"].replace(" / ", "/")
+            allow = sig["source"] in learnable or sig["source"].startswith(("hfq:", "github:"))
+            models = classify(sig, families, allow_new_family=allow, aliases=aliases)
+            slug = models[0][0] if models else ""
+            mentions = ",".join(m[0] for m in models[1:])
+            if slug != r["candidate"] or mentions != r["mentions"]:
+                moved += 1
+                con.execute("UPDATE signals SET candidate=?, mentions=? WHERE id=?", (slug, mentions, r["id"]))
+            for m in models:
+                _ensure_candidate(con, m, int(r["ts"]), now)
+        used = {x[0] for x in con.execute("SELECT DISTINCT candidate FROM signals WHERE candidate != ''")}
+        for (ms,) in con.execute("SELECT mentions FROM signals WHERE mentions != ''"):
+            used |= set(ms.split(","))
+        with_ideas = {x[0] for x in con.execute("SELECT DISTINCT candidate FROM ideas")}
+        removed = 0
+        for c in con.execute("SELECT slug, status FROM candidates").fetchall():
+            if c["slug"] not in used and c["slug"] not in with_ideas and c["status"] == "watch":
+                con.execute("DELETE FROM candidates WHERE slug=?", (c["slug"],))
+                removed += 1
+        con.execute("INSERT INTO meta (key, value) VALUES ('matcher_version', ?)"
+                    " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(MATCHER_VERSION),))
+    rescore(root, cfg)
+    return {"moved": moved, "removed": removed}
+
+
+def matcher_outdated(root: Path) -> bool:
+    with _LOCK, _connect(root) as con:
+        r = con.execute("SELECT value FROM meta WHERE key='matcher_version'").fetchone()
+        has_signals = con.execute("SELECT 1 FROM signals LIMIT 1").fetchone() is not None
+    return has_signals and (r is None or int(r[0]) < MATCHER_VERSION)
+
+
+def _signals_query(slug: str) -> tuple[str, tuple]:
+    return ("SELECT *, CASE WHEN candidate=? THEN 'subject' ELSE 'mention' END AS role FROM signals"
+            " WHERE candidate=? OR (',' || mentions || ',') LIKE ? ORDER BY ts", (slug, slug, f"%,{slug},%"))
+
+
+def signals_for(root: Path, slug: str) -> list[dict]:
+    """A model's signals: the ones about it (role "subject") and the ones that
+    only mention it, e.g. a comparison video ("mention")."""
+    q, args = _signals_query(slug)
+    with _LOCK, _connect(root) as con:
+        rows = con.execute(q, args).fetchall()
     return [_sig_row(r) for r in rows]
 
 
@@ -501,7 +653,16 @@ def merge(root: Path, src: str, dst: str) -> int:
         if not con.execute("SELECT 1 FROM candidates WHERE slug=?", (dst,)).fetchone():
             raise KeyError(dst)
         n = con.execute("UPDATE signals SET candidate=? WHERE candidate=?", (dst, src)).rowcount
+        for r in con.execute("SELECT id, mentions FROM signals WHERE (',' || mentions || ',') LIKE ?",
+                             (f"%,{src},%",)).fetchall():
+            ms = [dst if x == src else x for x in r["mentions"].split(",")]
+            ms = [x for i, x in enumerate(ms) if x and x not in ms[:i]]
+            con.execute("UPDATE signals SET mentions=? WHERE id=?", (",".join(ms), r["id"]))
         con.execute("DELETE FROM candidates WHERE slug=?", (src,))
+        # Remembered, so a re-match after a matcher update does not split them again.
+        con.execute("INSERT INTO aliases (src, dst) VALUES (?, ?) ON CONFLICT(src) DO UPDATE SET dst=excluded.dst",
+                    (src, dst))
+        con.execute("UPDATE aliases SET dst=? WHERE dst=?", (dst, src))
     return n
 
 
@@ -574,7 +735,11 @@ def score(signals: list[dict], now: int, cfg: dict, *, family: str = "",
     Only signals with ``ts <= now`` count, which is what makes the same function
     the backtest: replaying history is calling this with an earlier ``now``.
     """
-    sigs = [s for s in signals if int(s.get("ts") or 0) <= now]
+    # A model that is only *mentioned* (the foil in a comparison video) gets that
+    # video as coverage, nothing else: a PR or a thread about another model must
+    # not move this one's stage, momentum or buzz.
+    sigs = [s for s in signals if int(s.get("ts") or 0) <= now
+            and (s.get("role", "subject") == "subject" or s.get("kind") in ("video", "short"))]
     if not sigs:
         return {"hot": 0.0, "stage": "rumor", "action": "WATCH", "parts": {}}
 
@@ -707,8 +872,8 @@ def rescore(root: Path, cfg: dict, now: int | None = None) -> list[dict]:
         catches = dict(con.execute("SELECT candidate, MAX(catches) FROM ideas WHERE status != 'archived'"
                                    " GROUP BY candidate").fetchall())
         for c in cands:
-            sigs = [_sig_row(r) for r in con.execute(
-                "SELECT * FROM signals WHERE candidate=?", (c["slug"],)).fetchall()]
+            q, args = _signals_query(c["slug"])
+            sigs = [_sig_row(r) for r in con.execute(q, args).fetchall()]
             sc = score(sigs, now, cfg, family=c["family"], catches=catches.get(c["slug"], 0))
             if any(s["kind"] == "own" for s in sigs) and c["status"] == "watch":
                 c["status"] = "covered"
@@ -1133,9 +1298,60 @@ Rules that never bend:
 """
 
 
-def studio_prompt(cfg: dict) -> str:
+# What a studio run may reach. Tools tied to no service (files, the library) are
+# always there; everything else is off, which keeps the tool list short enough
+# for runtimes that cap it (a ~230-tool manifest pushed trend_radar_* out of a
+# Codex run that could see them only in the catalog).
+STUDIO_SERVICES = ("trend_radar", "youtube", "huggingface", "github", "websearch", "google_trends",
+                   "keyword_volume", "reddit", "hackernews", "agent_reach", "firecrawl")
+_CONTEXT_BUDGET = 60_000          # chars; prompts travel as one argv string on the Claude path
+
+
+def studio_context(root: Path, budget: int = _CONTEXT_BUDGET) -> str:
+    """The brief, every skill's SKILL.md and an index of the other files, inline.
+
+    In the prompt rather than on disk because not every runtime reads a folder:
+    Claude Code loads CLAUDE.md and .claude/skills from its working directory,
+    Codex reads neither and its sandbox may not open files at all. Reference
+    files a skill points to are listed and read with trend_radar_studio_file,
+    which works the same on every runtime.
+    """
+    base = studio_dir(root)
+    parts = ["# Your working context (inline, read it first)", "",
+             "## Channel brief (CLAUDE.md)", load_studio_brief(root).strip(), ""]
+    used = sum(len(x) for x in parts)
+    others: list[str] = []
+    for sk in list_skills(root):
+        folder = base / ".claude" / "skills" / sk["name"]
+        body = (folder / "SKILL.md").read_text(encoding="utf-8", errors="replace").strip()
+        block = f"## Skill: {sk['name']}\n\n{body}\n"
+        if used + len(block) > budget:
+            block = f"## Skill: {sk['name']}\n\n(too long to inline: read .claude/skills/{sk['name']}/SKILL.md)\n"
+        parts.append(block)
+        used += len(block)
+        others += [f".claude/skills/{sk['name']}/{f.relative_to(folder).as_posix()}"
+                   for f in sorted(folder.rglob("*")) if f.is_file() and f.name != "SKILL.md"]
+    others += [f"knowledge/{k['name']}" for k in list_knowledge(root)]
+    if others:
+        parts += ["## More files (read with trend_radar_studio_file when relevant)"] + [f"- {o}" for o in others[:200]] + [""]
+    return "\n".join(parts)
+
+
+def read_studio_file(root: Path, rel: str, limit: int = 60_000) -> str:
+    """One text file from the studio folder, path-confined."""
+    base = studio_dir(root).resolve()
+    f = (base / rel.lstrip("/")).resolve()
+    if base not in f.parents or not f.is_file():
+        raise FileNotFoundError(rel)
+    text = f.read_text(encoding="utf-8", errors="replace")
+    return text if len(text) <= limit else text[:limit] + f"\n… [{len(text) - limit} more chars]"
+
+
+def studio_prompt(cfg: dict, root: Path | None = None) -> str:
+    """The task prompt; with ``root``, the brief and skills are inlined in front."""
     tpl = (cfg.get("studio_prompt") or "").strip() or DEFAULT_STUDIO_PROMPT
-    return tpl.replace("{max_candidates}", str(cfg.get("studio_max_candidates", 4)))
+    task = tpl.replace("{max_candidates}", str(cfg.get("studio_max_candidates", 4)))
+    return f"{studio_context(root)}\n---\n\n{task}" if root is not None else task
 
 
 def studio_brief_path(root: Path) -> Path:
@@ -1155,8 +1371,9 @@ def save_studio_brief(root: Path, text: str) -> None:
 
 DEFAULT_STUDIO_PROMPT = """\
 Daily Idea Studio run for the YouTube channel the_frizzy1. Work through Plutus's
-trend_radar_* tools. Read CLAUDE.md, your skills in .claude/skills and anything
-relevant in knowledge/ first.
+trend_radar_* tools. Your channel brief and skills are above; read the extra
+files they point to with trend_radar_studio_file. If any trend_radar_* tool is
+missing from your tool list, stop and name the Plutus tools you do have.
 
 1. trend_radar_ideas: see what already exists so you extend rather than repeat.
 2. trend_radar_list: take the candidates whose action is PREP NOW, SHOOT NOW or

@@ -469,6 +469,8 @@ SERVICES: list[dict] = [
             {"name":"trend_radar_render","label":"Render / package","params":[("production_id","Production #","number")]},
             {"name":"trend_radar_add_benchmark","label":"Add benchmark","params":[("label","Label","text"),("time","Time","text")]},
             {"name":"trend_radar_auto_run","label":"Night run","params":[]},
+            {"name":"trend_radar_studio_file","label":"Read studio file","params":[("path","Path in the studio folder","text")]},
+            {"name":"trend_radar_studio_run","label":"Run Idea Studio","params":[]},
             {"name":"trend_radar_done","label":"Looks finished","params":[("apply","Apply all (true/false)","text")]},
             {"name":"trend_radar_backfill","label":"Backfill history","params":[("name","Model name","text")]},
             {"name":"trend_radar_benchmark","label":"Benchmark on ComfyUI","params":[("slug","Slug","text"),("template","Template","text")]}]},

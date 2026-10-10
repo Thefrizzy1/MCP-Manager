@@ -87,11 +87,11 @@ def sync_schedules(conf: dict) -> dict:
                         "params": {"wait": False}},
         },
         STUDIO_ORIGIN: {
-            "name": "Trend Radar · Idea Studio", "kind": "agent", "cron": conf["studio_cron"],
+            # A tool schedule, not a stored prompt: the prompt (with the brief and
+            # skills inlined) is built when it fires, so later uploads count.
+            "name": "Trend Radar · Idea Studio", "kind": "tool", "cron": conf["studio_cron"],
             "enabled": bool(conf["studio_enabled"]),
-            "payload": {"origin": STUDIO_ORIGIN, "prompt": tr.studio_prompt(conf),
-                        "cwd": str(tr.studio_dir(ROOT)), "model": conf.get("studio_model") or None,
-                        "allow_write": True, "allow_publish": False, "smart_fallback": True},
+            "payload": {"origin": STUDIO_ORIGIN, "tool": "trend_radar_studio_run", "params": {}},
         },
         AUTO_ORIGIN: {
             "name": "Trend Radar · night run", "kind": "tool", "cron": conf["auto"]["cron"],
@@ -278,10 +278,13 @@ async def api_trends_config_get():
 
 @router.post("/api/v1/trends/config")
 async def api_trends_config_set(body: dict):
+    before = tr.load_config(ROOT)["families"]
     try:
         conf = tr.save_config(ROOT, body or {})
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if conf["families"] != before:
+        tr.rematch_all(ROOT, conf)      # new names re-file what is already stored
     sync_schedules(conf)
     tr.rescore(ROOT, conf)
     return {"ok": True, "config": conf, "schedules": _schedule_info()}
@@ -328,6 +331,7 @@ def _studio_runs(limit: int = 8) -> list[dict]:
 async def api_trends_studio():
     conf = tr.load_config(ROOT)
     return {"brief": tr.load_studio_brief(ROOT), "prompt": tr.studio_prompt(conf),
+            "prompt_chars": len(tr.studio_prompt(conf, ROOT)), "services": list(tr.STUDIO_SERVICES),
             "skills": tr.list_skills(ROOT), "knowledge": tr.list_knowledge(ROOT),
             "folder": str(tr.studio_dir(ROOT)), "runs": _studio_runs(),
             "schedule": _schedule_info()["studio"]}
@@ -335,11 +339,8 @@ async def api_trends_studio():
 
 @router.post("/api/v1/trends/studio/run")
 async def api_trends_studio_run():
-    from ui.runtime import _run_agent_bg
     conf = tr.load_config(ROOT)
-    _run_agent_bg(tr.studio_prompt(conf), f"sched:{STUDIO_LABEL} (manual)",
-                  model=conf.get("studio_model") or None, force=True,
-                  allow_write=True, allow_publish=False, cwd=str(tr.studio_dir(ROOT)))
+    _launch_explainer(tr.studio_prompt(conf, ROOT), f"sched:{STUDIO_LABEL} (manual)")
     return {"ok": True}
 
 
@@ -472,9 +473,13 @@ from core import production as pr  # noqa: E402
 
 
 def _launch_explainer(prompt: str, label: str) -> None:
+    """Queue a studio-scoped agent run (Idea Studio and explainers share it)."""
+    from core.service_registry import all_services
     from ui.runtime import _run_agent_bg
     conf = tr.load_config(ROOT)
+    have = {s["id"] for s in all_services(ROOT)}
     _run_agent_bg(prompt, label, model=conf.get("studio_model") or None, force=True,
+                  mcp_services=[x for x in tr.STUDIO_SERVICES if x in have],
                   allow_write=True, allow_publish=False, cwd=str(tr.studio_dir(ROOT)))
 
 
@@ -645,7 +650,7 @@ async def api_idea_explainer(iid: int, body: ExplainerBody):
     from tools import production as tp
     if not tr.get_idea(ROOT, iid):
         raise HTTPException(404, "idea not found")
-    _launch_explainer(tp.explainer_prompt(iid, body.reference_url.strip()), f"Idea Studio: explainer #{iid}")
+    _launch_explainer(tp.explainer_prompt(iid, body.reference_url.strip(), ROOT), f"Idea Studio: explainer #{iid}")
     return {"ok": True}
 
 
