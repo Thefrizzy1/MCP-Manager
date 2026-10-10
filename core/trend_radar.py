@@ -822,23 +822,31 @@ _STOP = {"the", "a", "an", "on", "in", "of", "to", "and", "or", "for", "with", "
          "run", "runs", "really", "actually", "test", "tested", "new"}
 
 
-def _tokens(text: str) -> set[str]:
-    return {t for t in re.findall(r"[a-z0-9.]+", (text or "").lower())
-            if t not in _STOP and len(t) > 1}
+def _tokens(text: str, ignore: set[str] | None = None) -> set[str]:
+    out = set()
+    for t in re.findall(r"[a-z0-9.]+", (text or "").lower()):
+        t = t.strip(".")
+        if t and len(t) > 1 and t not in _STOP and t not in (ignore or set()):
+            out.add(t)
+    return out
 
 
 def idea_similarity(a: dict, b: dict) -> float:
-    """Jaccard over the words of title + angle, ignoring filler.
+    """How likely two ideas on the same model are the same video, 0..1.
 
-    Two ideas on the same model with the same angle ("4 GB benchmark") are the
-    same video however the title was phrased; on different models they never
-    merge (the candidate check sits outside this function).
+    The model's own name is ignored (every idea on Wan 2.5 says "Wan 2.5"). The
+    angle is the strongest evidence: "4GB benchmark" and "4GB benchmark day one"
+    are one video however differently the titles are phrased, so angle
+    containment counts on its own. Otherwise title + angle words are compared.
     """
-    ta = _tokens(f"{a.get('title', '')} {a.get('angle', '')}")
-    tb = _tokens(f"{b.get('title', '')} {b.get('angle', '')}")
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
+    slug = a.get("candidate") or b.get("candidate") or ""
+    ignore = set(re.split(r"[-_]", slug.lower())) if slug else set()
+    aa, ab = _tokens(a.get("angle", ""), ignore), _tokens(b.get("angle", ""), ignore)
+    angle = len(aa & ab) / min(len(aa), len(ab)) if aa and ab and min(len(aa), len(ab)) >= 2 else 0.0
+    ta = _tokens(f"{a.get('title', '')} {a.get('angle', '')}", ignore)
+    tb = _tokens(f"{b.get('title', '')} {b.get('angle', '')}", ignore)
+    words = len(ta & tb) / len(ta | tb) if ta and tb else 0.0
+    return max(words, 0.9 * angle)
 
 
 MERGE_AT = 0.45

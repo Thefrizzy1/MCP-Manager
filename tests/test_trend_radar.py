@@ -308,3 +308,14 @@ def test_studio_skill_upload_endpoint(client, tmp_path):
     assert (tmp_path / "data" / tr.STUDIO_DIR / ".claude" / "skills" / "thumbnail" / "SKILL.md").exists()
     st = client.get("/api/v1/trends/studio").json()
     assert st["skills"][0]["name"] == "thumbnail" and "trend_radar_save_idea" in st["prompt"]
+
+
+def test_idea_similarity_merges_same_angle_not_same_model_only():
+    a = {"candidate": "ltx-2.3", "title": "Lightricks Says LTX 2.3 Needs 32GB. My Laptop Has 4.",
+         "angle": "4GB benchmark day one"}
+    b = {"candidate": "ltx-2.3", "title": "Can a 4GB laptop run LTX 2.3?", "angle": "4GB benchmark"}
+    c = {"candidate": "ltx-2.3", "title": "LTX 2.3 camera control explained", "angle": "camera LoRA tutorial"}
+    d = {"candidate": "ltx-2.3", "title": "LTX 2.3 is here"}
+    assert tr.idea_similarity(a, b) >= tr.MERGE_AT
+    assert tr.idea_similarity(a, c) < tr.MERGE_AT
+    assert tr.idea_similarity(c, d) < tr.MERGE_AT          # sharing only the model name is not a duplicate
