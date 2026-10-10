@@ -2,6 +2,7 @@ import {
   LayoutDashboard,
   Plug,
   Radar,
+  Satellite,
   Bot,
   Users,
   Sparkles,
@@ -28,6 +29,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'connections', label: 'Connections', icon: Plug },
       { id: 'discover', label: 'Discover', icon: Radar },
+      { id: 'trends', label: 'Trends', icon: Satellite },
     ],
   },
   {

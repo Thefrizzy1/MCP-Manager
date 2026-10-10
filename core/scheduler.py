@@ -150,7 +150,10 @@ class PlutusScheduler:
                                     model=payload.get("model") or None,
                                     allow_write=payload.get("allow_write", True),
                                     allow_publish=payload.get("allow_publish", False),
-                                    smart_fallback=payload.get("smart_fallback", True))
+                                    smart_fallback=payload.get("smart_fallback", True),
+                                    # Only the Trend Radar's Idea Studio sets one
+                                    # today: a folder holding its CLAUDE.md and skills.
+                                    cwd=payload.get("cwd") or None)
                 elif kind == "task" and self._run_task:
                     self._run_task(payload.get("task_id", ""))
                 elif kind == "room" and self._run_room:

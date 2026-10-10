@@ -4,6 +4,7 @@ import { Shell } from '@/components/Shell'
 import { Dashboard } from '@/pages/Dashboard'
 import { Connections } from '@/pages/Connections'
 import { Discover } from '@/pages/Discover'
+import { Trends } from '@/pages/Trends'
 import { Agents } from '@/pages/Agents'
 import { Rooms } from '@/pages/Rooms'
 import { Builder } from '@/pages/Builder'
@@ -19,6 +20,8 @@ function renderPage(route: string) {
       return <Connections />
     case 'discover':
       return <Discover />
+    case 'trends':
+      return <Trends />
     case 'agents':
       return <Agents />
     case 'rooms':
@@ -38,6 +41,7 @@ const TITLES: Record<string, string> = {
   dashboard: 'The dashboard',
   connections: 'Connections',
   discover: 'Discover',
+  trends: 'Trends',
   agents: 'Agents',
   rooms: 'Rooms',
   builder: 'The builder',

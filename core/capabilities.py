@@ -52,6 +52,8 @@ def _fine_capability(name: str) -> str | None:
         return "media"
     if n.startswith(("youtube_", "twitter_", "bilibili_", "v2ex_")):
         return "social"
+    if n.startswith("trend_radar_"):
+        return "trends"
     if n.startswith("huggingface_"):
         return "models"
     if n.startswith(("github_", "gitlab_")):

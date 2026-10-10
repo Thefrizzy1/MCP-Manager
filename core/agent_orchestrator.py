@@ -216,7 +216,7 @@ class AgentOrchestrator:
                 extra_disallowed: "list[str] | None" = None,
                 mcp_services: "list[str] | None" = None,
                 provider: str = "", account_id: str = "",
-                smart_fallback: bool = True) -> bool:
+                smart_fallback: bool = True, cwd: "str | None" = None) -> bool:
         """Queue one agent run. Returns False if the queue is full.
 
         The connection selection (folded into ``extra_disallowed`` by the caller)
@@ -230,6 +230,10 @@ class AgentOrchestrator:
                 "model": model, "force": force, "mcp_services": mcp_services,
                 "provider": provider, "account_id": account_id,
                 "smart_fallback": smart_fallback,
+                # A working directory gives a run project-level context: Claude
+                # Code reads CLAUDE.md and .claude/skills from it. The Trend
+                # Radar's Idea Studio uses this to load the channel's own skills.
+                "cwd": cwd,
             })
             return True
         except queue.Full:
@@ -263,6 +267,7 @@ class AgentOrchestrator:
                     mcp_services=job.get("mcp_services"),
                     provider=job.get("provider") or "", account_id=job.get("account_id") or "",
                     smart_fallback=job.get("smart_fallback", True),
+                    cwd=job.get("cwd") or None,
                 )
                 self.notify(rec)
             except Exception as exc:
