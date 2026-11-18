@@ -541,11 +541,15 @@ SERVICES: list[dict] = [
    "tools":[{"name":"google_search","label":"Google web search","params":[("query","Query","text"),("num","Max results","number")]}]},
 
   {"id":"smtp","label":"Email / Proton Bridge","icon":"📧","tag":"communication","section":"public",
-   "desc":"Send via Proton Bridge SMTP or any SMTP",
-   "config_keys":[("SMTP_HOST","SMTP Host","127.0.0.1",False),("SMTP_PORT","Port","1025",False),("SMTP_USERNAME","From address","",False),("SMTP_PASSWORD","Password","",True)],
-   "health_url":None,"health_headers":lambda: {},"configured_keys":("smtp_host","smtp_username"),
-   "tools":[{"name":"send_email","label":"Send Email","params":[("to","Recipient","text"),("subject","Subject","text"),("body","Body","text")]},
-            {"name":"proton_bridge_status","label":"Bridge Status & Guide","params":[]}]},
+   "desc":"Read (IMAP, read-only) and send (SMTP) through the Proton Mail Bridge container. Password = the bridge password shown in the Bridge app, not your Proton login.",
+   "config_keys":[("PROTON_BRIDGE_HOST","Bridge host","192.168.1.111",False),("PROTON_IMAP_PORT","IMAP port","1143",False),("PROTON_SMTP_PORT","SMTP port","1025",False),
+                  ("PROTON_IMAP_USER","Proton address","",False),("PROTON_IMAP_PASS","Bridge password","",True)],
+   "health_url":None,"health_headers":lambda: {},"configured_keys":("proton_imap_user","proton_imap_pass"),
+   "tools":[{"name":"proton_bridge_status","label":"Bridge Status","params":[]},
+            {"name":"proton_list_folders","label":"List Folders","params":[]},
+            {"name":"proton_list_messages","label":"Recent Messages","params":[("folder","Folder","text"),("limit","Max results","number"),("from_addr","From contains","text"),("subject","Subject contains","text")]},
+            {"name":"proton_read_message","label":"Read Message","params":[("uid","UID","number"),("folder","Folder","text")]},
+            {"name":"send_email","label":"Send Email","params":[("to","Recipient","text"),("subject","Subject","text"),("body","Body","text")]}]},
 ]
 
 

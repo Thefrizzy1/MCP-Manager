@@ -149,9 +149,18 @@ class Config(BaseModel):
     syncthing_url: str = _get("SYNCTHING_URL", "http://192.168.1.111:8384")
     syncthing_api_key: str = _get("SYNCTHING_API_KEY")
 
-    # SMTP (for Proton Bridge or other email)
-    smtp_host: str = _get("SMTP_HOST", "127.0.0.1")
-    smtp_port: str = _get("SMTP_PORT", "1025")
+    # Proton Mail Bridge (protonmail-bridge container on plutus). IMAP + SMTP
+    # with STARTTLS; the password is the bridge password from the Bridge app.
+    proton_bridge_host: str = _get("PROTON_BRIDGE_HOST", "192.168.1.111")
+    proton_imap_port: str = _get("PROTON_IMAP_PORT", "1143")
+    proton_smtp_port: str = _get("PROTON_SMTP_PORT", "1025")
+    proton_imap_user: str = _get("PROTON_IMAP_USER")
+    proton_imap_pass: str = _get("PROTON_IMAP_PASS")
+
+    # SMTP — empty values fall back to the Proton Bridge settings above
+    # (see core/proton_bridge.smtp_settings).
+    smtp_host: str = _get("SMTP_HOST")
+    smtp_port: str = _get("SMTP_PORT")
     smtp_username: str = _get("SMTP_USERNAME")
     smtp_password: str = _get("SMTP_PASSWORD")
 

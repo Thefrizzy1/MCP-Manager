@@ -87,6 +87,8 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     "home":          ["ha_"],
     "automation":    ["n8n_"],
     "notifications": ["ntfy_", "send_email", "nextcloud_share_file", "nextcloud_get_notifications"],
+    # Proton Mail via the bridge: read-only IMAP tools + the confirm-gated send.
+    "email":         ["proton_", "send_email"],
     "monitoring":    ["uptime_status", "syncthing_", "docker_get_logs", "fail2ban_status",
                       "proton_bridge_status", "nextcloud_get_activity"],
     "system_ops":    ["docker_", "omv_", "ssh_", "fail2ban_", "tailscale_"],
@@ -133,7 +135,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
 INTENT_PRESETS: dict[str, list[str]] = {
     "all":      list(TOOL_CATEGORIES.keys()),
     "personal": ["calendar", "tasks", "contacts", "notes"],
-    "office":   ["calendar", "tasks", "contacts", "notes", "files", "notifications"],
+    "office":   ["calendar", "tasks", "contacts", "notes", "files", "notifications", "email"],
     "homelab":  ["system_ops", "monitoring", "automation"],
     "smarthome": ["home", "automation", "notifications", "monitoring"],
     "creative": ["ai", "comfy", "photos", "files"],

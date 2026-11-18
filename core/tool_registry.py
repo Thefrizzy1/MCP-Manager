@@ -50,6 +50,7 @@ def looks_like_missing_service_config(message: str) -> bool:
 
 # Exact overrides (subset of keys for special tools).
 _TOOL_KEYS_EXACT: dict[str, tuple[str, ...]] = {
+    "proton_bridge_status": ("proton_bridge_host",),
     "google_search": ("google_api_key", "google_cse_id"),
     "jellyfin_recently_added": ("jellyfin_url", "jellyfin_api_key", "jellyfin_user_id"),
     "uptime_status": ("uptime_kuma_url",),
@@ -79,6 +80,8 @@ _TOOL_PREFIX_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("habitica_", ("habitica_url", "habitica_user_id", "habitica_api_token")),
     ("n8n_", ("n8n_url", "n8n_api_key")),
     ("obsidian_", ("obsidian_url", "obsidian_api_key")),
+    # Status probe needs no credentials; reading and sending do.
+    ("proton_", ("proton_imap_user", "proton_imap_pass")),
     ("omv_", ("omv_url", "omv_username", "omv_password")),
     ("syncthing_", ("syncthing_url", "syncthing_api_key")),
     ("ntfy_", ("ntfy_url",)),
@@ -436,6 +439,7 @@ ZERO_PARAM_HEALTH_TOOLS: tuple[str, ...] = (
     "syncthing_devices",
     "tailscale_status",
     "fail2ban_status",
+    "proton_bridge_status",
     "obsidian_get_daily_note",
     "weather_current",
     "weather_forecast",
