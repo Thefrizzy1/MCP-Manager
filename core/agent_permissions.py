@@ -35,7 +35,7 @@ DANGEROUS: frozenset[str] = frozenset({
     "nextcloud_delete_task", "nextcloud_delete_event", "nextcloud_delete_file",
     "habitica_delete_task", "fs_move_file",
     # Proton Mail: deleting drafts and moving mail out of a folder (confirm-gated).
-    "proton_delete_draft", "proton_move_messages",
+    "proton_delete_draft", "proton_move_messages", "proton_send_draft",
     "radarr_add_movie", "sonarr_add_series", "jellyseerr_request",
     # comfy-mcp: changes the ComfyUI install, stops it, or spends Comfy credits.
     "comfy_install_node", "comfy_update_comfyui", "comfy_switch_comfyui_version",
@@ -53,7 +53,7 @@ WRITE: frozenset[str] = frozenset({
     "weather_remember_city",
     # Proton Mail: drafts (never sent), read/star flags, labels, saving attachments.
     "proton_save_draft", "proton_update_draft", "proton_set_flags",
-    "proton_label_messages", "proton_download_attachment",
+    "proton_label_messages", "proton_download_attachment", "proton_create_folder",
 })
 
 
@@ -61,7 +61,7 @@ WRITE: frozenset[str] = frozenset({
 # separate axis from write: an agent can be perfectly free to edit your library
 # and still have no business opening a public issue or emailing anyone.
 OUTWARD: frozenset[str] = frozenset({
-    "send_email", "ntfy_send", "n8n_trigger_webhook",
+    "send_email", "proton_send_draft", "ntfy_send", "n8n_trigger_webhook",
     "nextcloud_share_file",
     "github_create_issue", "github_comment", "github_create_pull",
     "github_create_repo",

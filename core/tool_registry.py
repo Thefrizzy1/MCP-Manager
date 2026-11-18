@@ -248,6 +248,8 @@ SMOKE_TOOL_EXCLUDE: frozenset[str] = frozenset(
         "fal_flux_pro",
         "send_email",
         "proton_save_draft",
+        "proton_send_draft",
+        "proton_create_folder",
         "proton_update_draft",
         "proton_delete_draft",
         "proton_set_flags",

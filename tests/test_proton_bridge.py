@@ -179,6 +179,7 @@ class FakeIMAP:
 def fake(monkeypatch, tmp_path):
     f = FakeIMAP()
     monkeypatch.setattr(pb, "_connect", lambda: f)
+    monkeypatch.setattr(pb, "_threads_file", lambda: str(tmp_path / "threads.json"))
     for k, v in {"proton_imap_user": "me@proton.me", "proton_imap_pass": "x", "smtp_host": "",
                  "smtp_username": "", "smtp_password": ""}.items():
         monkeypatch.setattr(cfg, k, v)
@@ -419,3 +420,95 @@ def test_new_tool_permissions():
     for n in ("proton_search", "proton_list_threads", "proton_read_thread"):
         assert _tool(n).annotations.readOnlyHint is True
     assert _tool("proton_delete_draft").annotations.destructiveHint is True
+
+
+# ── From alias + sending drafts as real replies ──────────────────────────────
+
+ALIASED = ORIG.replace(b"To: me@proton.me, other@brand.com\r\n",
+                       b"Delivered-To: sponsorships@thefrizzy1.com\r\n"
+                       b"To: sponsorships@thefrizzy1.com, other@brand.com\r\n")
+
+
+@pytest.fixture
+def threads_file(monkeypatch, tmp_path):
+    f = tmp_path / "threads.json"
+    monkeypatch.setattr(pb, "_threads_file", lambda: str(f))
+    return f
+
+
+def test_explicit_from_alias(fake, threads_file):
+    msg = pb.compose(to="a@b.com", subject="s", body="b", from_addr="sponsorships@thefrizzy1.com")
+    assert msg["From"] == "sponsorships@thefrizzy1.com"
+    with pytest.raises(pb.BridgeError, match="exactly one"):
+        pb.compose(to="a@b.com", subject="s", body="b", from_addr="a@b.com, c@d.com")
+
+
+def test_reply_defaults_to_received_alias(fake, threads_file):
+    fake.boxes["INBOX"][1][0] = ALIASED
+    msg = pb.compose(mode="reply_all", orig_uid=1, body="hi")
+    assert msg["From"] == "sponsorships@thefrizzy1.com"
+    assert "sponsorships@thefrizzy1.com" not in (msg["Cc"] or "")
+    assert "other@brand.com" in msg["Cc"]
+
+
+def test_update_draft_can_change_from(fake, threads_file):
+    pb.save_draft(pb.compose(mode="reply", orig_uid=1, body="v1"))
+    pb.update_draft(1, from_addr="Frizzy <sponsorships@thefrizzy1.com>")
+    assert _draft(fake, 2)["From"] == "Frizzy <sponsorships@thefrizzy1.com>"
+
+
+def test_forward_sets_forward_header(fake, threads_file):
+    msg = pb.compose(mode="forward", orig_uid=1, to="m@x.com")
+    assert msg["X-Forwarded-Message-Id"] == msg["In-Reply-To"] == "<orig-1@brand.com>"
+
+
+def test_send_draft_restores_thread_and_removes_draft(fake, threads_file, monkeypatch):
+    sent = []
+    monkeypatch.setattr(pb, "send", lambda m: sent.append(m))
+    pb.save_draft(pb.compose(mode="reply", orig_uid=1, body="Rate is X"))
+    # Simulate the bridge serving the draft back without thread headers.
+    raw = fake.boxes["Drafts"][1][0]
+    raw = b"".join(l for l in raw.splitlines(True)
+                   if not l.lower().startswith((b"in-reply-to", b"references")))
+    fake.boxes["Drafts"][1][0] = raw
+    msg, info = pb.prepare_draft_send(1)
+    assert info["restored"] and info["threaded"] and sent == []
+    r = pb.send_draft(1)
+    assert sent[0]["In-Reply-To"] == "<orig-1@brand.com>"
+    assert "<orig-1@brand.com>" in sent[0]["References"]
+    assert r["draft_removed"] is True and fake.boxes["Drafts"] == {}
+
+
+def test_send_draft_tool_needs_confirm(fake, threads_file, monkeypatch):
+    sent = []
+    monkeypatch.setattr(pb, "send", lambda m: sent.append(m))
+    pb.save_draft(pb.compose(mode="reply", orig_uid=1, body="Rate is X"))
+    out = _call("proton_send_draft", uid=1)
+    assert "NOT sent" in out and "reply to <orig-1@brand.com>" in out and sent == []
+    out = _call("proton_send_draft", uid=1, confirm=True)
+    assert out.startswith("✓ Sent") and len(sent) == 1
+
+
+def test_send_draft_is_outward_and_dangerous():
+    from core.agent_permissions import DANGEROUS, is_outward
+    assert "proton_send_draft" in DANGEROUS and is_outward("proton_send_draft", read_only=False)
+
+
+def test_send_draft_with_explicit_original(fake, threads_file, monkeypatch):
+    sent = []
+    monkeypatch.setattr(pb, "send", lambda m: sent.append(m))
+    pb.save_draft(pb.compose(to="deals@brand.com", subject="Re: Collab offer", body="old draft"))
+    msg, info = pb.prepare_draft_send(1)
+    assert not info["threaded"]
+    pb.send_draft(1, orig_uid=1, orig_folder="INBOX")
+    assert sent[0]["In-Reply-To"] == "<orig-1@brand.com>"
+
+
+def test_create_folder(fake):
+    created = []
+    fake.create = lambda name: (created.append(name.strip('"')), ("OK", []))[1]
+    assert pb.create_folder("Labels/New") == "Labels/New" and created == ["Labels/New"]
+    with pytest.raises(pb.BridgeError, match="Folders/ or Labels/"):
+        pb.create_folder("INBOX2")
+    with pytest.raises(pb.BridgeError, match="already exists"):
+        pb.create_folder("Labels/Sponsors")

@@ -505,6 +505,8 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
             head.append(f"- **Cc:** {m['cc']}")
         if m["reply_to"]:
             head.append(f"- **Reply-To:** {m['reply_to']}")
+        if m.get("in_reply_to"):
+            head.append(f"- **In-Reply-To:** {m['in_reply_to']}")
         head += [f"- **Date:** {m['date']}", f"- **UID:** {m['uid']} in `{m['folder']}` · flags: {m['flags'] or '—'}"]
         if m["attachments"]:
             head.append("- **Attachments:** " + ", ".join(
@@ -523,6 +525,7 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
         mode: Literal["new", "reply", "reply_all", "forward"] = Field("new", description=_MODE_DESC)
         orig_uid: int = Field(0, ge=0, description="UID of the message being replied to / forwarded")
         orig_folder: str = Field("INBOX", description="Folder of orig_uid")
+        from_addr: str = Field("", description="Sender address, e.g. sponsorships@thefrizzy1.com (must be an address/alias of the Proton account). Empty = for replies/forwards the address the original was sent to, else the login address")
         to: str = Field("", description="Recipients, comma-separated. For replies, empty = the original sender (Reply-To if set)")
         cc: str = Field("", description="Cc, comma-separated (reply_all adds the original To/Cc minus you)")
         bcc: str = Field("", description="Bcc, comma-separated")
@@ -539,6 +542,7 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
             html=p.html, attachments=p.attachments, orig_uid=p.orig_uid,
             orig_folder=p.orig_folder, quote=p.quote,
             include_original_attachments=p.include_original_attachments,
+            from_addr=p.from_addr,
         )
 
     def _preview(msg, max_body: int = 4000) -> str:
@@ -600,6 +604,7 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
     class UpdateDraftInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         uid: int = Field(..., ge=1, description="UID of the draft in the Drafts folder")
+        from_addr: Optional[str] = Field(None, description="New sender address/alias, e.g. sponsorships@thefrizzy1.com (omit to keep)")
         to: Optional[str] = Field(None, description="New To (omit to keep)")
         cc: Optional[str] = Field(None, description="New Cc (omit to keep)")
         bcc: Optional[str] = Field(None, description="New Bcc (omit to keep)")
@@ -620,7 +625,8 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
         r, err = await _guard(
             pb.update_draft, params.uid, to=params.to, cc=params.cc, bcc=params.bcc,
             subject=params.subject, body=params.body, html=params.html,
-            add_attachments=params.add_attachments, drop_attachments=params.drop_attachments)
+            add_attachments=params.add_attachments, drop_attachments=params.drop_attachments,
+            from_addr=params.from_addr)
         if err:
             return err
         return (f"✓ Draft updated in `{r['folder']}` — old UID {r['old_uid']} replaced by "
@@ -715,6 +721,19 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
             return err
         verb = "Removed" if r["removed"] else "Added"
         return f"✓ {verb} label `{r['label']}` on {len(r['uids'])} message(s) in `{r['folder']}`."
+
+    class CreateFolderInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        name: str = Field(..., min_length=3, description="Folders/<name> for a folder or Labels/<name> for a label")
+
+    @mcp.tool(name="proton_create_folder",
+              annotations={"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False})
+    async def proton_create_folder(params: CreateFolderInput) -> str:
+        """Create a Proton folder (Folders/…) or label (Labels/…). Never deletes or renames."""
+        name, err = await _guard(pb.create_folder, params.name)
+        if err:
+            return err
+        return f"✓ Created `{name}`."
 
     # ─── Attachments ──────────────────────────────────────────────────────────
 
@@ -853,6 +872,42 @@ def register_infrastructure_tools(mcp: FastMCP, *, allow: "set[str] | None" = No
             return f"✓ Email sent to {msg['To']}: '{msg['Subject']}'"
         except Exception as e:
             return f"Error sending email: {e}"
+
+    class SendDraftInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        uid: int = Field(..., ge=1, description="UID of the draft in the Drafts folder")
+        orig_uid: int = Field(0, ge=0, description="Optional: UID of the message this draft answers, to link it as a reply when the draft lost its thread headers")
+        orig_folder: str = Field("INBOX", description="Folder of orig_uid")
+        confirm: bool = Field(False, description=(
+            "Set true ONLY after Frizzy has explicitly approved sending this exact draft in chat. "
+            "Without it the tool only returns a preview."))
+
+    @mcp.tool(name="proton_send_draft",
+              annotations={"readOnlyHint": False, "destructiveHint": False,
+                           "idempotentHint": False, "openWorldHint": True})
+    async def proton_send_draft(params: SendDraftInput) -> str:
+        """Send a saved draft as it is now in Drafts (including edits Frizzy made
+        in Proton), then remove the draft. Reply drafts go out as real replies:
+        the bridge links them to the original from In-Reply-To / References
+        (restored from Plutus's record if the bridge dropped them).
+
+        Needs Frizzy's explicit OK for this exact draft: call without confirm,
+        show him the preview, and only call again with confirm=true after his yes.
+        """
+        r, err = await _guard(pb.prepare_draft_send, params.uid, params.orig_uid, params.orig_folder)
+        if err:
+            return err
+        msg, info = r
+        thread = ("reply to " + str(msg.get("In-Reply-To"))) if info["threaded"] else "NOT linked to a thread (new email)"
+        if not params.confirm:
+            return (f"## Draft NOT sent — preview (UID {info['uid']} in `{info['folder']}`)\n\n"
+                    + _preview(msg) + f"\n\nThreading: {thread}\n\nShow this to Frizzy. Only after he "
+                    "explicitly approves sending this exact draft, call again with confirm=true.")
+        r, err = await _guard(pb.send_draft, params.uid, params.orig_uid, params.orig_folder)
+        if err:
+            return err
+        gone = "draft removed from Drafts" if r["draft_removed"] is True else f"draft kept: {r['draft_removed']}"
+        return f"✓ Sent '{r['subject']}' from {r['from']} to {r['to']} ({thread}); {gone}."
 
     # ─── TEST ALL REPORT ──────────────────────────────────────────────────────
 

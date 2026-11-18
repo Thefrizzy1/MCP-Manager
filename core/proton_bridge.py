@@ -366,6 +366,8 @@ def parse_message(raw: bytes) -> dict:
         "date": _decode(date),
         "date_iso": iso,
         "message_id": msg.get("Message-ID", ""),
+        "in_reply_to": (msg.get("In-Reply-To") or "").strip(),
+        "references": " ".join((msg.get("References") or "").split()),
         "body": body,
         "attachments": attachments,
     }
@@ -569,11 +571,34 @@ def _html_body(raw: bytes) -> str:
     return ""
 
 
+def received_as(o: Message, self_addr: str = "") -> str:
+    """The address of yours the original was delivered to (an alias such as
+    sponsorships@… rather than the login address), from Delivered-To /
+    X-Original-To, cross-checked against To/Cc. '' if unknown."""
+    rcpts = {a.lower(): a for _, a in _addr_list(o.get("To", ""), o.get("Cc", ""))}
+    for h in ("Delivered-To", "X-Original-To"):
+        for v in o.get_all(h) or []:
+            for _, a in _addr_list(v):
+                if a.lower() in rcpts:
+                    return rcpts[a.lower()]
+    me = (self_addr or "").lower()
+    return rcpts.get(me, "") if me else ""
+
+
+def from_header(addr: str) -> str:
+    """Validate one From address ('Name <a@b>' or 'a@b')."""
+    pairs = _addr_list(addr)
+    if len(pairs) != 1 or "@" not in pairs[0][1]:
+        raise BridgeError(f"from_addr must be exactly one email address, got: {addr!r}")
+    return _fmt_addrs(pairs)
+
+
 def thread_context(orig_raw: bytes, *, mode: str, self_addr: str = "",
                    quote: bool = True) -> dict:
     """Headers + quoted text for a reply / reply_all / forward of ``orig_raw``.
 
-    Returns {to, cc, subject, in_reply_to, references, quoted, attachments}.
+    Returns {to, cc, subject, in_reply_to, references, quoted, attachments,
+    from}; ``from`` is the address the original was received at ('' if unknown).
     """
     o = email.message_from_bytes(orig_raw)
     p = parse_message(orig_raw)
@@ -582,16 +607,18 @@ def thread_context(orig_raw: bytes, *, mode: str, self_addr: str = "",
     if msgid and msgid not in refs.split():
         refs = f"{refs} {msgid}".strip()
     out = {"to": "", "cc": "", "subject": "", "in_reply_to": msgid,
-           "references": refs, "quoted": "", "attachments": []}
+           "references": refs, "quoted": "", "attachments": [],
+           "from": received_as(o, self_addr)}
     me = (self_addr or "").lower()
+    mine = {x for x in (me, out["from"].lower()) if x}
     if mode in ("reply", "reply_all"):
         target = _addr_list(o.get("Reply-To", "")) or _addr_list(o.get("From", ""))
         # Replying to your own sent mail goes back to its original recipients.
-        if target and all(a.lower() == me for _, a in target):
+        if target and all(a.lower() in mine for _, a in target):
             target = _addr_list(o.get("To", "")) or target
         out["to"] = _fmt_addrs(target)
         if mode == "reply_all":
-            seen = {a.lower() for _, a in target} | ({me} if me else set())
+            seen = {a.lower() for _, a in target} | mine
             cc = []
             for n, a in _addr_list(o.get("To", ""), o.get("Cc", "")):
                 if a.lower() not in seen:
@@ -619,7 +646,8 @@ def thread_context(orig_raw: bytes, *, mode: str, self_addr: str = "",
 def build_email(*, from_addr: str, to: str = "", cc: str = "", bcc: str = "",
                 subject: str = "", body: str = "", html: str = "",
                 attachment_paths=(), extra_attachments=(),
-                in_reply_to: str = "", references: str = "") -> EmailMessage:
+                in_reply_to: str = "", references: str = "",
+                extra_headers: dict | None = None) -> EmailMessage:
     """One RFC 5322 message. ``attachment_paths`` are read from disk (confined to
     allowed directories); ``extra_attachments`` are {name, type, data} dicts."""
     msg = EmailMessage()
@@ -637,6 +665,9 @@ def build_email(*, from_addr: str, to: str = "", cc: str = "", bcc: str = "",
         msg["In-Reply-To"] = in_reply_to
     if references:
         msg["References"] = references
+    for k, v in (extra_headers or {}).items():
+        if v:
+            msg[k] = v
     msg.set_content(body or "")
     if html:
         msg.add_alternative(html, subtype="html")
@@ -670,14 +701,18 @@ def _fetch_raw(m: imaplib.IMAP4, uid: int) -> tuple[bytes | None, str]:
 def compose(*, mode: str = "new", to: str = "", cc: str = "", bcc: str = "",
             subject: str = "", body: str = "", html: str = "", attachments=(),
             orig_uid: int = 0, orig_folder: str = "INBOX", quote: bool = True,
-            include_original_attachments: bool = True) -> EmailMessage:
+            include_original_attachments: bool = True, from_addr: str = "") -> EmailMessage:
     """Build a new / reply / reply_all / forward message (not sent, not saved).
 
     For replies and forwards the original is read with BODY.PEEK (not marked
     read). Explicit to/cc/subject win over the derived ones; derived cc from
     reply_all is merged with any explicit cc.
+
+    From: explicit ``from_addr`` (e.g. an alias like sponsorships@…) wins; for
+    replies/forwards it defaults to the address the original was received at;
+    otherwise the account login address.
     """
-    from_addr = smtp_settings()[2] or cfg.proton_imap_user
+    account = smtp_settings()[2] or cfg.proton_imap_user
     mode = (mode or "new").lower()
     ctx = None
     if mode != "new":
@@ -692,7 +727,8 @@ def compose(*, mode: str = "new", to: str = "", cc: str = "", bcc: str = "",
             _logout(m)
         if raw is None:
             raise BridgeError(f"No message with UID {orig_uid} in {orig_folder}.")
-        ctx = thread_context(raw, mode=mode, self_addr=from_addr, quote=quote)
+        ctx = thread_context(raw, mode=mode, self_addr=account, quote=quote)
+    from_addr = from_header(from_addr) if from_addr else ((ctx or {}).get("from") or account)
     if ctx:
         to = to or ctx["to"]
         if ctx["cc"]:
@@ -706,6 +742,9 @@ def compose(*, mode: str = "new", to: str = "", cc: str = "", bcc: str = "",
         extra_attachments=(ctx["attachments"] if ctx and include_original_attachments else ()),
         in_reply_to=ctx["in_reply_to"] if ctx else "",
         references=ctx["references"] if ctx else "",
+        # The bridge's SMTP marks a send as a forward (not a reply) when
+        # In-Reply-To equals X-Forwarded-Message-Id.
+        extra_headers={"X-Forwarded-Message-Id": ctx["in_reply_to"]} if ctx and mode == "forward" else None,
     )
 
 
@@ -755,7 +794,70 @@ def _append_draft(m: imaplib.IMAP4, drafts: str, msg: Message) -> int | None:
     return None
 
 
+# The bridge creates IMAP drafts without a parent message, and the draft it
+# serves back may lose In-Reply-To / References. So the thread headers of every
+# saved draft are also kept here, and restored when the draft is sent via SMTP —
+# the bridge's SMTP path links a send to its parent from those headers.
+
+def _threads_file() -> str:
+    from core.library import default_root
+    return os.path.join(str(default_root()), "data", "proton_draft_threads.json")
+
+
+def _thread_keys(msg: Message) -> list[str]:
+    keys = []
+    mid = str(msg.get("Message-ID") or "").strip()
+    if mid:
+        keys.append("id:" + mid)
+    subj = base_subject(_decode(msg.get("Subject"))).lower()
+    to = ",".join(sorted(a.lower() for _, a in _addr_list(_decode(msg.get("To")))))
+    if subj and to:
+        keys.append(f"st:{subj}|{to}")
+    return keys
+
+
+def _load_threads() -> dict:
+    import json
+    try:
+        with open(_threads_file(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def remember_thread(msg: Message) -> None:
+    irt = str(msg.get("In-Reply-To") or "").strip()
+    if not irt:
+        return
+    import json
+    data = _load_threads()
+    entry = {"in_reply_to": irt,
+             "references": " ".join(str(msg.get("References") or "").split()),
+             "forward_id": str(msg.get("X-Forwarded-Message-Id") or "").strip(),
+             "ts": time.time()}
+    for k in _thread_keys(msg):
+        data[k] = entry
+    if len(data) > 400:
+        data = dict(sorted(data.items(), key=lambda kv: kv[1].get("ts", 0))[-400:])
+    try:
+        path = _threads_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError:
+        pass
+
+
+def lookup_thread(msg: Message) -> dict | None:
+    data = _load_threads()
+    for k in _thread_keys(msg):
+        if k in data:
+            return data[k]
+    return None
+
+
 def save_draft(msg: Message) -> dict:
+    remember_thread(msg)
     m = _connect()
     try:
         drafts = special_folder(m, "drafts")
@@ -808,7 +910,8 @@ def get_draft(uid: int) -> dict:
 def update_draft(uid: int, *, to: str | None = None, cc: str | None = None,
                  bcc: str | None = None, subject: str | None = None,
                  body: str | None = None, html: str | None = None,
-                 add_attachments=(), drop_attachments: bool = False) -> dict:
+                 add_attachments=(), drop_attachments: bool = False,
+                 from_addr: str | None = None) -> dict:
     """Replace a draft: build the new version (unchanged fields kept, thread
     headers kept), APPEND it, then delete the old one. Drafts folder only."""
     m = _connect()
@@ -823,7 +926,8 @@ def update_draft(uid: int, *, to: str | None = None, cc: str | None = None,
                 plain = _part_text(part)
                 break
         new = build_email(
-            from_addr=str(old.get("From") or smtp_settings()[2] or cfg.proton_imap_user),
+            from_addr=(from_header(from_addr) if from_addr
+                       else str(old.get("From") or smtp_settings()[2] or cfg.proton_imap_user)),
             to=p["to"] if to is None else to,
             cc=p["cc"] if cc is None else cc,
             bcc=_decode(old.get("Bcc")) if bcc is None else bcc,
@@ -835,11 +939,77 @@ def update_draft(uid: int, *, to: str | None = None, cc: str | None = None,
             in_reply_to=(old.get("In-Reply-To") or "").strip(),
             references=" ".join((old.get("References") or "").split()),
         )
+        if not new.get("In-Reply-To"):
+            t = lookup_thread(old)
+            if t:
+                new["In-Reply-To"] = t["in_reply_to"]
+                new["References"] = t["references"]
+                if t.get("forward_id"):
+                    new["X-Forwarded-Message-Id"] = t["forward_id"]
+        remember_thread(new)
         new_uid = _append_draft(m, drafts, new)
         _expunge_uids(m, drafts, [uid])
         return {"folder": drafts, "old_uid": int(uid), "uid": new_uid}
     finally:
         _logout(m)
+
+
+def prepare_draft_send(uid: int, orig_uid: int = 0,
+                       orig_folder: str = "INBOX") -> tuple[Message, dict]:
+    """The draft as it would be sent: its current content (incl. edits made in
+    Proton), with thread headers restored if the bridge dropped them. Passing
+    orig_uid/orig_folder links it to that message explicitly."""
+    m = _connect()
+    try:
+        drafts, raw = _draft_raw(m, uid)
+        orig = None
+        if orig_uid:
+            folder = resolve_folder(m, orig_folder)
+            _examine(m, folder)
+            orig, _ = _fetch_raw(m, orig_uid)
+            if orig is None:
+                raise BridgeError(f"No message with UID {orig_uid} in {orig_folder}.")
+    finally:
+        _logout(m)
+    msg = email.message_from_bytes(raw, policy=policy.SMTP)
+    info = {"folder": drafts, "uid": int(uid), "threaded": False, "restored": False}
+    if orig is not None:
+        ctx = thread_context(orig, mode="reply", quote=False)
+        for h, v in (("In-Reply-To", ctx["in_reply_to"]), ("References", ctx["references"])):
+            del msg[h]
+            if v:
+                msg[h] = v
+        info["restored"] = True
+    elif not msg.get("In-Reply-To"):
+        t = lookup_thread(msg)
+        if t:
+            msg["In-Reply-To"] = t["in_reply_to"]
+            if t.get("references") and not msg.get("References"):
+                msg["References"] = t["references"]
+            if t.get("forward_id") and not msg.get("X-Forwarded-Message-Id"):
+                msg["X-Forwarded-Message-Id"] = t["forward_id"]
+            info["restored"] = True
+    info["threaded"] = bool(msg.get("In-Reply-To"))
+    if not msg.get("To"):
+        raise BridgeError(f"Draft UID {uid} has no recipient (To).")
+    return msg, info
+
+
+def send_draft(uid: int, orig_uid: int = 0, orig_folder: str = "INBOX") -> dict:
+    """Send a draft through the bridge SMTP, then remove it from Drafts."""
+    msg, info = prepare_draft_send(uid, orig_uid, orig_folder)
+    send(msg)
+    m = _connect()
+    try:
+        _expunge_uids(m, info["folder"], [uid])
+        info["draft_removed"] = True
+    except BridgeError as e:
+        info["draft_removed"] = f"no ({e})"
+    finally:
+        _logout(m)
+    info.update({"to": str(msg.get("To")), "subject": str(msg.get("Subject")),
+                 "from": str(msg.get("From"))})
+    return info
 
 
 def delete_draft(uid: int) -> dict:
@@ -961,6 +1131,23 @@ def label_messages(folder: str, uids, label: str, remove: bool = False) -> dict:
             _expunge_uids(m, label, targets)
         return {"folder": folder, "label": label, "uids": [int(u) for u in uids],
                 "removed": True, "label_uids": [int(t) for t in targets]}
+    finally:
+        _logout(m)
+
+
+def create_folder(name: str) -> str:
+    """Create a Proton folder (Folders/…) or label (Labels/…)."""
+    name = name.strip().strip("/")
+    if not name.startswith(("Folders/", "Labels/")) or len(name.split("/", 1)[1].strip()) == 0:
+        raise BridgeError("Name must start with Folders/ or Labels/, e.g. Labels/Sponsors.")
+    m = _connect()
+    try:
+        if _folder_exists(m, name):
+            raise BridgeError(f"{name} already exists.")
+        typ, data = m.create(_quote(name))
+        if typ != "OK":
+            raise BridgeError(f"Creating {name} failed: {data!r}")
+        return name
     finally:
         _logout(m)
 
