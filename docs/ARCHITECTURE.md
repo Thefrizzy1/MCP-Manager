@@ -180,8 +180,10 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
   Services & config
     builtin_services.py    Canonical built-in service + capability metadata.
     service_defs.py        Typed single-source view over it (drift-guarded).
-    proton_bridge.py       Proton Mail Bridge client: read-only IMAP (EXAMINE +
-                           BODY.PEEK) and STARTTLS SMTP for send_email.
+    proton_bridge.py       Proton Mail Bridge client: IMAP reads (EXAMINE +
+                           BODY.PEEK), drafts (Drafts folder only), flags,
+                           move/labels, threads, and STARTTLS SMTP for
+                           send_email. Only expunge: Drafts or Labels/….
     service_registry.py /
     service_utils.py /
     service_logos.py       Lookup, helpers, brand marks.

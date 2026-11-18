@@ -541,7 +541,7 @@ SERVICES: list[dict] = [
    "tools":[{"name":"google_search","label":"Google web search","params":[("query","Query","text"),("num","Max results","number")]}]},
 
   {"id":"smtp","label":"Email / Proton Bridge","icon":"📧","tag":"communication","section":"public",
-   "desc":"Read (IMAP, read-only) and send (SMTP) through the Proton Mail Bridge container. Password = the bridge password shown in the Bridge app, not your Proton login.",
+   "desc":"Read, search, threads, drafts, flags, labels and archive (IMAP) and confirm-gated send (SMTP) through the Proton Mail Bridge container. Password = the bridge password shown in the Bridge app, not your Proton login.",
    "config_keys":[("PROTON_BRIDGE_HOST","Bridge host","192.168.1.111",False),("PROTON_IMAP_PORT","IMAP port","1143",False),("PROTON_SMTP_PORT","SMTP port","1025",False),
                   ("PROTON_IMAP_USER","Proton address","",False),("PROTON_IMAP_PASS","Bridge password","",True)],
    "health_url":None,"health_headers":lambda: {},"configured_keys":("proton_imap_user","proton_imap_pass"),
@@ -549,6 +549,9 @@ SERVICES: list[dict] = [
             {"name":"proton_list_folders","label":"List Folders","params":[]},
             {"name":"proton_list_messages","label":"Recent Messages","params":[("folder","Folder","text"),("limit","Max results","number"),("from_addr","From contains","text"),("subject","Subject contains","text")]},
             {"name":"proton_read_message","label":"Read Message","params":[("uid","UID","number"),("folder","Folder","text")]},
+            {"name":"proton_search","label":"Search Mail","params":[("text","Text","text"),("from_addr","From contains","text"),("since","Since (YYYY-MM-DD)","text"),("before","Before (YYYY-MM-DD)","text")]},
+            {"name":"proton_list_threads","label":"Threads","params":[("folder","Folder (empty = All Mail)","text"),("limit","Max threads","number")]},
+            {"name":"proton_save_draft","label":"Save Draft","params":[("to","Recipient","text"),("subject","Subject","text"),("body","Body","text")]},
             {"name":"send_email","label":"Send Email","params":[("to","Recipient","text"),("subject","Subject","text"),("body","Body","text")]}]},
 ]
 
