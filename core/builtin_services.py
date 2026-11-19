@@ -549,6 +549,7 @@ SERVICES: list[dict] = [
             {"name":"proton_list_folders","label":"List Folders","params":[]},
             {"name":"proton_list_messages","label":"Recent Messages","params":[("folder","Folder","text"),("limit","Max results","number"),("from_addr","From contains","text"),("subject","Subject contains","text")]},
             {"name":"proton_read_message","label":"Read Message","params":[("uid","UID","number"),("folder","Folder","text")]},
+            {"name":"proton_read_attachment","label":"Read Attachment (PDF/docx text)","params":[("uid","UID","number"),("folder","Folder","text"),("index","Attachment # (0 = all)","number")]},
             {"name":"proton_search","label":"Search Mail","params":[("text","Text","text"),("from_addr","From contains","text"),("since","Since (YYYY-MM-DD)","text"),("before","Before (YYYY-MM-DD)","text")]},
             {"name":"proton_list_threads","label":"Threads","params":[("folder","Folder (empty = All Mail)","text"),("limit","Max threads","number")]},
             {"name":"proton_save_draft","label":"Save Draft","params":[("to","Recipient","text"),("subject","Subject","text"),("body","Body","text")]},

@@ -184,6 +184,9 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
                            BODY.PEEK), drafts (Drafts folder only), flags,
                            move/labels, threads, and STARTTLS SMTP for
                            send_email. Only expunge: Drafts or Labels/….
+    doc_text.py            Text out of document bytes (PDF via pypdf, page
+                           markers + scan flags; docx/html/txt) for
+                           proton_read_attachment and fs_read_file.
     service_registry.py /
     service_utils.py /
     service_logos.py       Lookup, helpers, brand marks.

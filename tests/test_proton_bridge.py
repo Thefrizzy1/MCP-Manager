@@ -512,3 +512,101 @@ def test_create_folder(fake):
         pb.create_folder("INBOX2")
     with pytest.raises(pb.BridgeError, match="already exists"):
         pb.create_folder("Labels/Sponsors")
+
+
+# ── Attachments: folded names and text extraction ────────────────────────────
+
+def _pdf(pages: list[str]) -> bytes:
+    """Minimal valid PDF, one Helvetica text line per page; '' = page with no text layer."""
+    objs = [b"<< /Type /Catalog /Pages 2 0 R >>", None,
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    kids = []
+    for text in pages:
+        stream = (f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode() if text else b"")
+        objs.append(b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream")
+        content = len(objs)
+        objs.append(b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                    b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>" % content)
+        kids.append(len(objs))
+    objs[1] = (b"<< /Type /Pages /Kids [" + b" ".join(b"%d 0 R" % k for k in kids)
+               + b"] /Count %d >>" % len(kids))
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for i, o in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % off for off in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
+def test_folded_attachment_name_is_unfolded():
+    raw = (b"Subject: Re: Collaboration\r\n =?utf-8?q?Topview?=\r\nMIME-Version: 1.0\r\n"
+           b"Content-Type: multipart/mixed; boundary=XX\r\n\r\n--XX\r\n"
+           b"Content-Type: text/plain\r\n\r\nhi\r\n--XX\r\n"
+           b"Content-Type: application/pdf\r\nContent-Disposition: attachment;\r\n"
+           b" filename=\"Influencer Services Agreement -\r\n Topview AI x The Frizzy.pdf\"\r\n"
+           b"Content-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--XX--\r\n")
+    name = "Influencer Services Agreement - Topview AI x The Frizzy.pdf"
+    assert pb.parse_message(raw)["attachments"][0]["name"] == name
+    assert pb._attachment_parts(raw)[0]["name"] == name
+    assert pb.parse_message(raw)["subject"] == "Re: Collaboration Topview"
+    assert pb._safe_filename(name) == name
+    assert pb._decode("=?utf-8?q?a?=\r\n =?utf-8?q?b?=") == "ab"
+
+
+def test_fetch_attachments_selects(monkeypatch):
+    raw = RAW.replace(b"--XX--", b"--XX\r\nContent-Type: image/png\r\n"
+                      b"Content-Disposition: attachment; filename=\"pic.png\"\r\n\r\nxx\r\n--XX--")
+    monkeypatch.setattr(pb, "_connect", lambda: None)
+    monkeypatch.setattr(pb, "_logout", lambda m: None)
+    monkeypatch.setattr(pb, "resolve_folder", lambda m, f: f)
+    monkeypatch.setattr(pb, "_examine", lambda m, f: 1)
+    monkeypatch.setattr(pb, "_fetch_raw", lambda m, uid: (raw, ""))
+    assert [p["name"] for p in pb.fetch_attachments("INBOX", 5)[1]] == ["brief.pdf", "pic.png"]
+    assert pb.fetch_attachments("INBOX", 5, index=2)[1][0]["name"] == "pic.png"
+    assert pb.fetch_attachments("INBOX", 5, name=" BRIEF.pdf ")[1][0]["type"] == "application/pdf"
+    with pytest.raises(pb.BridgeError, match="It has: brief.pdf, pic.png"):
+        pb.fetch_attachments("INBOX", 5, name="nope.pdf")
+    with pytest.raises(pb.BridgeError, match="does not exist"):
+        pb.fetch_attachments("INBOX", 5, index=3)
+
+
+def test_extract_pdf_pages_and_scan_note():
+    from core import doc_text
+    r = doc_text.extract("a.pdf", "application/octet-stream", _pdf(["Clause 1 Payment", "", "Clause 3 Term"]))
+    assert r["kind"] == "pdf" and r["pages"] == 3 and not r["truncated"]
+    assert "===== Page 1 / 3 =====\nClause 1 Payment" in r["text"]
+    assert "Page 2 / 3 =====\n[no text layer" in r["text"]
+    assert any("2" in n and "OCR" in n for n in r["notes"])
+    later = doc_text.extract("a.pdf", "", _pdf(["one", "two"]), start_page=2)["text"]
+    assert "Page 1" not in later and "two" in later
+    cut = doc_text.extract("a.pdf", "", _pdf(["x" * 50, "y" * 50]), max_chars=30)
+    assert cut["truncated"] and len(cut["text"]) == 30
+    assert "CUT: showing 30 of" in doc_text.render("a.pdf", "application/pdf", "1 KB", cut)
+    scan = doc_text.extract("s.pdf", "", _pdf(["", ""]))
+    assert any("scan/image" in n for n in scan["notes"])
+
+
+def test_extract_docx_html_text_other():
+    import io
+    import zipfile
+    from core import doc_text
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("word/document.xml",
+                   '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                   "<w:body><w:p><w:r><w:t>Fee:</w:t><w:tab/><w:t>$600</w:t></w:r></w:p>"
+                   "<w:p><w:r><w:t>Live by 17 Dec</w:t></w:r></w:p></w:body></w:document>")
+    r = doc_text.extract("terms.docx", "", buf.getvalue())
+    assert r["kind"] == "docx" and r["text"] == "Fee:\t$600\nLive by 17 Dec"
+    assert doc_text.extract("p.html", "text/html", b"<p>a&amp;b</p><script>x</script>")["text"] == "a&b"
+    assert doc_text.extract("r.csv", "", "a,b\nü,2".encode())["text"] == "a,b\nü,2"
+    img = doc_text.extract("pic.png", "image/png", b"\x89PNG")
+    assert img["kind"] == "other" and img["text"] == ""
+    out = doc_text.render("pic.png", "image/png", "4 B", img)
+    assert "BEGIN DOCUMENT" not in out and "size only" in out
+    assert doc_text.UNTRUSTED_BANNER in doc_text.render("r.csv", "text/csv", "1 B",
+                                                         doc_text.extract("r.csv", "", b"x"))

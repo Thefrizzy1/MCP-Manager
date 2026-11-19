@@ -10,6 +10,9 @@ pydantic>=2.0.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
 python-multipart>=0.0.12,<1.0.0
 apscheduler>=3.10.0,<4.0.0
+# Text out of PDF attachments / files (proton_read_attachment, fs_read_file).
+# Pure Python; the [crypto] extra opens AES-encrypted (e.g. e-signature) PDFs.
+pypdf[crypto]>=5.0.0,<8.0.0
 # YouTube pages: transcripts, the replay heatmap, channel tabs, search results.
 # Deliberately no upper cap — YouTube changes its pages every few weeks and only
 # a current yt-dlp keeps up; a pinned one would slowly stop reading anything.

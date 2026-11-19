@@ -265,13 +265,25 @@ def build_search(from_addr: str = "", subject: str = "", text: str = "",
     return " ".join(parts) or "ALL"
 
 
+_FOLD_RE = re.compile(r"\r?\n(?=[ \t])")
+
+
 def _decode(v: str | None) -> str:
+    """Decode an RFC 2047 header value and unfold it.
+
+    Long headers (and attachment filenames) arrive folded: CRLF + whitespace.
+    Unfolding drops the CRLF and keeps the whitespace (RFC 5322 §2.2.3); any
+    stray CR/LF left after decoding becomes a space, so names never carry
+    line breaks.
+    """
     if not v:
         return ""
+    v = _FOLD_RE.sub("", str(v))
     try:
-        return str(make_header(decode_header(v)))
+        out = str(make_header(decode_header(v)))
     except Exception:  # noqa: BLE001
-        return v
+        out = v
+    return re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", out).strip()
 
 
 _FLAGS_RE = re.compile(rb"FLAGS \(([^)]*)\)")
@@ -756,7 +768,7 @@ def summarize(msg: Message) -> dict:
         if part.is_multipart():
             continue
         if part.get_filename():
-            atts.append({"name": part.get_filename(), "type": part.get_content_type(),
+            atts.append({"name": _decode(part.get_filename()), "type": part.get_content_type(),
                          "size": len(part.get_payload(decode=True) or b"")})
         elif part.get_content_type() == "text/plain" and not body:
             body = _part_text(part)
@@ -1154,13 +1166,10 @@ def create_folder(name: str) -> str:
 
 # ── Attachments out ───────────────────────────────────────────────────────────
 
-def download_attachment(folder: str, uid: int, dest_dir: str, index: int = 0,
-                        name: str = "") -> list[dict]:
-    """Save attachment(s) of one message into ``dest_dir`` (allowed dirs only).
-    index is 1-based; 0 with no name = all attachments. Never overwrites."""
-    real_dir = check_path(dest_dir)
-    if not os.path.isdir(real_dir):
-        raise BridgeError(f"Not a directory: {dest_dir}")
+def fetch_attachments(folder: str, uid: int, index: int = 0, name: str = "") -> tuple[str, list[dict]]:
+    """(resolved folder, [{name, type, data}]) for one message, read-only (BODY.PEEK).
+    index is 1-based; 0 with no name = all attachments. Names match case-insensitively,
+    ignoring surrounding whitespace."""
     m = _connect()
     try:
         folder = resolve_folder(m, folder)
@@ -1178,9 +1187,23 @@ def download_attachment(folder: str, uid: int, dest_dir: str, index: int = 0,
             raise BridgeError(f"Attachment {index} does not exist (message has {len(parts)}).")
         parts = [parts[index - 1]]
     elif name:
-        parts = [p for p in parts if p["name"].lower() == name.lower()]
-        if not parts:
-            raise BridgeError(f"No attachment named '{name}'.")
+        want = _decode(name).lower()
+        hits = [p for p in parts if p["name"].lower() == want]
+        if not hits:
+            raise BridgeError(f"No attachment named '{name}'. It has: "
+                              + ", ".join(p["name"] for p in parts))
+        parts = hits
+    return folder, parts
+
+
+def download_attachment(folder: str, uid: int, dest_dir: str, index: int = 0,
+                        name: str = "") -> list[dict]:
+    """Save attachment(s) of one message into ``dest_dir`` (allowed dirs only).
+    index is 1-based; 0 with no name = all attachments. Never overwrites."""
+    real_dir = check_path(dest_dir)
+    if not os.path.isdir(real_dir):
+        raise BridgeError(f"Not a directory: {dest_dir}")
+    folder, parts = fetch_attachments(folder, uid, index, name)
     saved = []
     for p in parts:
         fname = _safe_filename(p["name"])

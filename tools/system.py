@@ -503,7 +503,9 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         annotations={"readOnlyHint": True, "destructiveHint": False}
     )
     async def fs_read_file(params: FsReadInput) -> str:
-        """Read the contents of a text file in an allowed path."""
+        """Read a text file in an allowed path. PDF and .docx files return their
+        extracted text (PDF page by page; ~400 chars per max_lines), marked as
+        untrusted document content."""
         def _run() -> str:
             if not _check_path(params.path):
                 return _denied(params.path)
@@ -514,6 +516,21 @@ def register_system_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
                     return f"Error: '{params.path}' is a directory. Use fs_list_directory instead."
 
                 size = os.path.getsize(params.path)
+                from core import doc_text
+                kind = doc_text.kind_of(params.path, "")
+                if kind in ("pdf", "docx"):
+                    # Documents: extract the text instead of dumping bytes.
+                    if size > 50 * 1024 * 1024:
+                        return f"Error: File too large ({fmt_size(size)}). Max 50MB for documents."
+                    with open(params.path, "rb") as f:
+                        data = f.read()
+                    try:
+                        res = doc_text.extract(params.path, "", data,
+                                               max_chars=max(params.max_lines * 400, 20000))
+                    except Exception as e:  # noqa: BLE001
+                        return f"Error: {e}"
+                    return doc_text.render(f"File: {params.path}", kind, fmt_size(size), res,
+                                           hint_more="Raise max_lines to see more.")
                 if size > 1024 * 1024:  # 1MB limit
                     return f"Error: File too large ({fmt_size(size)}). Max 1MB."
 
