@@ -27,7 +27,8 @@ run, outputs checked, folder written) call `lab_report` on the plutus MCP server
   `/object_info` for the node catalog, `POST /prompt`, `/history/<id>`, `/system_stats`.
 - Download models only into `{{MODELS_DIR}}/<type>/`. At most {{MAX_GB}} GB in total tonight.
   Check the size before each download. Never touch model files anywhere else.
-- Standard inputs: `{{INPUTS_DIR}}`, described in `{{MANIFEST}}`. Use these, not random files.
+- Standard inputs: `{{INPUTS_DIR}}`. `{{MANIFEST}}` lists the kinds that should be there; file names
+  may differ, so list the folder and pick the closest match for each kind. Use these, not random files.
 - Scratch and results: `{{RUN_DIR}}`.
 
 ## Steps

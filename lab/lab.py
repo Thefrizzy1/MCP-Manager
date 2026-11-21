@@ -58,7 +58,15 @@ DEFAULTS = {
 # boundary is the dedicated `lab` user and the token it never sees.
 DENY = ["Bash(sudo:*)", "Bash(systemctl:*)", "Bash(git push:*)", "Bash(gh pr merge:*)",
         "Bash(gh pr ready:*)", "Bash(gh repo:*)", "Bash(shutdown:*)", "Bash(reboot:*)"]
-ALLOW = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "mcp__plutus"]
+# Plutus tools a build session may call: research and progress only. Everything
+# else on the server (mail, posting, files, containers) stays out of reach.
+PLUTUS_TOOLS = ("lab_report trend_radar_list trend_radar_candidate trend_radar_signals trend_radar_done "
+                "huggingface_search_models huggingface_trending_models huggingface_model_info "
+                "github_search_repos github_repo_info github_list_issues github_list_pulls "
+                "github_read_file github_search_code reddit_search reddit_subreddit_posts "
+                "reddit_post_comments web_search web_fetch web_read exa_search youtube_search").split()
+ALLOW = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch",
+         *(f"mcp__plutus__{t}" for t in PLUTUS_TOOLS)]
 READONLY = ["Read", "Glob", "Grep", "Bash(ls:*)", "Bash(python3:*)", "Bash(ffprobe:*)",
             "Bash(ffmpeg:*)", "Bash(git diff:*)", "Bash(git log:*)", "Write"]
 
