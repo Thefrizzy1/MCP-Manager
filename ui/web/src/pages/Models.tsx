@@ -48,10 +48,10 @@ interface Data {
 }
 
 /** The lab's steps for one model, as arrows like the Videos page. */
-const STEPS = ['Found', 'Queued', 'Server test', '3060 test', 'Published'] as const
-const STEP_COLOR = ['var(--room-slate)', 'var(--room-indigo)', 'var(--room-violet)', 'var(--room-teal)', 'var(--room-lime)']
-// 'built' means the server test passed: publishing is open while the 3060 test is still to come.
-const STEP_OF: Record<string, number> = { queued: 1, testing: 2, failed: 2, waiting: 2, built: 4, published: 4 }
+const STEPS = ['Found', 'Queued', 'Test', 'Published'] as const
+const STEP_COLOR = ['var(--room-slate)', 'var(--room-indigo)', 'var(--room-violet)', 'var(--room-lime)']
+// 'built' means at least one test passed: publishing is open while the other half is still to come.
+const STEP_OF: Record<string, number> = { queued: 1, testing: 2, failed: 2, waiting: 2, built: 3, published: 3 }
 const STATUS_TEXT: Record<string, string> = {
   queued: 'Waiting for the lab',
   testing: 'Lab is working on it',
@@ -68,101 +68,106 @@ function ago(ts?: number) {
   return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : `${Math.floor(m / 1440)} d ago`
 }
 
+type TestState = 'queued' | 'testing' | 'done' | 'failed' | undefined
+const ARROW_FIRST = 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)'
+const ARROW = 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)'
+
+/** One half of the Test arrow: the same test, on one of the two machines. */
+function TestHalf({ label, state, note }: { label: string; state: TestState; note?: string }) {
+  const color = STEP_COLOR[2]
+  return (
+    <div
+      title={note || (state ? undefined : `${label}: not run yet`)}
+      className={cn('flex min-w-0 flex-1 items-center justify-center', state === 'testing' && 'stage-live')}
+      style={{
+        background:
+          state === 'testing'
+            ? color
+            : state === 'done'
+              ? `color-mix(in srgb, ${color} 30%, var(--surface))`
+              : state === 'failed'
+                ? 'var(--danger)'
+                : 'var(--surface-hover)',
+        color: state === 'testing' || state === 'failed' ? '#fff' : state === 'done' ? 'var(--ink)' : 'var(--ink-3)',
+      }}
+    >
+      <span className="truncate px-1.5">
+        {state === 'done' ? '✓ ' : ''}
+        {label}
+      </span>
+    </div>
+  )
+}
+
 function Steps({ model, onPublish }: { model: Model; onPublish: () => void }) {
-  const at = model.lab ? (STEP_OF[model.lab.status] ?? 0) : 0
   const lab = model.lab
+  const at = lab ? (STEP_OF[lab.status] ?? 0) : 0
   const passed = lab?.status === 'built' || lab?.status === 'published'
   // Either machine may test first. Without a separate server report, the model's
   // own status is the server's (that is where the lab runs).
-  const testState = (i: number) =>
-    i === 3
-      ? lab?.gpu3060?.status
-      : (lab?.server?.status ??
-        (lab?.gpu3060
-          ? undefined
-          : lab?.status === 'testing'
-            ? 'testing'
-            : lab?.status === 'failed'
-              ? 'failed'
-              : passed
-                ? 'done'
-                : undefined))
+  const server: TestState =
+    lab?.server?.status ??
+    (lab?.gpu3060
+      ? undefined
+      : lab?.status === 'testing'
+        ? 'testing'
+        : lab?.status === 'failed'
+          ? 'failed'
+          : passed
+            ? 'done'
+            : undefined)
   const update = lab?.status === 'published' && !!lab.update_pr
   const ready = (lab?.status === 'built' && !!lab.pr) || update
   const asked = !!lab?.publish_requested
   return (
     <div className="flex min-w-0 flex-1">
-      {STEPS.map((label, i) =>
-        i === 4 && ready ? (
-          <button
+      {STEPS.map((label, i) => {
+        const base = 'flex h-7 min-w-0 items-center justify-center text-[11px] font-medium'
+        const shape = { marginLeft: i ? -7 : 0, clipPath: i ? ARROW : ARROW_FIRST }
+        if (i === 2)
+          return (
+            // One arrow, two halves: left is the server, right is the 3060.
+            <div key={label} className={cn(base, 'flex-[1.7] gap-px pl-[9px]')} style={{ ...shape, background: 'var(--border)' }}>
+              <TestHalf label="Server" state={server} note={lab?.server?.text} />
+              <TestHalf label="3060" state={lab?.gpu3060?.status} note={lab?.gpu3060?.text} />
+            </div>
+          )
+        if (i === 3 && ready)
+          return (
+            <button
+              key={label}
+              disabled={asked}
+              onClick={onPublish}
+              title="Publish this workflow to GitHub and Hugging Face"
+              className={cn(base, 'flex-1 font-semibold text-white hover:brightness-110 disabled:opacity-70')}
+              style={{ ...shape, background: 'var(--accent)' }}
+            >
+              <span className="truncate px-3">{asked ? 'Publishing…' : update ? 'Update' : 'Publish'}</span>
+            </button>
+          )
+        const done = i < at || (i === 3 && lab?.status === 'published')
+        const current = i === at && i < 2
+        return (
+          <div
             key={label}
-            disabled={asked}
-            onClick={onPublish}
-            title="Publish this workflow to GitHub and Hugging Face"
-            className="flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-semibold text-white hover:brightness-110 disabled:opacity-70"
+            className={cn(base, 'flex-1')}
             style={{
-              marginLeft: -7,
-              clipPath: 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)',
-              background: 'var(--accent)',
+              ...shape,
+              background: current
+                ? STEP_COLOR[i]
+                : done
+                  ? `color-mix(in srgb, ${STEP_COLOR[i]} 30%, var(--surface))`
+                  : 'var(--surface-hover)',
+              color: current ? '#fff' : done ? 'var(--ink)' : 'var(--ink-3)',
             }}
           >
-            <span className="truncate px-3">{asked ? 'Publishing…' : update ? 'Update' : 'Publish'}</span>
-          </button>
-        ) : (
-        <div
-          key={label}
-          title={i === 3 ? lab?.gpu3060?.text || 'Runs when the 3060 PC can be woken' : i === 2 ? lab?.server?.text : undefined}
-          className={cn(
-            'flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium',
-            (i === 2 || i === 3) && testState(i) === 'testing' && 'stage-live',
-          )}
-          style={{
-            marginLeft: i ? -7 : 0,
-            clipPath: i
-              ? 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)'
-              : 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)',
-            background:
-              i === 2 || i === 3
-                ? testState(i) === 'testing'
-                  ? STEP_COLOR[i]
-                  : testState(i) === 'done'
-                    ? `color-mix(in srgb, ${STEP_COLOR[i]} 30%, var(--surface))`
-                    : testState(i) === 'failed'
-                      ? 'var(--danger)'
-                      : 'var(--surface-hover)'
-                : i === at
-                  ? STEP_COLOR[i]
-                  : i < at
-                    ? `color-mix(in srgb, ${STEP_COLOR[i]} 30%, var(--surface))`
-                    : 'var(--surface-hover)',
-            color:
-              i === 2 || i === 3
-                ? testState(i) === 'testing' || testState(i) === 'failed'
-                  ? '#fff'
-                  : testState(i) === 'done'
-                    ? 'var(--ink)'
-                    : 'var(--ink-3)'
-                : i === at
-                  ? '#fff'
-                  : i < at
-                    ? 'var(--ink)'
-                    : 'var(--ink-3)',
-          }}
-        >
-          <span className="truncate px-3">
-            {i === 2 || i === 3
-              ? testState(i) === 'done'
-                ? `✓ ${label}`
-                : testState(i) === 'failed'
-                  ? `${label} failed`
-                  : label
-              : i < at
-                ? `✓ ${label}`
-                : label}
-          </span>
-        </div>
-        ),
-      )}
+            <span className="truncate px-3">
+              {done ? '✓ ' : ''}
+              {label}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -317,7 +322,7 @@ export function Models() {
   const all = data?.models ?? []
   const inLab = all
     .filter((m) => m.lab && m.lab.status !== 'skipped')
-    .sort((a, b) => (STEP_OF[a.lab!.status] === 2 ? -1 : 0) - (STEP_OF[b.lab!.status] === 2 ? -1 : 0) || b.lab!.updated - a.lab!.updated)
+    .sort((a, b) => (a.lab!.status === 'testing' ? -1 : 0) - (b.lab!.status === 'testing' ? -1 : 0) || b.lab!.updated - a.lab!.updated)
   const fresh = all
     .filter((m) => !m.lab && !m.covered && (showAll || (m.released && m.age_days <= 45)))
     .sort((a, b) => a.age_days - b.age_days || b.hot - a.hot)
