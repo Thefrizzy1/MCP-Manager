@@ -6,6 +6,7 @@ session find out where every video stands without being told in chat, and record
 the facts files cannot show: a stage finished, a publish URL, a deadline, and
 what work was done (which feeds the morning page).
 """
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -16,6 +17,31 @@ from core import jobs
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SYM = {"todo": "·", "active": "▶", "done": "✓"}
+
+
+UPLOADS_MAX_AGE = 30 * 60
+
+
+async def sync_uploads(root: Path = _ROOT, *, force: bool = False) -> dict:
+    """Refresh the list of the channel's uploads that jobs are matched against.
+
+    The channel is the Trend Radar's ``my_channel``. Skipped while the stored
+    list is fresh; a failure keeps the old list (a job never un-publishes
+    because YouTube was unreachable).
+    """
+    cur = jobs.load_uploads(root)
+    if not force and time.time() - cur["ts"] < UPLOADS_MAX_AGE:
+        return cur
+    from core import trend_radar
+    from tools.youtube import collect_channel
+    channel = (trend_radar.load_config(root).get("my_channel") or "").strip()
+    if not channel:
+        return cur
+    try:
+        data = await collect_channel(channel, max_videos=60, max_shorts=0)
+    except Exception:
+        return cur
+    return jobs.save_uploads(root, channel, data.get("uploads") or [])
 
 
 def _line(j: dict) -> str:
@@ -46,6 +72,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         The seven marks are those stages (✓ done, ▶ in progress, · not started).
         Call this first when asked what is being worked on.
         """
+        await sync_uploads()
         data = jobs.list_jobs(_ROOT)
         if not data["mounted"]:
             return f"Error: the YouTube folder is not mounted at {data['root']} (set YOUTUBE_ROOT)."
@@ -70,7 +97,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         out = [f"## {j['title']}", f"- id: `{j['id']}`", f"- at stage: **{j['current']}**",
                f"- archived: {j['archived']} · deadline: {j['deadline'] or '-'}",
                f"- script: {j['script'] or '-'} · final export: {j['final_export'] or '-'}",
-               f"- publish url: {j['publish_url'] or '-'}", f"- note: {j['note'] or '-'}", "", "### Stages"]
+               f"- publish url: {j['publish_url'] or '-'}"
+               + (f" (matched to the upload “{j['published']['title']}”, {j['published']['date']})"
+                  if j.get("published") else ""),
+               f"- note: {j['note'] or '-'}", "", "### Stages"]
         for s in j["stages"]:
             ev = ", ".join(s["evidence"]) or "no files"
             out.append(f"- {_SYM[s['status']]} {s['label']}: {s['status']}"
@@ -92,6 +122,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         note: Optional[str] = Field(default=None, description="Short note shown on the board", max_length=4000)
         publish_url: Optional[str] = Field(default=None, description="YouTube URL once the video is live")
         archived: Optional[bool] = Field(default=None, description="Hide from / return to the active board")
+        publish_match: Optional[bool] = Field(default=None, description="false = the automatically matched upload is the wrong video; true = allow matching again")
 
     @mcp.tool(name="jobs_update", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def jobs_update(params: UpdateInput) -> str:
@@ -102,7 +133,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         changes: dict = {}
         if params.stage:
             changes["stages"] = {params.stage: params.status or "done"}
-        for key in ("deadline", "note", "publish_url", "archived"):
+        for key in ("deadline", "note", "publish_url", "archived", "publish_match"):
             val = getattr(params, key)
             if val is not None:
                 changes[key] = val
@@ -184,3 +215,53 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         except (KeyError, ValueError) as e:
             return f"Error: {e}"
         return f"✓ Request #{r['id']} marked done."
+
+    # ── Model lab board: the lab asks what to test and reports how it goes. ──
+    import json as _json
+
+    from core import lab_board
+
+    @mcp.tool(name="lab_next", annotations={"readOnlyHint": True})
+    async def lab_next() -> str:
+        """The next model the lab should work on, as JSON ({"slug", "name", "note"}), or {} when the list is empty."""
+        row = lab_board.next_queued(_ROOT)
+        return _json.dumps({k: row.get(k, "") for k in ("slug", "name", "note", "status")} if row else {})
+
+    class LabReportInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        slug: str = Field(default="", description="Model slug the report is about; empty for a general sign of life")
+        text: str = Field(default="", description="One line of progress, shown on the Models page", max_length=400)
+        status: str = Field(default="", description="New status: queued, testing, built, failed, waiting, published or skipped")
+        pr: str = Field(default="", description="Pull request URL once there is one")
+        name: str = Field(default="", description="Display name, when the model is new to the list")
+
+    @mcp.tool(name="lab_report", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def lab_report(params: LabReportInput) -> str:
+        """Report model-lab progress so it shows on the Models page.
+
+        Call it at each real step (downloading, first clean run, critique result,
+        pull request opened) with one plain sentence.
+        """
+        try:
+            if not params.slug:
+                lab_board.beat(_ROOT, params.text)
+                return "✓ Noted."
+            row = lab_board.report(_ROOT, params.slug, params.text, params.status, params.pr, params.name)
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"✓ {row['slug']}: {row['status']}"
+
+    class LabQueueInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        slug: str = Field(..., description="Model slug, e.g. ltx-2.5 (the Trend Radar's slug when it has one)")
+        name: str = Field(default="", description="Display name")
+        note: str = Field(default="", description="Why, or what to focus on", max_length=300)
+
+    @mcp.tool(name="lab_queue", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def lab_queue(params: LabQueueInput) -> str:
+        """Put a model on the model lab's list to be built and tested."""
+        try:
+            row = lab_board.queue(_ROOT, params.slug, params.name, params.note)
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"✓ Queued {row['slug']}."

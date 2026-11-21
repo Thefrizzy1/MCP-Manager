@@ -68,3 +68,30 @@ def test_old_untouched_jobs_archive_themselves_unless_pinned(yt):
             os.utime(os.path.join(dirpath, f), (old, old))
     assert jobs.get_job(yt, jid)["archived"] is True
     assert jobs.update_job(yt, jid, {"pinned": True})["archived"] is False
+
+
+def test_uploads_are_matched_to_jobs_and_shorts_stay_open(yt):
+    jid = "20261111_Local Relight"
+    jobs.save_uploads(yt, "@me", [
+        {"id": "aaaaaaaaaaa", "title": "I Replaced Higgsfield Relight With My RTX 3060 (Free, Local)",
+         "published": "2026-11-13", "kind": "video"},
+        {"id": "bbbbbbbbbbb", "title": "Local Relight", "published": "2026-10-01", "kind": "video"},
+        {"id": "ccccccccccc", "title": "Local Relight short", "published": "2026-11-14", "kind": "short"},
+    ])
+    job = jobs.get_job(yt, jid)
+    st = _status(job)
+    assert job["published"]["id"] == "aaaaaaaaaaa"          # not the older one, not the short
+    assert job["youtube_thumbnail"].endswith("/aaaaaaaaaaa/mqdefault.jpg")
+    assert st["publish"] == "done" and st["edit"] == "done"
+    assert st["shorts"] == "todo" and job["current"] == "shorts" and job["archived"] is False
+    assert jobs.update_job(yt, jid, {"stages": {"shorts": "done"}})["archived"] is True
+    assert jobs.update_job(yt, jid, {"publish_match": False, "stages": {"shorts": "auto"}})["published"] is None
+
+
+def test_the_upload_pack_settles_a_title_with_no_shared_words():
+    cands = [{"id": "a", "start": "2026-10-30", "title": "LTX VFX LoRAs",
+              "pack": "## Titles\\n1. No Seedance 2.5 Needed: Free AI VFX in 2 to 4 Minutes\\n"},
+             {"id": "b", "start": "2026-11-01", "title": "Something else", "pack": ""}]
+    vids = [{"id": "v", "title": "No Seedance 2.5 Needed: Free AI VFX in 2 to 4 Minutes",
+             "published": "2026-11-07", "kind": "video"}]
+    assert jobs.match_uploads(cands, vids) == {"a": vids[0]}

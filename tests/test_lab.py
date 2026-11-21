@@ -54,7 +54,7 @@ def test_sessions_never_get_the_tokens(monkeypatch):
 
 def test_prompts_render_with_every_placeholder_filled():
     keys = ("DATE RUN_DIR REPO MODELS_DIR INPUTS_DIR COMFY_URL COMFY_DIR STYLE LESSONS "
-            "MANIFEST ASSIGNMENT MAX_GB ISSUES").split()
+            "MANIFEST ASSIGNMENT MAX_GB ISSUES SLUG").split()
     values = {k: k.lower() for k in keys}
     for name in ("build.md", "critique.md"):
         assert "{{" not in lab.render(name, **values)
@@ -74,3 +74,16 @@ def test_unreachable_plutus_never_widens(monkeypatch, tmp_path):
     assert lab.permission(cfg, "lab.merge_pr") == "ask"
     assert lab.permission(cfg, "lab.delete_own_models") == "allow"
     assert lab.permission(cfg, "lab.open_pr") == "never"
+
+
+def test_the_workflow_maker_list_comes_before_the_local_queue(tmp_path, monkeypatch):
+    (tmp_path / "queue.json").write_text('[{"task": "build", "model": "from file"}]')
+    monkeypatch.setattr(lab, "plutus", lambda cfg, tool, *a, **k: '{"slug": "ltx-2.5", "name": "LTX 2.5"}')
+    assert lab.next_assignment({}, tmp_path)["slug"] == "ltx-2.5"
+    monkeypatch.setattr(lab, "plutus", lambda cfg, tool, *a, **k: "{}")
+    assert lab.next_assignment({}, tmp_path)["model"] == "from file"
+    def boom(*a, **k):
+        raise OSError("down")
+    monkeypatch.setattr(lab, "plutus", boom)
+    assert lab.next_assignment({}, tmp_path)["model"] == "from file"
+    lab.tell({}, "still fine when Plutus is down")          # must not raise

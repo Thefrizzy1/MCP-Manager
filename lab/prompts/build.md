@@ -10,6 +10,11 @@ Assignment: {{ASSIGNMENT}}
 - Anything else in the assignment names the model or workflow to do.
 - Issues from the last critique of tonight's work (fix exactly these if not "none"): {{ISSUES}}
 
+## Show your progress
+The owner watches this on a page. At each real step (model chosen, downloading, first clean
+run, outputs checked, folder written) call `lab_report` on the plutus MCP server with
+`slug` = `{{SLUG}}` and one plain sentence in `text`. Put the same slug in result.json.
+
 ## Read first
 1. `{{STYLE}}` — the house style. It is the standard the critique will hold you to.
 2. `{{LESSONS}}` — lessons from earlier nights and from the owner's review comments.
@@ -46,7 +51,7 @@ Assignment: {{ASSIGNMENT}}
 
 ## Finish
 Write `{{RUN_DIR}}/result.json`:
-`{"status": "built" | "waiting_for_core" | "needs_input" | "failed", "title": "<display name and version>",
+`{"status": "built" | "waiting_for_core" | "needs_input" | "failed", "slug": "<the slug>", "title": "<display name and version>",
   "folder": "workflows/…", "summary": "<two sentences>", "tested": "<what ran, time, peak VRAM>",
   "not_verified": ["…"], "reason": "<only when not built>"}`
 Report only what you ran. If a run did not happen, say so in `not_verified`.

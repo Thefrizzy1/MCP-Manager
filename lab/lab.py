@@ -45,6 +45,9 @@ DEFAULTS = {
     "min_free_gb": 60,
     "task_timeout_min": 150,
     "critique_timeout_min": 25,
+    "night_hours": 7,           # stop starting new models after this long
+    "max_tasks": 20,
+    "hf_repo": "",              # Hugging Face mirror, e.g. "you/your-workflows"; "" = none
     "gpu_lock": ["gpu-lock", "lab"],
     # Succeeds only when the GPU is free; a busy GPU skips the night. [] = no check.
     "gpu_free_check": [],
@@ -127,6 +130,29 @@ def permission(cfg: dict, action: str) -> str:
             setting = "ask"
         log(f"Plutus unreachable ({e}); treating {action} as {setting}")
         return setting
+
+
+def tell(cfg: dict, text: str, slug: str = "", status: str = "", pr: str = "", name: str = "") -> None:
+    """Progress for the Workflow Maker page. Never lets a reporting failure stop the night."""
+    try:
+        plutus(cfg, "lab_report", {"params": {"slug": slug, "text": text[:390], "status": status,
+                                              "pr": pr, "name": name}}, timeout=20)
+    except Exception as e:
+        log(f"could not report progress: {e}")
+
+
+def next_assignment(cfg: dict, state: Path) -> dict:
+    """What to work on: the Workflow Maker list first, then the local queue file, else auto."""
+    try:
+        row = json.loads(plutus(cfg, "lab_next", timeout=20) or "{}")
+    except Exception as e:
+        log(f"could not read the lab list: {e}")
+        row = {}
+    if row.get("slug"):
+        return {"task": "build", "slug": row["slug"], "model": row.get("name") or row["slug"],
+                "note": row.get("note", "")}
+    queue = read_json(state / "queue.json", [])
+    return queue[0] if queue else {"task": "auto"}
 
 
 # ── models folder: snapshot before, delete only what is new after ────────────
@@ -301,40 +327,38 @@ def process_approvals(cfg: dict) -> list[str]:
             plutus(cfg, "studio_approval_done", {"params": {"request_id": int(rid)}})
             done.append(link)
             log(f"merged {link}")
+            try:
+                where = mirror_to_hf(cfg, repo)
+                if where:
+                    log(f"mirrored to Hugging Face: {where}")
+            except Exception as e:
+                log(str(e))
         except Exception as e:
             log(f"could not merge {link}: {e}")
     return done
 
 
-def nightly(cfg: dict) -> int:
-    today = dt.date.today().isoformat()
+def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
+    """One model, start to finish: build, critique, one fix round, PR, clean-up."""
     state = Path(cfg["state_dir"])
-    run_dir = state / "runs" / today
-    run_dir.mkdir(parents=True, exist_ok=True)
     repo = Path(cfg["workflows_repo"])
-    report: dict = {"date": today, "status": "started", "merged": process_approvals(cfg)}
-
-    rows = preflight(cfg)
-    report["preflight"] = [{"check": n, "ok": ok, "detail": d} for n, ok, d in rows]
-    if not print_preflight(rows):
-        report["status"] = "blocked"
-        return finish(cfg, run_dir, report)
-
-    branch = f"lab/{today}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out: dict = {"assignment": assignment, "status": "started"}
     git(repo, "checkout", "-q", "main")
     git(repo, "pull", "-q", "--ff-only")
     git(repo, "checkout", "-q", "-B", branch)
     (run_dir / "models_before.json").write_text(json.dumps(snapshot(Path(cfg["models_dir"]))))
-    queue = read_json(state / "queue.json", [])
-    assignment = queue[0] if queue else {"task": "auto"}
+    slug = assignment.get("slug", "")
+    tell(cfg, "Lab started on this model", slug, "testing" if slug else "", name=assignment.get("model", ""))
     (state / "LESSONS.md").touch()
     mcp = write_mcp_config(cfg, run_dir)
     values = dict(
-        DATE=today, RUN_DIR=run_dir, REPO=repo, MODELS_DIR=cfg["models_dir"],
+        DATE=dt.date.today().isoformat(), RUN_DIR=run_dir, REPO=repo, MODELS_DIR=cfg["models_dir"],
         INPUTS_DIR=cfg["inputs_dir"], COMFY_URL=f"http://127.0.0.1:{cfg['comfy_port']}",
         COMFY_DIR=cfg["comfy_dir"], STYLE=HERE / "STYLE.md", LESSONS=state / "LESSONS.md",
         MANIFEST=HERE / "inputs" / "manifest.json", ASSIGNMENT=json.dumps(assignment),
         MAX_GB=int(shutil.disk_usage(cfg["models_dir"]).free / 1e9 - 20), ISSUES="none",
+        SLUG=slug or "(choose one: lowercase-with-dashes, the Trend Radar slug when it has one)",
     )
     comfy = start_comfy(cfg, run_dir)
     try:
@@ -351,35 +375,91 @@ def nightly(cfg: dict) -> int:
             run_session(cfg, render("critique.md", **values), repo, run_dir / f"critique{attempt}.log",
                         allowed=READONLY, timeout_min=cfg["critique_timeout_min"], mcp=None)
             verdict = read_json(run_dir / "review.json", {"verdict": "fail", "issues": ["no review written"]})
+            slug = slug or result.get("slug", "")
+            tell(cfg, f"Critique {attempt}: {verdict.get('verdict', 'fail')}. {verdict.get('summary', '')}", slug)
             if verdict.get("verdict") == "pass":
                 break
             values["ISSUES"] = json.dumps(verdict.get("issues", []))
         result = read_json(run_dir / "result.json", {"status": "no_result"})
-        report.update(result=result, review=verdict)
+        out.update(result=result, review=verdict)
+        slug = slug or result.get("slug", "")
+        out["slug"] = slug
 
         check = subprocess.run([sys.executable, "scripts/check_repo.py"], cwd=repo,
                                capture_output=True, text=True)
-        report["repo_check"] = "ok" if check.returncode == 0 else check.stdout[-1500:]
+        out["repo_check"] = "ok" if check.returncode == 0 else check.stdout[-1500:]
         changed = bool(git(repo, "status", "--porcelain"))
         good = (result.get("status") == "built" and verdict.get("verdict") == "pass"
                 and check.returncode == 0 and changed)
         if good and permission(cfg, "lab.open_pr") == "allow":
-            report["pr"] = publish(cfg, repo, branch, result, verdict)
-            if queue:
-                (state / "queue.json").write_text(json.dumps(queue[1:], indent=1))
-            report["status"] = "pr_opened"
+            out["pr"] = publish(cfg, repo, branch, result, verdict)
+            out["status"] = "pr_opened"
+            tell(cfg, "Workflow built and reviewed. Pull request: " + out["pr"], slug, "built", out["pr"])
+            try:
+                if json.loads(gh(repo, "pr", "view", out["pr"], "--json", "state"))["state"] == "MERGED":
+                    out["status"] = "published"
+                    tell(cfg, "Published on GitHub" + (f" and mirrored to {cfg['hf_repo']}" if cfg["hf_repo"] else ""),
+                         slug, "published", out["pr"])
+            except Exception as e:
+                log(f"could not read the PR state: {e}")
         else:
-            report["status"] = "nothing_to_publish" if not changed else "failed_review"
-            git(repo, "stash", "-u", "-m", f"lab {today} unpublished", check=False)
+            out["status"] = "nothing_to_publish" if not changed else "failed_review"
+            waiting = result.get("status") in ("waiting_for_core", "needs_input")
+            why = (result.get("reason") or (check.returncode and "repo check failed: " + out["repo_check"][-200:])
+                   or verdict.get("summary") or result.get("summary") or "No workflow came out of this run.")
+            tell(cfg, str(why), slug, "waiting" if waiting else "failed")
+            git(repo, "stash", "-u", "-m", f"lab {branch} unpublished", check=False)
     finally:
         comfy.terminate()
         try:
             comfy.wait(timeout=60)
         except subprocess.TimeoutExpired:
             comfy.kill()
-        report["cleanup"] = cleanup(cfg, run_dir)
+        out["cleanup"] = cleanup(cfg, run_dir)
         git(repo, "checkout", "-q", "main", check=False)
-    return finish(cfg, run_dir, report)
+    return out
+
+
+def nightly(cfg: dict) -> int:
+    """Work through the list until it is empty, the night is over, or the machine is not ready."""
+    today = dt.date.today().isoformat()
+    state = Path(cfg["state_dir"])
+    night_dir = state / "runs" / today
+    night_dir.mkdir(parents=True, exist_ok=True)
+    deadline = dt.datetime.now() + dt.timedelta(hours=cfg["night_hours"])
+    report: dict = {"date": today, "status": "started", "merged": process_approvals(cfg), "tasks": []}
+    seen: set[str] = set()
+    while len(report["tasks"]) < cfg["max_tasks"] and dt.datetime.now() < deadline:
+        rows = preflight(cfg)
+        report["preflight"] = [{"check": n, "ok": ok, "detail": d} for n, ok, d in rows]
+        if not print_preflight(rows):
+            if not report["tasks"]:
+                report["status"] = "blocked"
+            tell(cfg, "Stopped: " + "; ".join(d for n, ok, d in rows if not ok and n != "standard inputs"))
+            break
+        assignment = next_assignment(cfg, state)
+        key = assignment.get("slug") or assignment.get("model") or "auto"
+        if key in seen:            # the same model came back: its status did not move, do not loop
+            break
+        seen.add(key)
+        n = len(report["tasks"]) + 1
+        safe = re.sub(r"[^a-z0-9.-]+", "-", key.lower()).strip("-") or "auto"
+        log(f"task {n}: {key}")
+        try:
+            task = run_task(cfg, assignment, night_dir / f"{n:02d}-{safe}", f"lab/{today}-{safe}")
+        except Exception as e:     # one broken model must not end the night
+            task = {"assignment": assignment, "status": "crashed", "error": str(e)[:300]}
+            tell(cfg, f"Crashed: {e}", assignment.get("slug", ""), "failed" if assignment.get("slug") else "")
+        report["tasks"].append(task)
+        if not assignment.get("slug"):
+            queue = read_json(state / "queue.json", [])
+            if queue and assignment == queue[0]:
+                (state / "queue.json").write_text(json.dumps(queue[1:], indent=1))
+            elif assignment.get("task") == "auto":
+                break              # nothing was asked for: one pick of its own per night
+    if report["status"] != "blocked":
+        report["status"] = "done"
+    return finish(cfg, night_dir, report)
 
 
 def publish(cfg: dict, repo: Path, branch: str, result: dict, verdict: dict) -> str:
@@ -405,20 +485,41 @@ def publish(cfg: dict, repo: Path, branch: str, result: dict, verdict: dict) -> 
     return url
 
 
+def mirror_to_hf(cfg: dict, repo: Path) -> str:
+    """Copy the published workflows folder to the Hugging Face mirror. '' when not configured."""
+    if not cfg["hf_repo"]:
+        return ""
+    git(repo, "checkout", "-q", "main")
+    git(repo, "pull", "-q", "--ff-only")
+    code = ("import sys; from huggingface_hub import HfApi; "
+            "HfApi().upload_folder(repo_id=sys.argv[1], folder_path='workflows', path_in_repo='workflows', "
+            "repo_type='model', commit_message='Sync workflows from GitHub')")
+    env = dict(os.environ)
+    if os.getenv("LAB_HF_TOKEN"):
+        env["HF_TOKEN"] = os.environ["LAB_HF_TOKEN"]
+    r = subprocess.run([cfg["comfy_python"], "-c", code, cfg["hf_repo"]], cwd=repo, env=env,
+                       capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError("Hugging Face mirror: " + r.stderr.strip()[-300:])
+    return cfg["hf_repo"]
+
+
 def finish(cfg: dict, run_dir: Path, report: dict) -> int:
     (run_dir / "report.json").write_text(json.dumps(report, indent=1, default=str))
-    title = (report.get("result") or {}).get("title", "")
-    line = {"pr_opened": f"Model lab opened a PR: {title} {report.get('pr', '')}",
-            "blocked": "Model lab did not run: " + "; ".join(
-                r["detail"] for r in report.get("preflight", []) if not r["ok"] and r["check"] != "standard inputs"),
-            "failed_review": f"Model lab built {title or 'a workflow'} but it failed review",
-            "nothing_to_publish": "Model lab ran and found nothing to publish"}.get(report["status"], report["status"])
+    tasks = report.get("tasks", [])
+    opened = [t for t in tasks if t.get("status") in ("pr_opened", "published")]
+    if report["status"] == "blocked":
+        line = "Model lab did not run: " + "; ".join(
+            r["detail"] for r in report.get("preflight", []) if not r["ok"] and r["check"] != "standard inputs")
+    else:
+        line = (f"Model lab: {len(tasks)} model(s) worked on, {len(opened)} workflow(s) built"
+                + (f", {len(report.get('merged') or [])} published" if report.get("merged") else ""))
     log(line)
     try:
         plutus(cfg, "jobs_log", {"params": {"text": line[:480], "who": "model lab"}})
     except Exception as e:
         log(f"could not log to Plutus: {e}")
-    return 0 if report["status"] in ("pr_opened", "nothing_to_publish") else 1
+    return 0 if report["status"] == "done" else 1
 
 
 def main() -> int:

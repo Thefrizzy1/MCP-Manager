@@ -20,6 +20,7 @@ from ui.api import (
     google,
     health,
     jobs,
+    models,
     permissions,
     profiles,
     providers,
@@ -48,6 +49,7 @@ _PUBLIC_ROUTERS = (
 _AUTHED_ROUTERS = (
     files.router,
     jobs.router,
+    models.router,
     permissions.router,
     health.router,
     connections.router,

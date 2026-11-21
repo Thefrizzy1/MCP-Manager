@@ -8,18 +8,27 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from core import jobs
+from tools.jobs import sync_uploads
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
 
 router = APIRouter(dependencies=[Depends(verify_auth)])
 
 _TEXT_LIMIT = 400_000
+_SYNCS: set = set()          # keeps background sync tasks referenced until done
 
 
 @router.get("/api/v1/jobs")
 async def api_v1_jobs(request: Request):
     """Every job, newest first. ``?refresh=1`` rescans the NAS now."""
     force = request.query_params.get("refresh") in ("1", "true")
+    if force:
+        await sync_uploads(ROOT, force=True)       # Rescan also re-reads the channel
+    else:
+        # Never make the page wait on YouTube; a stale list refreshes behind it.
+        task = asyncio.create_task(sync_uploads(ROOT))
+        _SYNCS.add(task)
+        task.add_done_callback(_SYNCS.discard)
     # The scan is blocking filesystem work (slow on a network mount).
     data = await asyncio.to_thread(jobs.list_jobs, ROOT, force=force)
     data["activity"] = jobs.recent_activity(ROOT, limit=30)
@@ -65,6 +74,7 @@ class JobUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=4000)
     publish_url: str | None = Field(default=None, max_length=500)
     thumbnail: str | None = Field(default=None, max_length=500)
+    publish_match: bool | None = None    # false = the matched upload is the wrong video
 
 
 @router.post("/api/v1/jobs/update")

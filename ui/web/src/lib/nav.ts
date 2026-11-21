@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
-  KanbanSquare,
+  Clapperboard,
+  Boxes,
   ScrollText,
   ShieldCheck,
   Plug,
@@ -24,23 +25,32 @@ export interface NavGroup {
 
 export const NAV_GROUPS: NavGroup[] = [
   {
-    label: 'Workspace',
+    // Everything about making and publishing videos.
+    label: 'YouTube Studio',
+    items: [{ id: 'jobs', label: 'Videos', icon: Clapperboard }],
+  },
+  {
+    // New models in, tested ComfyUI workflows out.
+    label: 'Workflow Maker',
+    items: [{ id: 'models', label: 'Models', icon: Boxes }],
+  },
+  {
+    label: 'MCP connections',
     items: [
-      { id: 'jobs', label: 'Jobs', icon: KanbanSquare },
-      { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'connections', label: 'Connections', icon: Plug },
       { id: 'discover', label: 'Discover', icon: Radar },
-      { id: 'trends', label: 'Trends', icon: Satellite },
     ],
   },
   {
     label: 'System',
     items: [
+      { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
       { id: 'files', label: 'Files', icon: FolderOpen },
-      // Transcripts of scheduled runs (Idea Studio, nightly jobs). The agent
-      // builder and rooms are not part of the studio edition.
+      // Transcripts of scheduled runs (Idea Studio, nightly jobs).
       { id: 'agents', label: 'Runs', icon: ScrollText },
+      // The full radar: signals, scoring, Idea Studio. Models is the short view.
+      { id: 'trends', label: 'Trend Radar', icon: Satellite },
     ],
   },
 ]

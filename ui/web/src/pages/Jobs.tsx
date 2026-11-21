@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, ArchiveRestore, File, Folder, Pin, RefreshCw, ChevronUp } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronRight, File, Folder, Pin, RefreshCw, ChevronUp } from 'lucide-react'
 import { api } from '@/lib/api'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -41,6 +41,8 @@ interface Job {
   final_export: string
   thumbnails: string[]
   thumbnail: string
+  youtube_thumbnail: string
+  published: { id: string; title: string; date: string; views: number | null } | null
 }
 interface Activity {
   ts: number
@@ -85,110 +87,155 @@ const dayLabel = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 const dateTs = (iso: string) => Math.floor(new Date(iso + 'T12:00:00').getTime() / 1000)
 
-function Pips({ stages }: { stages: Stage[] }) {
+/** The pipeline as arrows: finished stages tinted, the current one solid, the rest empty. */
+function Stepper({ job }: { job: Job }) {
   return (
-    <div className="flex gap-1">
-      {stages.map((s) => (
-        <span
-          key={s.id}
-          title={`${s.label}: ${s.status}`}
-          className="h-1.5 flex-1 rounded-full"
-          style={{
-            background: s.status === 'todo' ? 'var(--border-strong)' : STAGE_COLOR[s.id],
-            opacity: s.status === 'active' ? 0.55 : 1,
-          }}
-        />
+    <div className="flex min-w-0 flex-1" role="list" aria-label={`Stages of ${job.title}`}>
+      {job.stages.map((s, i) => {
+        const current = s.id === job.current
+        const color = STAGE_COLOR[s.id]
+        const first = i === 0
+        return (
+          <div
+            key={s.id}
+            role="listitem"
+            title={`${s.label}: ${s.status === 'done' ? 'done' : current ? 'working on it' : s.status === 'active' ? 'started' : 'not started'}`}
+            className="relative flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium"
+            style={{
+              marginLeft: first ? 0 : -7,
+              clipPath: first
+                ? 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)'
+                : 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)',
+              background: current
+                ? color
+                : s.status === 'done'
+                  ? `color-mix(in srgb, ${color} 30%, var(--surface))`
+                  : s.status === 'active'
+                    ? `color-mix(in srgb, ${color} 14%, var(--surface-2))`
+                    : 'var(--surface-hover)',
+              color: current ? '#fff' : s.status === 'todo' ? 'var(--ink-3)' : 'var(--ink)',
+            }}
+          >
+            <span className="truncate px-3">
+              {s.status === 'done' && !current ? '✓ ' : ''}
+              {s.label}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** When each stage had files touched, for one video. */
+function RowTimeline({ job }: { job: Job }) {
+  const now = Math.floor(Date.now() / 1000)
+  const spans = job.stages.filter((s) => s.first && s.last)
+  if (!spans.length) return <p className="text-[12px] text-ink-3">No dated files yet.</p>
+  const t0 = Math.min(dateTs(job.start), ...spans.map((s) => s.first!)) - DAY
+  const end = Math.max(...spans.map((s) => s.last!), job.deadline ? dateTs(job.deadline) : 0)
+  const t1 = Math.max(end, Math.min(now, end + 5 * DAY)) + DAY
+  const pct = (t: number) => Math.min(100, Math.max(0, ((t - t0) / (t1 - t0)) * 100))
+  return (
+    <div>
+      {job.stages.map((s) => (
+        <div key={s.id} className="flex items-center gap-2 py-[3px]">
+          <span className="w-[76px] shrink-0 text-[11.5px] text-ink-2">{s.label}</span>
+          <div className="relative h-3 flex-1 rounded-full bg-surface-hover">
+            {s.first && s.last && (
+              <span
+                className="absolute inset-y-0 rounded-full"
+                style={{
+                  left: `${pct(s.first)}%`,
+                  width: `max(8px, ${pct(s.last + DAY / 2) - pct(s.first)}%)`,
+                  background: STAGE_COLOR[s.id],
+                  opacity: s.status === 'done' ? 1 : 0.6,
+                }}
+              />
+            )}
+            {job.deadline && (
+              <span
+                className="absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-danger"
+                style={{ left: `${pct(dateTs(job.deadline))}%` }}
+              />
+            )}
+          </div>
+          <span className="w-[112px] shrink-0 text-right text-[11px] text-ink-3">
+            {s.first && s.last
+              ? s.first + DAY > s.last
+                ? dayLabel(s.first)
+                : `${dayLabel(s.first)} – ${dayLabel(s.last)}`
+              : '—'}
+          </span>
+        </div>
       ))}
     </div>
   )
 }
 
-function Gantt({ jobs, onOpen }: { jobs: Job[]; onOpen: (id: string) => void }) {
-  const now = Math.floor(Date.now() / 1000)
-  const { t0, t1, ticks } = useMemo(() => {
-    let lo = now - 21 * DAY
-    let hi = now + 10 * DAY
-    for (const j of jobs) {
-      lo = Math.min(lo, dateTs(j.start))
-      if (j.deadline) hi = Math.max(hi, dateTs(j.deadline) + 3 * DAY)
-    }
-    lo = Math.max(lo, now - 120 * DAY)
-    const tk: number[] = []
-    const d = new Date(lo * 1000)
-    d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() + ((8 - d.getDay()) % 7)) // next Monday
-    for (let t = d.getTime() / 1000; t < hi; t += 7 * DAY) tk.push(t)
-    return { t0: lo, t1: hi, ticks: tk }
-  }, [jobs, now])
-  const pct = (t: number) => Math.min(100, Math.max(0, ((t - t0) / (t1 - t0)) * 100))
-
+function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const done = job.current === 'done'
+  const color = done ? 'var(--ok)' : STAGE_COLOR[job.current]
+  const cur = job.stages.find((s) => s.id === job.current)
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[720px]">
-        <div className="relative ml-[210px] h-6 border-b border-border">
-          {ticks.map((t) => (
+    <div className="border-b border-border last:border-b-0">
+      <button
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-hover"
+      >
+        <ChevronRight size={14} className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
+        {job.youtube_thumbnail || job.thumbnail ? (
+          <img
+            src={job.youtube_thumbnail || fileUrl(job.id, job.thumbnail)}
+            alt=""
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            className="h-9 w-16 shrink-0 rounded-[4px] object-cover"
+          />
+        ) : (
+          <div className="h-9 w-16 shrink-0 rounded-[4px] bg-surface-hover" />
+        )}
+        <div className="w-[210px] shrink-0">
+          <div className="truncate text-[13px] font-semibold text-ink">{job.title}</div>
+          <div className="mt-0.5 flex items-center gap-1.5">
             <span
-              key={t}
-              className="absolute top-1 -translate-x-1/2 text-[10.5px] text-ink-3"
-              style={{ left: `${pct(t)}%` }}
+              className="rounded-full px-2 py-[1px] text-[10.5px] font-semibold text-white"
+              style={{ background: color }}
             >
-              {dayLabel(t)}
+              {done ? 'Finished' : `At ${cur?.label.toLowerCase()}`}
             </span>
-          ))}
+            {job.deadline ? (
+              <span className="text-[11px] text-danger">due {job.deadline.slice(5)}</span>
+            ) : job.sponsored ? (
+              <span className="text-[11px] text-ink-3">sponsored</span>
+            ) : null}
+          </div>
         </div>
-        {jobs.map((j) => (
-          <button
-            key={j.id}
-            onClick={() => onOpen(j.id)}
-            className="flex w-full items-center border-b border-border/60 text-left hover:bg-surface-hover"
-          >
-            <div className="w-[210px] shrink-0 truncate px-3 py-2 text-[12.5px] text-ink">
-              {j.title}
-              <div className="text-[10.5px] text-ink-3">
-                {j.current === 'done' ? 'Done' : `At ${j.current}`}
-                {j.idle_days ? ` · idle ${j.idle_days}d` : ''}
+        <Stepper job={job} />
+      </button>
+      {open && (
+        <div className="grid gap-4 border-t border-border bg-surface-2 px-4 py-3 md:grid-cols-[1fr_260px]">
+          <RowTimeline job={job} />
+          <div className="space-y-1.5 text-[12px] text-ink-2">
+            <div>Started {job.start}{job.idle_days ? ` · last touched ${job.idle_days}d ago` : ' · touched today'}</div>
+            {job.published && (
+              <div>
+                Live since {job.published.date || 'recently'}:{' '}
+                <a className="text-accent hover:underline" href={job.publish_url} target="_blank" rel="noreferrer">
+                  {job.published.title}
+                </a>
+                {job.published.views != null && ` · ${job.published.views.toLocaleString()} views`}
               </div>
-            </div>
-            <div className="relative h-9 flex-1">
-              {ticks.map((t) => (
-                <span
-                  key={t}
-                  className="absolute inset-y-0 w-px bg-border/60"
-                  style={{ left: `${pct(t)}%` }}
-                />
-              ))}
-              {j.stages
-                .filter((s) => s.first && s.last)
-                .map((s, i) => {
-                  const a = pct(Math.max(s.first!, t0))
-                  const b = pct(s.last! + DAY / 2)
-                  return (
-                    <span
-                      key={s.id}
-                      title={`${s.label}: ${dayLabel(s.first!)} to ${dayLabel(s.last!)} (${s.status})`}
-                      className="absolute h-[5px] rounded-full"
-                      style={{
-                        left: `${a}%`,
-                        width: `max(6px, ${b - a}%)`,
-                        top: `${5 + i * 6}px`,
-                        background: STAGE_COLOR[s.id],
-                        opacity: s.status === 'done' ? 1 : 0.6,
-                      }}
-                    />
-                  )
-                })}
-              {j.deadline && (
-                <span
-                  title={`Deadline ${j.deadline}`}
-                  className="absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-danger"
-                  style={{ left: `${pct(dateTs(j.deadline))}%` }}
-                />
-              )}
-              <span className="absolute inset-y-0 w-px bg-accent" style={{ left: `${pct(now)}%` }} />
-            </div>
-          </button>
-        ))}
-      </div>
+            )}
+            {job.note && <div className="text-ink">{job.note}</div>}
+            <Button size="sm" onClick={() => onDetails(job.id)}>
+              Files, thumbnails and settings
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -406,20 +453,16 @@ export function Jobs() {
   }
 
   const all = data?.jobs ?? []
-  const jobs = all.filter((j) => showArchived || !j.archived)
-  const archivedCount = all.filter((j) => j.archived).length
+  const archived = all.filter((j) => j.archived)
   const active = all.filter((j) => !j.archived)
 
   return (
     <>
       <PageHead
-        title="Jobs"
-        subtitle={data ? `${active.length} active · ${archivedCount} archived` : undefined}
+        title="YouTube Studio"
+        subtitle={data ? `${active.length} in progress · ${archived.length} archived` : undefined}
         actions={
           <>
-            <Button size="sm" variant={showArchived ? 'primary' : 'default'} onClick={() => setShowArchived((v) => !v)}>
-              <Archive size={13} /> {showArchived ? 'Hide archived' : 'Show archived'}
-            </Button>
             <Button size="sm" onClick={rescan} disabled={refreshing}>
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Rescan
             </Button>
@@ -453,40 +496,29 @@ export function Jobs() {
             </div>
 
             <Card>
-              <CardHeader title="Timeline" subtitle="One row per video. Bars show when each stage had files touched; the diamond is the deadline." />
-              <Gantt jobs={jobs} onOpen={setOpen} />
+              <CardHeader title="In progress" subtitle="Click a video to open its timeline." />
+              {active.length === 0 ? (
+                <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing in progress.</p>
+              ) : (
+                active.map((j) => <JobRow key={j.id} job={j} onDetails={setOpen} />)
+              )}
             </Card>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {jobs.map((j) => (
-                <Card
-                  key={j.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setOpen(j.id)}
-                  onKeyDown={(e) => e.key === 'Enter' && setOpen(j.id)}
-                  className={cn('cursor-pointer overflow-hidden hover:border-border-strong', j.archived && 'opacity-60')}
-                >
-                  {j.thumbnail ? (
-                    <img src={fileUrl(j.id, j.thumbnail)} alt="" loading="lazy" className="aspect-video w-full object-cover" />
-                  ) : (
-                    <div className="flex aspect-video w-full items-center justify-center bg-surface-2 text-[12px] text-ink-3">
-                      No thumbnail yet
-                    </div>
-                  )}
-                  <div className="space-y-2 px-3 py-2.5">
-                    <div className="truncate text-[13px] font-semibold text-ink">{j.title}</div>
-                    <Pips stages={j.stages} />
-                    <div className="flex items-center justify-between text-[11.5px] text-ink-3">
-                      <span>{j.current === 'done' ? 'Done' : `At ${j.current}`}</span>
-                      <span className={j.deadline ? 'text-danger' : ''}>
-                        {j.deadline ? `Due ${j.deadline}` : j.sponsored ? 'Sponsored' : j.start}
-                      </span>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
+            <Card>
+              <button
+                aria-expanded={showArchived}
+                onClick={() => setShowArchived((v) => !v)}
+                className="flex w-full items-center gap-2 px-4 py-3 text-left"
+              >
+                <ChevronRight size={14} className={cn('text-ink-3 transition-transform', showArchived && 'rotate-90')} />
+                <Archive size={14} className="text-ink-3" />
+                <span className="text-[13px] font-semibold text-ink">Archive</span>
+                <span className="text-[12px] text-ink-3">
+                  {archived.length} · finished videos and ones untouched for a month move here
+                </span>
+              </button>
+              {showArchived && archived.map((j) => <JobRow key={j.id} job={j} onDetails={setOpen} />)}
+            </Card>
 
             {data.activity.length > 0 && (
               <Card>

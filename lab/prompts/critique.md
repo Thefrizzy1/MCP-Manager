@@ -24,4 +24,4 @@ Write `{{RUN_DIR}}/review.json`:
   "issues": ["<specific, fixable: file, what is wrong, what it should be>"],
   "lessons": ["<only what would help on other workflows>"]}`
 Pass only if 1, 3, 4 and 5 are clean. Usability nits alone do not fail it; list them.
-Context you may ignore: {{COMFY_URL}} {{COMFY_DIR}} {{MODELS_DIR}} {{INPUTS_DIR}} {{LESSONS}} {{MANIFEST}} {{ASSIGNMENT}} {{MAX_GB}} {{ISSUES}}
+Context you may ignore: {{COMFY_URL}} {{COMFY_DIR}} {{MODELS_DIR}} {{INPUTS_DIR}} {{LESSONS}} {{MANIFEST}} {{ASSIGNMENT}} {{MAX_GB}} {{ISSUES}} {{SLUG}}

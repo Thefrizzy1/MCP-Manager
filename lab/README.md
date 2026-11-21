@@ -1,9 +1,10 @@
 # Nightly model lab
 
-Every night the GPU server builds or re-checks one ComfyUI workflow in the house
-style, tests it with the same standard inputs, has a second fresh session
+Every night the GPU server works through the Workflow Maker list: for each model it
+builds a ComfyUI workflow in the house style, tests it with the same standard inputs, has a second fresh session
 critique it, opens a draft pull request on the workflows repo, and deletes the
-models it downloaded.
+models it downloaded before starting the next one. Published workflows are
+copied to a Hugging Face mirror when `hf_repo` is set.
 
 **Status: experimental.** The runner's guards are unit-tested; a full night has not been run yet. See "Before the first night".
 

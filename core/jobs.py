@@ -52,7 +52,9 @@ _STAGE_FILES = {
     "script": (re.compile(r"^(script|filming|read off|one sheet|graphics timing)\b.*\.(md|pdf|txt)$", re.I),),
     "edit": (re.compile(r".*\.fcpxml$", re.I), re.compile(r"^subtitles\.", re.I)),
 }
-_FINAL_EXPORT = re.compile(r"\((1080p|4k|2160p|final)\)\.(mp4|mov)$", re.I)
+_FINAL_EXPORT = re.compile(r"(\((1080p|4k|2160p|final)\)|\bexport\b.*|\bfinal\b.*)\.(mp4|mov)$", re.I)
+_UPLOAD_PACK = re.compile(r"^upload pack\b.*\.md$", re.I)
+_BIG_VIDEO = 50 * 1024 * 1024      # a video this size in upload/ is the export, not a test clip
 _SCAN_CAP = 600            # files looked at per stage folder; enough for dates, bounded on SMB
 ARCHIVE_AFTER_DAYS = 30    # untouched this long => out of the active view
 _CACHE_TTL = 120.0
@@ -146,7 +148,146 @@ def _pick_thumbnails(upload: Path) -> list[str]:
     return [f"upload/{e.name}" for e in sorted(imgs, key=rank)[:12]]
 
 
-def scan_job(folder: Path, state: dict | None = None) -> dict | None:
+_STOP = {"the", "a", "an", "of", "on", "in", "to", "for", "and", "vs", "my", "your", "i", "with",
+         "part", "new", "first", "impressions", "video", "videos", "sponsored", "how", "free",
+         "is", "it", "this", "that", "at", "by", "from", "me", "you", "we", "be", "or"}
+
+
+def _video_id(url: str) -> str:
+    """The 11-character id out of a youtu.be / watch / shorts URL, or ''."""
+    m = re.search(r"(?:youtu\.be/|[?&]v=|/shorts/|/embed/)([A-Za-z0-9_-]{11})", url or "")
+    return m.group(1) if m else ""
+
+
+def _tokens(text: str) -> list[str]:
+    out = []
+    for t in re.findall(r"[a-z0-9]+(?:\.[0-9]+)?", (text or "").lower()):
+        t = t[:-1] if len(t) > 3 and t.endswith("s") else t
+        if t not in _STOP and len(t) > 1:
+            out.append(t)
+    return out
+
+
+def _norm(text: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _uploads_path(root: Path) -> Path:
+    return Path(root) / "data" / "jobs_uploads.json"
+
+
+def load_uploads(root: Path) -> dict:
+    data = read_json(_uploads_path(root), {})
+    return data if isinstance(data, dict) and isinstance(data.get("videos"), list) \
+        else {"ts": 0, "videos": [], "channel": ""}
+
+
+def save_uploads(root: Path, channel: str, videos: list[dict]) -> dict:
+    """Store the channel's uploads (id, title, published, kind) for publish matching."""
+    rows = [{"id": v.get("id", ""), "title": v.get("title", ""),
+             "published": (v.get("published") or "")[:10], "kind": v.get("kind", "video"),
+             "views": v.get("views")} for v in videos if v.get("id")]
+    data = {"ts": int(time.time()), "channel": channel, "videos": rows}
+    write_json(_uploads_path(root), data)
+    _cache["ts"] = 0.0
+    return data
+
+
+def _pack_text(folder: Path) -> str:
+    """The newest UPLOAD PACK in upload/: it lists the candidate titles."""
+    up = folder / "upload"
+    try:
+        packs = [e for e in os.scandir(up) if e.is_file() and _UPLOAD_PACK.match(e.name)]
+    except OSError:
+        return ""
+    if not packs:
+        return ""
+    newest = max(packs, key=lambda e: e.stat().st_mtime)
+    try:
+        with open(newest.path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(40_000)
+    except OSError:
+        return ""
+
+
+def match_uploads(candidates: list[dict], videos: list[dict]) -> dict[str, dict]:
+    """Pair long-form uploads with jobs. Each video and each job is used once.
+
+    ``candidates`` are ``{"id", "start", "title", "pack"}``. A video matches a job
+    when its title appears in the job's upload pack, when nearly all of its title
+    words do, or when the folder's own words are in the video title. It must
+    have gone live after the folder was started (and within ~3 months) when the
+    publish date is known. Closest date wins a tie, so "Part 2" and "Part 3" of
+    the same series do not swap.
+    """
+    pairs = []
+    for v in videos:
+        if v.get("kind", "video") != "video" or not v.get("title"):
+            continue
+        vt = set(_tokens(v["title"]))
+        vnorm = _norm(v["title"])
+        try:
+            vdate = date.fromisoformat(v["published"]) if v.get("published") else None
+        except ValueError:
+            vdate = None
+        for c in candidates:
+            gap = 0
+            if vdate:
+                gap = (vdate - date.fromisoformat(c["start"])).days
+                if gap < -1 or gap > 100:      # live before the folder existed: not this job
+                    continue
+            jt = set(_tokens(c["title"]))
+            hit = len(jt & vt)
+            score = 0.0
+            if jt and hit >= min(2, len(jt)) and hit / len(jt) >= 0.6:
+                score = hit / len(jt)
+            if c["pack"]:
+                pnorm = _norm(c["pack"])
+                if vnorm and vnorm in pnorm:
+                    score = max(score, 2.0)
+                else:
+                    pt = set(_tokens(c["pack"]))
+                    strong = [t for t in vt if len(t) > 3 or t.isdigit()]
+                    if len(strong) >= 3 and sum(t in pt for t in strong) / len(strong) >= 0.8:
+                        score = max(score, 1.2)
+            # Without a publish date nothing ties a video to a time, so only a sure
+            # thing counts: its exact title in the pack, or every folder word in it.
+            if not vdate and score < 1.0 or (not vdate and score == 1.2):
+                score = 0.0
+            # One shared word is not enough unless the dates sit right on each other.
+            if score and len(jt) == 1 and score < 1.2 and not (vdate and 0 <= gap <= 21):
+                score = 0.0
+            if score:
+                pairs.append((score, -abs(gap), c["id"], v))
+    out: dict[str, dict] = {}
+    used: set[str] = set()
+    for _score, _gap, jid, v in sorted(pairs, key=lambda p: (p[0], p[1]), reverse=True):
+        if jid in out or v["id"] in used:
+            continue
+        out[jid] = v
+        used.add(v["id"])
+    return out
+
+
+def _all_matches(root: Path, yt: Path, names: list[str]) -> dict[str, dict]:
+    videos = load_uploads(root)["videos"]
+    if not videos:
+        return {}
+    cands = []
+    for name in names:
+        m = _JOB_RE.match(name)
+        if not m:
+            continue
+        try:
+            start = date(int(m[1]), int(m[2]), int(m[3])).isoformat()
+        except ValueError:
+            continue
+        cands.append({"id": name, "start": start, "title": m[4].replace("_", " "),
+                      "pack": _pack_text(yt / name)})
+    return match_uploads(cands, videos)
+
+
+def scan_job(folder: Path, state: dict | None = None, video: dict | None = None) -> dict | None:
     """Read one video folder into a job record. None if it is not a job folder."""
     m = _JOB_RE.match(folder.name)
     if not m or not folder.is_dir():
@@ -193,21 +334,30 @@ def scan_job(folder: Path, state: dict | None = None) -> dict | None:
         if e.name.lower() == "script.md":
             script = e.name
 
-    edit_dir = folder / "edit"
-    if edit_dir.is_dir():
+    # The finished cut: a named export in edit/ or upload/, or any big video in upload/.
+    for sub_dir in ("edit", "upload"):
         try:
-            for e in os.scandir(edit_dir):
-                if e.is_file() and _FINAL_EXPORT.search(e.name):
-                    final_export = f"edit/{e.name}"
+            found = sorted((e for e in os.scandir(folder / sub_dir) if e.is_file()
+                            and Path(e.name).suffix.lower() in _VIDEO_EXT
+                            and (_FINAL_EXPORT.search(e.name)
+                                 or (sub_dir == "upload" and e.stat().st_size >= _BIG_VIDEO))),
+                           key=lambda e: e.stat().st_mtime)
         except OSError:
-            pass
+            continue
+        if found:
+            final_export = f"{sub_dir}/{found[-1].name}"
     thumbs = _pick_thumbnails(folder / "upload")
-    upload_pack = (folder / "upload" / "UPLOAD PACK.md").is_file()
+    upload_pack = bool(_pack_text(folder))
+    # Live on the channel: a URL saved by hand wins, else the matched upload.
+    if st.get("publish_match") is False:
+        video = None
+    publish_url = st.get("publish_url") or (f"https://youtu.be/{video['id']}" if video else "")
+    vid = _video_id(st.get("publish_url") or "") or (video["id"] if video else "")
 
     signals = {
         "edit": bool(final_export),
         "packaging": bool(thumbs) and upload_pack,
-        "publish": bool(st.get("publish_url")),
+        "publish": bool(publish_url),
     }
     overrides = st.get("stages") or {}
     stages = []
@@ -222,6 +372,9 @@ def scan_job(folder: Path, state: dict | None = None) -> dict | None:
             # Packaging often comes first on this channel, so it is judged alone.
             auto = "done" if signals["packaging"] or signals["publish"] \
                 else "active" if has else "todo"
+        elif s == "shorts":
+            # Shorts come after the video is live; only you can call them finished.
+            auto = "active" if has else "todo"
         else:
             auto = "done" if signals.get(s) or later_evidence or signals["publish"] \
                 else "active" if has else "todo"
@@ -259,9 +412,14 @@ def scan_job(folder: Path, state: dict | None = None) -> dict | None:
         "archived": bool(archived), "archived_manual": st.get("archived") is not None,
         "pinned": bool(st.get("pinned")),
         "deadline": st.get("deadline") or "", "note": st.get("note") or "",
-        "publish_url": st.get("publish_url") or "",
+        "publish_url": publish_url,
+        "published": ({"id": video["id"], "title": video["title"],
+                       "date": video.get("published", ""), "views": video.get("views")}
+                      if video and not st.get("publish_url") else None),
         "script": script, "final_export": final_export,
         "thumbnails": thumbs, "thumbnail": st.get("thumbnail") or (thumbs[0] if thumbs else ""),
+        # Once live, the cover is the thumbnail YouTube actually shows.
+        "youtube_thumbnail": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg" if vid else "",
         "top_files": top_files[:60],
     }
 
@@ -281,19 +439,26 @@ def list_jobs(root: Path, *, force: bool = False) -> dict:
                 names = sorted(os.listdir(yt), reverse=True)
             except OSError:
                 names = []
+            matches = _all_matches(root, yt, names)
+            _cache["matches"] = matches
             for name in names:
-                job = scan_job(yt / name, state)
+                job = scan_job(yt / name, state, matches.get(name))
                 if job:
                     jobs.append(job)
         _cache.update(ts=now, root=str(yt), jobs=jobs)
     return {"root": str(yt), "mounted": yt.is_dir(), "stages": [
         {"id": s, "label": STAGE_LABELS[s]} for s in STAGES], "jobs": jobs,
-        "scanned": int(_cache["ts"])}
+        "scanned": int(_cache["ts"]),
+        "uploads_synced": load_uploads(root)["ts"]}
 
 
 def get_job(root: Path, job_id: str) -> dict | None:
     folder = job_folder(job_id)
-    return scan_job(folder, load_state(root)) if folder else None
+    if not folder:
+        return None
+    if "matches" not in _cache or _cache["root"] != str(youtube_root()):
+        list_jobs(root, force=True)
+    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id))
 
 
 def job_folder(job_id: str) -> Path | None:
@@ -347,7 +512,8 @@ def list_folder(job_id: str, rel: str = "") -> list[dict] | None:
     return out[:400]
 
 
-_ALLOWED_FIELDS = {"archived", "pinned", "deadline", "note", "publish_url", "title", "thumbnail"}
+_ALLOWED_FIELDS = {"archived", "pinned", "deadline", "note", "publish_url", "title", "thumbnail",
+                   "publish_match"}
 
 
 def update_job(root: Path, job_id: str, changes: dict) -> dict:

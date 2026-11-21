@@ -96,7 +96,7 @@ TOOL_CATEGORIES: dict[str, list[str]] = {
     # The Trend Radar is its own slice: the Idea Studio run needs exactly these.
     "trends":        ["trend_radar_"],
     # The job board: one job per video folder on the NAS (core/jobs.py).
-    "jobs":          ["jobs_", "studio_"],
+    "jobs":          ["jobs_", "studio_", "lab_"],
     # comfy-mcp's ~40 tools, apart from "ai" so they can be switched off in one
     # go — they are the largest single block in the manifest when on.
     "comfy":         ["comfy_"],
