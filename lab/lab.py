@@ -140,11 +140,14 @@ def permission(cfg: dict, action: str) -> str:
         return setting
 
 
-def tell(cfg: dict, text: str, slug: str = "", status: str = "", pr: str = "", name: str = "") -> None:
+def tell(cfg: dict, text: str, slug: str = "", status: str = "", pr: str = "", name: str = "",
+         review: dict | None = None) -> None:
     """Progress for the Workflow Maker page. Never lets a reporting failure stop the night."""
     try:
         plutus(cfg, "lab_report", {"params": {"slug": slug, "text": text[:390], "status": status,
-                                              "pr": pr, "name": name}}, timeout=20)
+                                              "pr": pr, "name": name,
+                                              "review_json": json.dumps(review)[:5900] if review else ""}},
+               timeout=20)
     except Exception as e:
         log(f"could not report progress: {e}")
 
@@ -355,6 +358,7 @@ def process_approvals(cfg: dict) -> list[str]:
             plutus(cfg, "studio_approval_done", {"params": {"request_id": int(rid)}})
             done.append(link)
             log(f"merged {link}")
+            mark_published(cfg, link)
             try:
                 where = mirror_to_hf(cfg, repo)
                 if where:
@@ -422,7 +426,16 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
         if good and permission(cfg, "lab.open_pr") == "allow":
             out["pr"] = publish(cfg, repo, branch, result, verdict)
             out["status"] = "pr_opened"
-            tell(cfg, "Workflow built and reviewed. Pull request: " + out["pr"], slug, "built", out["pr"])
+            folder = str(result.get("folder") or "").strip("/")
+            samples = sorted(p.name for p in (repo / folder / "samples").glob("*")
+                             if p.suffix.lower() in (".webp", ".png", ".jpg", ".mp4", ".webm")) if folder else []
+            review = {"repo": cfg["workflows_remote"].removeprefix("github.com/").removesuffix(".git"),
+                      "branch": branch, "folder": folder, "samples": samples[:8],
+                      "title": result.get("title", ""), "tested": result.get("tested", ""),
+                      "summary": result.get("summary", ""), "critique": verdict.get("summary", ""),
+                      "not_verified": "; ".join(result.get("not_verified") or [])[:400]}
+            tell(cfg, "Workflow built and reviewed. Ready for you to check and publish.", slug, "built",
+                 out["pr"], review=review)
             try:
                 if json.loads(gh(repo, "pr", "view", out["pr"], "--json", "state"))["state"] == "MERGED":
                     out["status"] = "published"
@@ -444,6 +457,19 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
     return out
 
 
+def mark_published(cfg: dict, pr: str) -> None:
+    """Tell the board which model a merged pull request belonged to."""
+    try:
+        rows = json.loads(plutus(cfg, "lab_list", timeout=20) or "[]")
+    except Exception as e:
+        log(f"could not read the lab list: {e}")
+        return
+    for row in rows:
+        if row.get("pr") == pr:
+            tell(cfg, "Published on GitHub" + (f" and mirrored to {cfg['hf_repo']}" if cfg["hf_repo"] else ""),
+                 row["slug"], "published", pr)
+
+
 def nightly(cfg: dict) -> int:
     """Work through the list until it is empty, the night is over, or the machine is not ready."""
     today = dt.date.today().isoformat()
@@ -454,6 +480,8 @@ def nightly(cfg: dict) -> int:
     report: dict = {"date": today, "status": "started", "merged": process_approvals(cfg), "tasks": []}
     seen: set[str] = set()
     while len(report["tasks"]) < cfg["max_tasks"] and dt.datetime.now() < deadline:
+        if report["tasks"]:                      # between models: carry out anything approved meanwhile
+            report["merged"] += process_approvals(cfg)
         rows = preflight(cfg)
         report["preflight"] = [{"check": n, "ok": ok, "detail": d} for n, ok, d in rows]
         if not print_preflight(rows):

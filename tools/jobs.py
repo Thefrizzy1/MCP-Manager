@@ -68,8 +68,8 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     async def jobs_board(params: BoardInput) -> str:
         """The job board: every active video and the stage it is at.
 
-        Stages in order: research, script, film, edit, packaging, publish, shorts.
-        The seven marks are those stages (✓ done, ▶ in progress, · not started).
+        Stages in order: research, script, test, film, edit, packaging, publish, shorts.
+        The eight marks are those stages (✓ done, ▶ in progress, · not started).
         Call this first when asked what is being worked on.
         """
         await sync_uploads()
@@ -116,7 +116,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     class UpdateInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         job: str = Field(..., description="Job id = the folder name")
-        stage: Optional[str] = Field(default=None, description="Stage to set: research, script, film, edit, packaging, publish or shorts")
+        stage: Optional[str] = Field(default=None, description="Stage to set: research, script, test, film, edit, packaging, publish or shorts")
         status: Optional[str] = Field(default=None, description="todo, active, done, or auto (back to what the files say)")
         deadline: Optional[str] = Field(default=None, description="YYYY-MM-DD, or empty string to clear")
         note: Optional[str] = Field(default=None, description="Short note shown on the board", max_length=4000)
@@ -227,6 +227,12 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         row = lab_board.next_queued(_ROOT)
         return _json.dumps({k: row.get(k, "") for k in ("slug", "name", "note", "status")} if row else {})
 
+    @mcp.tool(name="lab_list", annotations={"readOnlyHint": True})
+    async def lab_list() -> str:
+        """Every model on the lab's list as JSON: slug, name, status, pr."""
+        return _json.dumps([{k: r.get(k, "") for k in ("slug", "name", "status", "pr")}
+                            for r in lab_board.entries(_ROOT).values()])
+
     class LabReportInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         slug: str = Field(default="", description="Model slug the report is about; empty for a general sign of life")
@@ -234,6 +240,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         status: str = Field(default="", description="New status: queued, testing, built, failed, waiting, published or skipped")
         pr: str = Field(default="", description="Pull request URL once there is one")
         name: str = Field(default="", description="Display name, when the model is new to the list")
+        gpu3060: str = Field(default="", description="State of the second test on the RTX 3060: queued, testing, done or failed (text = the result)")
+        server_test: str = Field(default="", description="State of the test on the GPU server, when it is reported separately: queued, testing, done or failed")
+        update_pr: str = Field(default="", description="Pull request that adds the second machine's results to an already published workflow")
+        review_json: str = Field(default="", description="JSON for the review panel: repo, branch, folder, samples, title, tested, summary, critique", max_length=6000)
 
     @mcp.tool(name="lab_report", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def lab_report(params: LabReportInput) -> str:
@@ -246,7 +256,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             if not params.slug:
                 lab_board.beat(_ROOT, params.text)
                 return "✓ Noted."
-            row = lab_board.report(_ROOT, params.slug, params.text, params.status, params.pr, params.name)
+            review = _json.loads(params.review_json) if params.review_json else None
+            row = lab_board.report(_ROOT, params.slug, params.text, params.status, params.pr,
+                                   params.name, review if isinstance(review, dict) else None,
+                                   params.gpu3060, params.update_pr, params.server_test)
         except ValueError as e:
             return f"Error: {e}"
         return f"✓ {row['slug']}: {row['status']}"

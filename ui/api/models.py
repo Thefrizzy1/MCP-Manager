@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core import lab_board
+from core import lab_board, permissions
 from core import trend_radar as tr
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
@@ -57,6 +57,36 @@ async def api_v1_models_set(body: QueueBody):
             lab_board.set_status(ROOT, body.slug.strip().lower(), body.status)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    return await api_v1_models()
+
+
+class PublishBody(BaseModel):
+    slug: str = Field(..., min_length=1, max_length=120)
+
+
+@router.post("/api/v1/models/publish")
+async def api_v1_models_publish(body: PublishBody):
+    """The Publish button: approve merging this model's pull request.
+
+    The lab carries it out (merge, then the Hugging Face mirror) the next time
+    it checks for approvals. Pressing it is the approval itself, so it works
+    whatever the permission is set to, except Never.
+    """
+    row = lab_board.entries(ROOT).get(body.slug.strip().lower())
+    if not row or not row.get("pr"):
+        raise HTTPException(404, "This model has no pull request yet")
+    # Already live and a 3060 follow-up is waiting: this press publishes the update.
+    target = row.get("update_pr") if row.get("status") == "published" and row.get("update_pr") else row["pr"]
+    verb = "Update" if target != row["pr"] else "Publish"
+    try:
+        req = permissions.request(ROOT, "lab.merge_pr", f"{verb} workflow: {row.get('name') or row['slug']}",
+                                  target, ref=target)
+        if req["status"] == "pending":
+            permissions.decide(ROOT, req["id"], True)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    lab_board.report(ROOT, row["slug"], "You approved publishing. The lab will merge it shortly.")
+    lab_board.set_flag(ROOT, row["slug"], "publish_requested", True)
     return await api_v1_models()
 
 

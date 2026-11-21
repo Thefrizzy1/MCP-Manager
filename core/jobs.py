@@ -8,7 +8,7 @@ exist* (a SCRIPT.md, an ``edit`` folder, thumbnails in ``upload``), and the few
 things files cannot say (published, a deadline, "archive this") live in
 ``data/jobs_state.json``.
 
-Stages, in order: research, script, film, edit, packaging, publish, shorts.
+Stages, in order: research, script, test, film, edit, packaging, publish, shorts.
 A stage is ``done`` when a completion signal exists or a later stage has
 evidence, ``active`` when it has evidence of its own, otherwise ``todo``. A
 manual override in the state file always wins.
@@ -23,9 +23,9 @@ from pathlib import Path
 
 from core.atomic_json import read_json, write_json
 
-STAGES = ("research", "script", "film", "edit", "packaging", "publish", "shorts")
+STAGES = ("research", "script", "test", "film", "edit", "packaging", "publish", "shorts")
 STAGE_LABELS = {
-    "research": "Research", "script": "Script", "film": "Film", "edit": "Edit",
+    "research": "Research", "script": "Script", "test": "Test", "film": "Film", "edit": "Edit",
     "packaging": "Packaging", "publish": "Publish", "shorts": "Shorts",
 }
 STATUSES = ("todo", "active", "done")
@@ -39,16 +39,20 @@ _SKIP_DIRS = {"_old", "node_modules", ".git", "__pycache__"}
 # Top-level folder names (lower-cased) that count as evidence for a stage. Real
 # folders are named by hand, typos included, so film is matched by keyword too.
 _STAGE_DIRS = {
-    "research": {"research", "benchmarks", "tests", "results", "samples"},
+    "research": {"research"},
+    # Trying the thing out before filming: test runs, benchmarks, generations.
+    "test": {"test", "tests", "benchmarks", "results", "samples", "generations", "workflow",
+             "workflows", "output"},
     "film": {"recordings", "ecordings", "obs", "obs recordings", "voice over", "voice",
-             "audio", "video", "videos", "talking head", "generations", "source clips"},
+             "audio", "video", "videos", "talking head", "source clips"},
     "edit": {"edit"},
     "packaging": {"upload"},
     "shorts": {"shorts"},
 }
 _FILM_KEYWORDS = ("record", "talking head", "voice", "screen", "filmed")
 _STAGE_FILES = {
-    "research": (re.compile(r"^(plan|research|results|inventory|review)\b.*\.(md|pdf|txt)$", re.I),),
+    "research": (re.compile(r"^(plan|research|inventory|review)\b.*\.(md|pdf|txt)$", re.I),),
+    "test": (re.compile(r"^(results|benchmarks?|test)\b.*\.(md|pdf|txt|json)$", re.I),),
     "script": (re.compile(r"^(script|filming|read off|one sheet|graphics timing)\b.*\.(md|pdf|txt)$", re.I),),
     "edit": (re.compile(r".*\.fcpxml$", re.I), re.compile(r"^subtitles\.", re.I)),
 }

@@ -74,18 +74,17 @@ interface Detail {
 const STAGE_COLOR: Record<string, string> = {
   research: 'var(--room-slate)',
   script: 'var(--room-indigo)',
+  test: 'var(--room-teal)',
   film: 'var(--room-violet)',
-  edit: 'var(--room-teal)',
+  edit: 'var(--room-rose)',
   packaging: 'var(--room-amber)',
-  publish: 'var(--room-rose)',
-  shorts: 'var(--room-lime)',
+  publish: 'var(--room-lime)',
+  shorts: 'var(--ok)',
 }
-const DAY = 86400
 const fileUrl = (job: string, rel: string) =>
   `/api/v1/jobs/file?job=${encodeURIComponent(job)}&rel=${encodeURIComponent(rel)}`
 const dayLabel = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
-const dateTs = (iso: string) => Math.floor(new Date(iso + 'T12:00:00').getTime() / 1000)
 
 /** The pipeline as arrows: finished stages tinted, the current one solid, the rest empty. */
 function Stepper({ job }: { job: Job }) {
@@ -127,57 +126,8 @@ function Stepper({ job }: { job: Job }) {
   )
 }
 
-/** When each stage had files touched, for one video. */
-function RowTimeline({ job }: { job: Job }) {
-  const now = Math.floor(Date.now() / 1000)
-  const spans = job.stages.filter((s) => s.first && s.last)
-  if (!spans.length) return <p className="text-[12px] text-ink-3">No dated files yet.</p>
-  const t0 = Math.min(dateTs(job.start), ...spans.map((s) => s.first!)) - DAY
-  const end = Math.max(...spans.map((s) => s.last!), job.deadline ? dateTs(job.deadline) : 0)
-  const t1 = Math.max(end, Math.min(now, end + 5 * DAY)) + DAY
-  const pct = (t: number) => Math.min(100, Math.max(0, ((t - t0) / (t1 - t0)) * 100))
-  return (
-    <div>
-      {job.stages.map((s) => (
-        <div key={s.id} className="flex items-center gap-2 py-[3px]">
-          <span className="w-[76px] shrink-0 text-[11.5px] text-ink-2">{s.label}</span>
-          <div className="relative h-3 flex-1 rounded-full bg-surface-hover">
-            {s.first && s.last && (
-              <span
-                className="absolute inset-y-0 rounded-full"
-                style={{
-                  left: `${pct(s.first)}%`,
-                  width: `max(8px, ${pct(s.last + DAY / 2) - pct(s.first)}%)`,
-                  background: STAGE_COLOR[s.id],
-                  opacity: s.status === 'done' ? 1 : 0.6,
-                }}
-              />
-            )}
-            {job.deadline && (
-              <span
-                className="absolute top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rotate-45 bg-danger"
-                style={{ left: `${pct(dateTs(job.deadline))}%` }}
-              />
-            )}
-          </div>
-          <span className="w-[112px] shrink-0 text-right text-[11px] text-ink-3">
-            {s.first && s.last
-              ? s.first + DAY > s.last
-                ? dayLabel(s.first)
-                : `${dayLabel(s.first)} – ${dayLabel(s.last)}`
-              : '—'}
-          </span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void }) {
   const [open, setOpen] = useState(false)
-  const done = job.current === 'done'
-  const color = done ? 'var(--ok)' : STAGE_COLOR[job.current]
-  const cur = job.stages.find((s) => s.id === job.current)
   return (
     <div className="border-b border-border last:border-b-0">
       <button
@@ -197,27 +147,14 @@ function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void 
         ) : (
           <div className="h-9 w-16 shrink-0 rounded-[4px] bg-surface-hover" />
         )}
-        <div className="w-[210px] shrink-0">
+        <div className="w-[200px] shrink-0">
           <div className="truncate text-[13px] font-semibold text-ink">{job.title}</div>
-          <div className="mt-0.5 flex items-center gap-1.5">
-            <span
-              className="rounded-full px-2 py-[1px] text-[10.5px] font-semibold text-white"
-              style={{ background: color }}
-            >
-              {done ? 'Finished' : `At ${cur?.label.toLowerCase()}`}
-            </span>
-            {job.deadline ? (
-              <span className="text-[11px] text-danger">due {job.deadline.slice(5)}</span>
-            ) : job.sponsored ? (
-              <span className="text-[11px] text-ink-3">sponsored</span>
-            ) : null}
-          </div>
+          {job.deadline && <div className="text-[11px] text-danger">due {job.deadline.slice(5)}</div>}
         </div>
         <Stepper job={job} />
       </button>
       {open && (
-        <div className="grid gap-4 border-t border-border bg-surface-2 px-4 py-3 md:grid-cols-[1fr_260px]">
-          <RowTimeline job={job} />
+        <div className="border-t border-border bg-surface-2 px-4 py-3 pl-[52px]">
           <div className="space-y-1.5 text-[12px] text-ink-2">
             <div>Started {job.start}{job.idle_days ? ` · last touched ${job.idle_days}d ago` : ' · touched today'}</div>
             {job.published && (
@@ -460,8 +397,7 @@ export function Jobs() {
     <>
       <PageHead
         title="YouTube Studio"
-        subtitle={data ? `${active.length} in progress · ${archived.length} archived` : undefined}
-        actions={
+                actions={
           <>
             <Button size="sm" onClick={rescan} disabled={refreshing}>
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Rescan
@@ -480,23 +416,8 @@ export function Jobs() {
           />
         ) : (
           <div className="space-y-5">
-            <div className="grid grid-cols-4 gap-2 md:grid-cols-7">
-              {data.stages.map((s) => {
-                const n = active.filter((j) => j.current === s.id).length
-                return (
-                  <Card key={s.id} className="px-3 py-2.5">
-                    <div className="flex items-center gap-1.5 text-[11.5px] text-ink-3">
-                      <span className="h-2 w-2 rounded-full" style={{ background: STAGE_COLOR[s.id] }} />
-                      {s.label}
-                    </div>
-                    <div className="mt-0.5 text-[22px] font-bold leading-none text-ink">{n}</div>
-                  </Card>
-                )
-              })}
-            </div>
-
             <Card>
-              <CardHeader title="In progress" subtitle="Click a video to open its timeline." />
+              <CardHeader title="In progress" />
               {active.length === 0 ? (
                 <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing in progress.</p>
               ) : (
@@ -513,9 +434,7 @@ export function Jobs() {
                 <ChevronRight size={14} className={cn('text-ink-3 transition-transform', showArchived && 'rotate-90')} />
                 <Archive size={14} className="text-ink-3" />
                 <span className="text-[13px] font-semibold text-ink">Archive</span>
-                <span className="text-[12px] text-ink-3">
-                  {archived.length} · finished videos and ones untouched for a month move here
-                </span>
+                <span className="text-[12px] text-ink-3">{archived.length}</span>
               </button>
               {showArchived && archived.map((j) => <JobRow key={j.id} job={j} onDetails={setOpen} />)}
             </Card>

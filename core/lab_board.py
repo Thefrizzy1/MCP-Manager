@@ -63,9 +63,18 @@ def next_queued(root: Path) -> dict | None:
     return None
 
 
+GPU_STATES = ("queued", "testing", "done", "failed")
+
+
 def report(root: Path, slug: str, text: str = "", status: str = "", pr: str = "",
-           name: str = "") -> dict:
-    """The lab reports progress on a model: a log line and, optionally, a new status."""
+           name: str = "", review: dict | None = None, gpu3060: str = "",
+           update_pr: str = "", server: str = "") -> dict:
+    """The lab reports progress on a model: a log line and, optionally, a new status.
+
+    ``review`` is what the owner looks at before publishing: where the workflow
+    sits (repo, branch, folder), its sample files, what was tested and what the
+    critique said.
+    """
     slug = (slug or "").strip().lower()
     if not slug:
         raise ValueError("slug is required")
@@ -79,6 +88,26 @@ def report(root: Path, slug: str, text: str = "", status: str = "", pr: str = ""
         row["status"] = status
     if pr:
         row["pr"] = pr[:300]
+    if gpu3060:
+        # The second test, on the 12 GB card the workflows are published for. It
+        # runs when that PC can be woken, often after the workflow is already live.
+        if gpu3060 not in GPU_STATES:
+            raise ValueError(f"gpu3060 must be one of {GPU_STATES}")
+        row["gpu3060"] = {"status": gpu3060, "text": (text or "")[:400], "ts": now}
+    if server:
+        # The other test, on the big server. Either test may come first: whichever
+        # passes opens publishing, the later one arrives as an update.
+        if server not in GPU_STATES:
+            raise ValueError(f"server must be one of {GPU_STATES}")
+        row["server"] = {"status": server, "text": (text or "")[:400], "ts": now}
+    if update_pr:
+        # A follow-up pull request with the 3060 results: Publish becomes Update.
+        row["update_pr"] = update_pr[:300]
+        row["publish_requested"] = False
+    if review:
+        row["review"] = {k: review[k] for k in ("repo", "branch", "folder", "samples", "title",
+                                                "tested", "summary", "critique", "not_verified")
+                         if k in review}
     if text:
         row["log"] = (row.get("log") or [])[-39:] + [{"ts": now, "text": text.strip()[:400]}]
     row["updated"] = now
@@ -93,6 +122,13 @@ def beat(root: Path, text: str) -> None:
     data = _load(root)
     data["heartbeat"] = {"ts": int(time.time()), "text": (text or "")[:200], "slug": ""}
     write_json(_path(root), data)
+
+
+def set_flag(root: Path, slug: str, key: str, value) -> None:
+    data = _load(root)
+    if slug in data["models"]:
+        data["models"][slug][key] = value
+        write_json(_path(root), data)
 
 
 def set_status(root: Path, slug: str, status: str) -> dict:
