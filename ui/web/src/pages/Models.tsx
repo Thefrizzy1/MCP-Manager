@@ -78,7 +78,7 @@ function TestHalf({ label, state, note }: { label: string; state: TestState; not
   return (
     <div
       title={note || (state ? undefined : `${label}: not run yet`)}
-      className={cn('flex min-w-0 flex-1 items-center justify-center', state === 'testing' && 'stage-live')}
+      className={cn('flex min-h-0 w-full flex-1 items-center justify-center text-[9.5px] leading-none', state === 'testing' && 'stage-live')}
       style={{
         background:
           state === 'testing'
@@ -122,14 +122,14 @@ function Steps({ model, onPublish }: { model: Model; onPublish: () => void }) {
   return (
     <div className="flex min-w-0 flex-1">
       {STEPS.map((label, i) => {
-        const base = 'flex h-7 min-w-0 items-center justify-center text-[11px] font-medium'
+        const base = 'flex h-8 min-w-0 items-center justify-center text-[11px] font-medium'
         const shape = { marginLeft: i ? -7 : 0, clipPath: i ? ARROW : ARROW_FIRST }
         if (i === 2)
           return (
-            // One arrow, two halves: left is the server, right is the 3060.
-            <div key={label} className={cn(base, 'flex-[1.7] gap-px pl-[9px]')} style={{ ...shape, background: 'var(--border)' }}>
-              <TestHalf label="Server" state={server} note={lab?.server?.text} />
-              <TestHalf label="3060" state={lab?.gpu3060?.status} note={lab?.gpu3060?.text} />
+            // One arrow, split top and bottom: the server test above, the 3060 test below.
+            <div key={label} className={cn(base, 'flex-1 flex-col gap-px')} style={{ ...shape, background: 'var(--border)' }}>
+              <TestHalf label="Server test" state={server} note={lab?.server?.text} />
+              <TestHalf label="3060 test" state={lab?.gpu3060?.status} note={lab?.gpu3060?.text} />
             </div>
           )
         if (i === 3 && ready)
