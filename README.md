@@ -25,6 +25,19 @@ React 19 + Tailwind 4 + lucide) served at `/app`, built into the image by a
 multi-stage Docker build. It's the control centre: connections, health, agents,
 files, settings, and a token-optimising tool slicer.
 
+## Jobs, permissions and the model lab
+
+- **Jobs** — mount a folder of video project folders named `YYYYMMDD_Title` at `/data/youtube` (read-only) and the
+  dashboard shows one job per folder: a Gantt timeline, the stage each is at (research, script, film, edit, packaging,
+  publish, shorts — read off the files that exist), thumbnails and files. `jobs_*` MCP tools give any session the same view.
+- **Permissions** — every outward action the automation can take is *Allowed*, *Ask me* or *Never*. Requests wait in the
+  dashboard; MCP tools can read and request, never grant.
+- **Model lab** (`lab/`, experimental) — a nightly runner for a GPU server that builds one ComfyUI workflow, has a second
+  session critique it, and opens a draft pull request.
+
+Rooms, the AI Builder and the agent-delegation tools were removed in this release; scheduled runs and their transcripts
+remain under **Runs**.
+
 ## The web app at a glance
 
 | Section | What it does |

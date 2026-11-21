@@ -191,11 +191,12 @@ def test_every_service_tool_is_gated_not_just_the_carded_ones():
     # connection to tick. They are gated on the other axis instead: every
     # mutating room_* tool is annotated non-read-only, so the wizard's write
     # switch blocks them. Everything else must be owned by a service.
-    assert set(ungated) <= {"agent_delegate", "agent_delegate_batch",
-                            "agent_list_workers",
-                            "room_list", "room_create", "room_update", "room_delete",
-                            "room_add_seat", "room_remove_seat", "room_run",
-                            "room_result", "room_advise"}, ungated
+    # Studio edition: delegation and rooms are not served at all. The job board
+    # is Plutus's own store (a state file beside the read-only NAS mount), so
+    # like them it has no connection to tick.
+    assert set(ungated) <= {"jobs_board", "jobs_get", "jobs_update", "jobs_log",
+                            "studio_permissions", "studio_request_approval",
+                            "studio_approval_done"}, ungated
     for name in ("nextcloud_upload_file", "nextcloud_delete_file",
                  "nextcloud_move_file", "fs_delete"):
         assert tmap.get(name), f"{name} is not gated by any connection"

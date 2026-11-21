@@ -40,31 +40,6 @@ def _tool_names():
     return {t.name for t in asyncio.run(mcp.list_tools())}
 
 
-def test_room_tools_are_served():
-    served = _tool_names()
-    assert {"room_list", "room_create", "room_update", "room_delete", "room_add_seat",
-            "room_remove_seat", "room_run", "room_result"} <= served
-
-
-def test_only_reads_are_annotated_read_only():
-    """The write switch gates rooms, so the annotations have to be right."""
-    from ui.runtime import tools
-
-    ann = {t.name: t.annotations for t in tools.raw_manager.list_tools()
-           if t.name.startswith("room_")}
-    read_only = {n for n, a in ann.items() if a and a.readOnlyHint}
-    assert read_only == {"room_list", "room_result"}
-
-
-def test_write_switch_blocks_mutating_room_tools():
-    from ui.runtime import _agent_capability_disallow
-
-    blocked = set(_agent_capability_disallow(allow_write=False, allow_publish=False))
-    assert "mcp__plutus__room_create" in blocked
-    assert "mcp__plutus__room_run" in blocked
-    assert "mcp__plutus__room_list" not in blocked
-
-
 def _room_tools(monkeypatch, root):
     """Register the room tools against a stub FastMCP rooted at ``root``.
 

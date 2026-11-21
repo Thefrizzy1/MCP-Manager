@@ -5,9 +5,9 @@ import { Dashboard } from '@/pages/Dashboard'
 import { Connections } from '@/pages/Connections'
 import { Discover } from '@/pages/Discover'
 import { Trends } from '@/pages/Trends'
+import { Jobs } from '@/pages/Jobs'
+import { Permissions } from '@/pages/Permissions'
 import { Agents } from '@/pages/Agents'
-import { Rooms } from '@/pages/Rooms'
-import { Builder } from '@/pages/Builder'
 import { Files } from '@/pages/Files'
 import { Settings } from '@/pages/Settings'
 import { Placeholder } from '@/pages/Placeholder'
@@ -22,12 +22,12 @@ function renderPage(route: string) {
       return <Discover />
     case 'trends':
       return <Trends />
+    case 'jobs':
+      return <Jobs />
+    case 'permissions':
+      return <Permissions />
     case 'agents':
       return <Agents />
-    case 'rooms':
-      return <Rooms />
-    case 'builder':
-      return <Builder />
     case 'files':
       return <Files />
     case 'settings':
@@ -42,9 +42,9 @@ const TITLES: Record<string, string> = {
   connections: 'Connections',
   discover: 'Discover',
   trends: 'Trends',
-  agents: 'Agents',
-  rooms: 'Rooms',
-  builder: 'The builder',
+  jobs: 'Jobs',
+  permissions: 'Permissions',
+  agents: 'Runs',
   files: 'Files',
   settings: 'Settings',
 }

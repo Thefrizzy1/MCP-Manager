@@ -1,0 +1,70 @@
+"""Job board: stages are read off the folder, manual facts win, paths stay confined."""
+import os
+
+import pytest
+
+from core import jobs
+
+
+@pytest.fixture
+def yt(tmp_path, monkeypatch):
+    root = tmp_path / "yt"
+    job = root / "20261111_Local Relight"
+    (job / "upload").mkdir(parents=True)
+    (job / "edit").mkdir()
+    (job / "SCRIPT.md").write_text("script")
+    (job / "upload" / "thumb A.png").write_bytes(b"x")
+    (root / "00_Library").mkdir()
+    (root / "00_Library" / "secret.md").write_text("no")
+    (root / "_to delete").mkdir()
+    monkeypatch.setenv("YOUTUBE_ROOT", str(root))
+    jobs._cache["ts"] = 0.0
+    return tmp_path
+
+
+def _status(job):
+    return {s["id"]: s["status"] for s in job["stages"]}
+
+
+def test_only_dated_folders_are_jobs(yt):
+    assert [j["id"] for j in jobs.list_jobs(yt, force=True)["jobs"]] == ["20261111_Local Relight"]
+
+
+def test_packaging_first_does_not_mark_the_script_done(yt):
+    st = _status(jobs.get_job(yt, "20261111_Local Relight"))
+    assert st["script"] == "active" and st["packaging"] == "active" and st["publish"] == "todo"
+
+
+def test_final_export_finishes_the_edit_and_everything_before_it(yt):
+    (yt / "yt" / "20261111_Local Relight" / "edit" / "Local Relight (1080p).mp4").write_bytes(b"x")
+    job = jobs.get_job(yt, "20261111_Local Relight")
+    st = _status(job)
+    assert st["script"] == "done" and st["edit"] == "done" and job["current"] == "packaging"
+
+
+def test_manual_facts_win_and_auto_restores(yt):
+    jid = "20261111_Local Relight"
+    job = jobs.update_job(yt, jid, {"stages": {"script": "done"}, "deadline": "2026-12-01"})
+    assert _status(job)["script"] == "done" and job["deadline"] == "2026-12-01"
+    assert _status(jobs.update_job(yt, jid, {"stages": {"script": "auto"}}))["script"] == "active"
+    assert _status(jobs.update_job(yt, jid, {"publish_url": "https://youtu.be/x"}))["publish"] == "done"
+    with pytest.raises(ValueError):
+        jobs.update_job(yt, jid, {"deadline": "next week"})
+
+
+def test_files_cannot_escape_the_job_folder(yt):
+    jid = "20261111_Local Relight"
+    assert jobs.resolve_file(jid, "SCRIPT.md")
+    assert jobs.resolve_file(jid, "../00_Library/secret.md") is None
+    assert jobs.job_folder("../yt") is None and jobs.job_folder("00_Library") is None
+    assert jobs.list_folder(jid, "..") is None
+
+
+def test_old_untouched_jobs_archive_themselves_unless_pinned(yt):
+    jid = "20261111_Local Relight"
+    old = 1_600_000_000
+    for dirpath, _dirs, files in os.walk(yt / "yt" / jid):
+        for f in files:
+            os.utime(os.path.join(dirpath, f), (old, old))
+    assert jobs.get_job(yt, jid)["archived"] is True
+    assert jobs.update_job(yt, jid, {"pinned": True})["archived"] is False

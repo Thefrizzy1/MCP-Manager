@@ -1,11 +1,11 @@
 import {
   LayoutDashboard,
+  KanbanSquare,
+  ScrollText,
+  ShieldCheck,
   Plug,
   Radar,
   Satellite,
-  Bot,
-  Users,
-  Sparkles,
   FolderOpen,
   Settings,
   type LucideIcon,
@@ -26,6 +26,8 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Workspace',
     items: [
+      { id: 'jobs', label: 'Jobs', icon: KanbanSquare },
+      { id: 'permissions', label: 'Permissions', icon: ShieldCheck },
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { id: 'connections', label: 'Connections', icon: Plug },
       { id: 'discover', label: 'Discover', icon: Radar },
@@ -33,16 +35,13 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Automation',
+    label: 'System',
     items: [
-      { id: 'agents', label: 'Agents', icon: Bot },
-      { id: 'rooms', label: 'Rooms', icon: Users },
-      { id: 'builder', label: 'AI Builder', icon: Sparkles },
+      { id: 'files', label: 'Files', icon: FolderOpen },
+      // Transcripts of scheduled runs (Idea Studio, nightly jobs). The agent
+      // builder and rooms are not part of the studio edition.
+      { id: 'agents', label: 'Runs', icon: ScrollText },
     ],
-  },
-  {
-    label: 'Storage',
-    items: [{ id: 'files', label: 'Files', icon: FolderOpen }],
   },
 ]
 

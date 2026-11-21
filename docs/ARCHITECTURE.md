@@ -162,6 +162,10 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     agent_login.py         Interactive CLI login flows and credential adoption.
     agent_db.py            A writable destination that cannot be taken away.
     library.py             The research library — the app's own writable output dir.
+    permissions.py         What the automation may do (allow / ask / never) and the
+                           approval queue. Only the dashboard can grant.
+    jobs.py                Job board: one job per NAS video folder, stage read off
+                           the files; manual facts in data/jobs_state.json.
     recent_runs.py         Run history index.
 
   Tool surface

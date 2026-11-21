@@ -19,6 +19,8 @@ from ui.api import (
     files,
     google,
     health,
+    jobs,
+    permissions,
     profiles,
     providers,
     reddit,
@@ -45,6 +47,8 @@ _PUBLIC_ROUTERS = (
 # Order only affects OpenAPI grouping, not resolution.
 _AUTHED_ROUTERS = (
     files.router,
+    jobs.router,
+    permissions.router,
     health.router,
     connections.router,
     discover.router,

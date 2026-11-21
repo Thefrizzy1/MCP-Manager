@@ -1,0 +1,15 @@
+{
+  "plutus_mcp": "http://YOUR-PLUTUS-HOST:8765/mcp",
+  "workflows_repo": "/srv/lab/workflows",
+  "workflows_remote": "github.com/YOU/YOUR-WORKFLOWS.git",
+  "comfy_dir": "/srv/lab/ComfyUI",
+  "comfy_python": "/srv/lab/venv/bin/python",
+  "comfy_port": 8198,
+  "models_dir": "/srv/lab/models",
+  "inputs_dir": "/srv/lab/inputs",
+  "state_dir": "/srv/lab/state",
+  "min_free_gb": 60,
+  "task_timeout_min": 150,
+  "gpu_lock": ["gpu-lock", "lab"],
+  "gpu_free_check": ["flock", "-n", "/path/to/gpu.lock", "true"]
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Nightly ComfyUI model lab
+After=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+User=lab
+WorkingDirectory=/srv/lab/plutus/lab
+# LAB_GH_TOKEN (push + PR on the workflows repo only) and, if Plutus requires
+# one, PLUTUS_MCP_TOKEN. Root-owned, mode 600. The model never sees either.
+EnvironmentFile=/etc/model-lab.env
+ExecStart=/usr/bin/python3 /srv/lab/plutus/lab/lab.py nightly
+TimeoutStartSec=5h
+Nice=5

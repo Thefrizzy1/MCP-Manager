@@ -1,0 +1,14 @@
+{
+  "about": "Standard test inputs. The same files every night, so results compare across models. Put them in the lab inputs folder on the server.",
+  "inputs": [
+    {"file": "portrait.png", "kind": "image", "use": "one person, front view, head and shoulders, plain background", "for": ["i2v", "edit", "character swap", "relight"]},
+    {"file": "fullbody.png", "kind": "image", "use": "one person, full body, standing", "for": ["animate", "pose", "character swap"]},
+    {"file": "scene.png", "kind": "image", "use": "landscape photo with depth and no people", "for": ["i2v", "edit", "upscale"]},
+    {"file": "product.png", "kind": "image", "use": "one object on a table", "for": ["edit", "relight", "image to 3D"]},
+    {"file": "motion.mp4", "kind": "video", "use": "5 s, one person moving or dancing, whole body in frame", "for": ["animate", "pose control", "character swap"]},
+    {"file": "talking.mp4", "kind": "video", "use": "5 s, one person talking to camera, with sound", "for": ["lip sync", "relight", "video edit"]},
+    {"file": "speech.wav", "kind": "audio", "use": "8 s of clear speech, one voice", "for": ["lip sync", "voice clone", "audio driven video"]},
+    {"file": "music.wav", "kind": "audio", "use": "10 s of music", "for": ["music", "audio sync"]},
+    {"file": "prompts.json", "kind": "text", "use": "the fixed prompts: t2i, t2v, i2v, edit, each with a short and a detailed version", "for": ["everything prompt driven"]}
+  ]
+}

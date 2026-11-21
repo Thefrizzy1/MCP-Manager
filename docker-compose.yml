@@ -32,6 +32,8 @@ services:
       - .env
     environment:
       - TZ=Europe/Berlin
+      # Job board: where the video-projects folder is mounted (see volumes below).
+      - YOUTUBE_ROOT=/data/youtube
       # Agent runner: either mount ~/.claude below (interactive login, run once)
       # or bill per-token by uncommenting:
       # - ANTHROPIC_API_KEY=sk-ant-...
@@ -64,6 +66,11 @@ services:
       # Gemini needs no mount: it is an HTTP provider driven by a free-tier API
       # key (https://aistudio.google.com/apikey), and the key is stored per
       # account under ./data, which is already persisted above.
+
+      # ── Job board: one job per YYYYMMDD_Title folder ────────────────────────
+      # Mount the folder that holds your video project folders, read-only. Plutus
+      # never writes into it; job state lives in ./data.
+      # - /path/to/your/video/projects:/data/youtube:ro
 
       # ── Optional: expose host folders to the filesystem tools ──────────────
       # Mount any host path you want the filesystem tools to reach, then add

@@ -145,7 +145,7 @@ export function StudioPanel() {
               <div className="text-ink-3">No runs yet.</div>
             )}
             <Button size="sm" variant="ghost" className="mt-2" onClick={() => navigate('agents')}>
-              Open transcripts on Agents
+              Open transcripts in Runs
             </Button>
           </Section>
         </div>

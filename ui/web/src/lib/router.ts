@@ -4,7 +4,7 @@ import { useSyncExternalStore } from 'react'
  *  no server route config, no basename juggling. */
 function currentRoute(): string {
   const h = window.location.hash.replace(/^#\/?/, '')
-  return h.split('?')[0] || 'dashboard'
+  return h.split('?')[0] || 'jobs'
 }
 
 export function navigate(route: string): void {
@@ -18,6 +18,6 @@ export function useRoute(): string {
       return () => window.removeEventListener('hashchange', cb)
     },
     currentRoute,
-    () => 'dashboard',
+    () => 'jobs',
   )
 }
