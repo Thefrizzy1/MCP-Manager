@@ -316,7 +316,27 @@ def start_comfy(cfg: dict, run_dir: Path) -> subprocess.Popen:
            *cfg["comfy_args"]]
     fh = (run_dir / "comfyui.log").open("w")
     return subprocess.Popen(cmd, cwd=cfg["comfy_dir"], stdout=fh, stderr=subprocess.STDOUT,
-                            env=model_env())
+                            env=model_env(), start_new_session=True)
+
+
+def stop_comfy(proc: subprocess.Popen) -> None:
+    """Stop ComfyUI but let the lock wrapper finish, so it releases the GPU lock.
+
+    Killing the wrapper itself would orphan ComfyUI with the lock still held:
+    the GPU would look busy to everything else until someone noticed.
+    """
+    import signal
+    subprocess.run(["pkill", "-TERM", "-P", str(proc.pid)], capture_output=True)   # the wrapper's child
+    try:
+        proc.wait(timeout=90)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)       # last resort: the whole group
+    except ProcessLookupError:
+        pass
+    proc.wait(timeout=30)
 
 
 def process_approvals(cfg: dict) -> list[str]:
@@ -418,11 +438,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             tell(cfg, str(why), slug, "waiting" if waiting else "failed")
             git(repo, "stash", "-u", "-m", f"lab {branch} unpublished", check=False)
     finally:
-        comfy.terminate()
-        try:
-            comfy.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            comfy.kill()
+        stop_comfy(comfy)
         out["cleanup"] = cleanup(cfg, run_dir)
         git(repo, "checkout", "-q", "main", check=False)
     return out
