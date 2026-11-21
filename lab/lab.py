@@ -141,11 +141,11 @@ def permission(cfg: dict, action: str) -> str:
 
 
 def tell(cfg: dict, text: str, slug: str = "", status: str = "", pr: str = "", name: str = "",
-         review: dict | None = None) -> None:
+         review: dict | None = None, server: str = "") -> None:
     """Progress for the Workflow Maker page. Never lets a reporting failure stop the night."""
     try:
         plutus(cfg, "lab_report", {"params": {"slug": slug, "text": text[:390], "status": status,
-                                              "pr": pr, "name": name,
+                                              "pr": pr, "name": name, "server_test": server if slug else "",
                                               "review_json": json.dumps(review)[:5900] if review else ""}},
                timeout=20)
     except Exception as e:
@@ -381,7 +381,8 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
     git(repo, "checkout", "-q", "-B", branch)
     (run_dir / "models_before.json").write_text(json.dumps(snapshot(Path(cfg["models_dir"]))))
     slug = assignment.get("slug", "")
-    tell(cfg, "Lab started on this model", slug, "testing" if slug else "", name=assignment.get("model", ""))
+    tell(cfg, "Lab started on this model", slug, "testing" if slug else "", name=assignment.get("model", ""),
+         server="testing")
     (state / "LESSONS.md").touch()
     mcp = write_mcp_config(cfg, run_dir)
     values = dict(
@@ -435,7 +436,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
                       "summary": result.get("summary", ""), "critique": verdict.get("summary", ""),
                       "not_verified": "; ".join(result.get("not_verified") or [])[:400]}
             tell(cfg, "Workflow built and reviewed. Ready for you to check and publish.", slug, "built",
-                 out["pr"], review=review)
+                 out["pr"], review=review, server="done")
             try:
                 if json.loads(gh(repo, "pr", "view", out["pr"], "--json", "state"))["state"] == "MERGED":
                     out["status"] = "published"
@@ -448,7 +449,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             waiting = result.get("status") in ("waiting_for_core", "needs_input")
             why = (result.get("reason") or (check.returncode and "repo check failed: " + out["repo_check"][-200:])
                    or verdict.get("summary") or result.get("summary") or "No workflow came out of this run.")
-            tell(cfg, str(why), slug, "waiting" if waiting else "failed")
+            tell(cfg, str(why), slug, "waiting" if waiting else "failed", server="" if waiting else "failed")
             git(repo, "stash", "-u", "-m", f"lab {branch} unpublished", check=False)
     finally:
         stop_comfy(comfy)

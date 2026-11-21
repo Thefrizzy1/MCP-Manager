@@ -78,7 +78,15 @@ function Steps({ model, onPublish }: { model: Model; onPublish: () => void }) {
     i === 3
       ? lab?.gpu3060?.status
       : (lab?.server?.status ??
-        (lab?.status === 'testing' ? 'testing' : lab?.status === 'failed' ? 'failed' : passed && !lab?.gpu3060 ? 'done' : passed && lab?.gpu3060?.status !== 'done' ? 'done' : undefined))
+        (lab?.gpu3060
+          ? undefined
+          : lab?.status === 'testing'
+            ? 'testing'
+            : lab?.status === 'failed'
+              ? 'failed'
+              : passed
+                ? 'done'
+                : undefined))
   const update = lab?.status === 'published' && !!lab.update_pr
   const ready = (lab?.status === 'built' && !!lab.pr) || update
   const asked = !!lab?.publish_requested
