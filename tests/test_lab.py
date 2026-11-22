@@ -87,3 +87,30 @@ def test_the_workflow_maker_list_comes_before_the_local_queue(tmp_path, monkeypa
     monkeypatch.setattr(lab, "plutus", boom)
     assert lab.next_assignment({}, tmp_path)["model"] == "from file"
     lab.tell({}, "still fine when Plutus is down")          # must not raise
+
+
+def test_a_usage_limit_is_not_a_failed_model(tmp_path):
+    log_file = tmp_path / "build1.log"
+    log_file.write_text('[claude-code:unrecognized_model] {"model":"x"}\n'
+                        '{"is_error": true, "api_error_status": 429, '
+                        '"result": "You\'ve hit your 5-hour limit · resets 12:40am (Europe/Berlin)"}')
+    with pytest.raises(lab.UsageLimit) as e:
+        lab.check_usage(log_file)
+    import datetime as dt
+    at = lab.parse_reset(str(e.value), now=dt.datetime(2026, 11, 21, 23, 20))
+    assert (at.day, at.hour, at.minute) == (22, 0, 40)            # after midnight = tomorrow
+    assert lab.parse_reset("resets 3pm", now=dt.datetime(2026, 11, 21, 10, 0)).hour == 15
+    log_file.write_text('warning line\n{"is_error": false, "result": "done, no limit problems"}')
+    lab.check_usage(log_file)                                    # a normal result passes
+
+
+def test_models_without_a_builtin_template_are_not_attempted():
+    names = ["image_kandinsky5_t2i", "Kandinsky 5.0 Image Lite", "audio_ace_step1_5_xl_base", "ACE-Step",
+             "sd3.5_simple_example", "video_hunyuan_video_1.5_720p_i2v", "image_firered_image_edit1_1"]
+    yes = [("kandinsky-5", "Kandinsky 5"), ("ace-step-1.5", "ACE-Step 1.5 Music"), ("sd3.5", "Stable Diffusion 3.5"),
+           ("hunyuan-video-1.5", "Hunyuan Video 1.5"), ("firered-image-edit-1.1", "FireRed Image Edit 1.1")]
+    for slug, name in yes:
+        assert lab.has_template(names, {"slug": slug, "model": name}), slug
+    for slug in ("mistral-large-4-1t", "deepseek-v4.1-flash-1017", "nvidia-nemotron-3.5-bolt"):
+        assert not lab.has_template(names, {"slug": slug, "model": slug}), slug
+    assert lab.has_template([], {"slug": "anything"})            # no index to check against

@@ -256,7 +256,7 @@ function Row({
         </button>
         <Steps model={model} onPublish={() => onPublish(model.slug)} />
         <div className="flex w-[104px] shrink-0 justify-end gap-1">
-          {!lab || lab.status === 'skipped' || lab.status === 'failed' ? (
+          {!lab || lab.status === 'skipped' || lab.status === 'failed' || lab.status === 'waiting' ? (
             <Button size="sm" onClick={() => onSet(model.slug, model.name, 'queued')}>
               <Plus size={13} /> Test
             </Button>

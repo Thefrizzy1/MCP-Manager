@@ -27,6 +27,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -263,6 +264,47 @@ def model_env() -> dict:
             if k not in ("LAB_GH_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "PLUTUS_MCP_TOKEN")}
 
 
+class UsageLimit(Exception):
+    """The Claude plan's usage window is used up. Not the model's fault: wait, then retry."""
+
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.resume_at = parse_reset(message)
+
+
+def parse_reset(message: str, now: dt.datetime | None = None) -> dt.datetime | None:
+    """When a 'resets 12:40am' message says work can continue (local time), or None."""
+    m = re.search(r"resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)", message or "", re.I)
+    if not m:
+        return None
+    now = now or dt.datetime.now()
+    hour = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
+    at = now.replace(hour=hour, minute=int(m.group(2) or 0), second=0, microsecond=0)
+    return at if at > now else at + dt.timedelta(days=1)
+
+
+def session_outcome(out: Path) -> dict:
+    """The JSON result a session printed (it may follow a warning line), or {}."""
+    try:
+        text = out.read_text()
+    except OSError:
+        return {}
+    for start in (0, text.find("\n{") + 1):
+        try:
+            data = json.loads(text[start:])
+            return data if isinstance(data, dict) else {}
+        except ValueError:
+            continue
+    return {}
+
+
+def check_usage(out: Path) -> None:
+    res = session_outcome(out)
+    msg = str(res.get("result") or "")
+    if res.get("is_error") and (res.get("api_error_status") == 429 or "limit" in msg.lower()):
+        raise UsageLimit(msg or "usage limit reached")
+
+
 def run_session(cfg: dict, prompt: str, cwd: Path, out: Path, *, allowed: list[str],
                 timeout_min: int, mcp: Path | None) -> int:
     cmd = [cfg["claude_bin"], "-p", prompt, "--output-format", "json",
@@ -318,8 +360,20 @@ def start_comfy(cfg: dict, run_dir: Path) -> subprocess.Popen:
     cmd = [*cfg["gpu_lock"], cfg["comfy_python"], "main.py", "--port", str(cfg["comfy_port"]),
            *cfg["comfy_args"]]
     fh = (run_dir / "comfyui.log").open("w")
-    return subprocess.Popen(cmd, cwd=cfg["comfy_dir"], stdout=fh, stderr=subprocess.STDOUT,
+    proc = subprocess.Popen(cmd, cwd=cfg["comfy_dir"], stdout=fh, stderr=subprocess.STDOUT,
                             env=model_env(), start_new_session=True)
+    # Wait until it answers. Stopping it while the lock wrapper is still setting up
+    # would end the wrapper early and leave the GPU marked as taken.
+    url = f"http://127.0.0.1:{cfg['comfy_port']}/system_stats"
+    for _ in range(150):
+        if proc.poll() is not None:
+            break
+        try:
+            urllib.request.urlopen(url, timeout=2)
+            break
+        except OSError:
+            time.sleep(2)
+    return proc
 
 
 def stop_comfy(proc: subprocess.Popen) -> None:
@@ -370,6 +424,39 @@ def process_approvals(cfg: dict) -> list[str]:
     return done
 
 
+def template_names(cfg: dict) -> list[str]:
+    """Names, titles and model tags of ComfyUI's built-in templates (local ones)."""
+    out: list[str] = []
+    pattern = str(Path(cfg["comfy_python"]).resolve().parents[1] / "lib" / "python*" / "site-packages"
+                  / "comfyui_workflow_templates*" / "**" / "index.json")
+    import glob
+    for path in glob.glob(pattern, recursive=True)[:1]:
+        try:
+            cats = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            continue
+        for cat in cats:
+            for t in cat.get("templates", []):
+                if str(t.get("name", "")).startswith("api_"):
+                    continue          # hosted partner models, not something to run locally
+                out += [str(t.get("name", "")), str(t.get("title", "")), *map(str, t.get("models") or [])]
+    return out
+
+
+def has_template(names: list[str], assignment: dict) -> bool:
+    """Does any built-in template mention this model? Unknown (no index) counts as yes."""
+    if not names:
+        return True
+    squash = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())
+    hay = [squash(n) for n in names]
+    for cand in (assignment.get("slug", ""), assignment.get("model", "")):
+        key = squash(cand)
+        for k in (key, re.sub(r"\d+$", "", key)):          # also without a trailing version
+            if len(k) >= 4 and any(k in h for h in hay):
+                return True
+    return False
+
+
 def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
     """One model, start to finish: build, critique, one fix round, PR, clean-up."""
     state = Path(cfg["state_dir"])
@@ -400,6 +487,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             log(f"build session, attempt {attempt}")
             run_session(cfg, render("build.md", **values), repo, run_dir / f"build{attempt}.log",
                         allowed=ALLOW, timeout_min=cfg["task_timeout_min"], mcp=mcp)
+            check_usage(run_dir / f"build{attempt}.log")
             result = read_json(run_dir / "result.json", {})
             if result.get("status") != "built":
                 break
@@ -407,6 +495,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             (run_dir / "review.json").unlink(missing_ok=True)
             run_session(cfg, render("critique.md", **values), repo, run_dir / f"critique{attempt}.log",
                         allowed=READONLY, timeout_min=cfg["critique_timeout_min"], mcp=None)
+            check_usage(run_dir / f"critique{attempt}.log")
             verdict = read_json(run_dir / "review.json", {"verdict": "fail", "issues": ["no review written"]})
             slug = slug or result.get("slug", "")
             tell(cfg, f"Critique {attempt}: {verdict.get('verdict', 'fail')}. {verdict.get('summary', '')}", slug)
@@ -451,6 +540,9 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
                    or verdict.get("summary") or result.get("summary") or "No workflow came out of this run.")
             tell(cfg, str(why), slug, "waiting" if waiting else "failed", server="" if waiting else "failed")
             git(repo, "stash", "-u", "-m", f"lab {branch} unpublished", check=False)
+    except UsageLimit:
+        git(repo, "stash", "-u", "-m", f"lab {branch} paused at the usage limit", check=False)
+        raise
     finally:
         stop_comfy(comfy)
         out["cleanup"] = cleanup(cfg, run_dir)
@@ -480,7 +572,9 @@ def nightly(cfg: dict) -> int:
     deadline = dt.datetime.now() + dt.timedelta(hours=cfg["night_hours"])
     report: dict = {"date": today, "status": "started", "merged": process_approvals(cfg), "tasks": []}
     seen: set[str] = set()
-    while len(report["tasks"]) < cfg["max_tasks"] and dt.datetime.now() < deadline:
+    templates = template_names(cfg)
+    built = lambda: sum(1 for t in report["tasks"] if t.get("status") != "no_template")
+    while built() < cfg["max_tasks"] and len(report["tasks"]) < 500 and dt.datetime.now() < deadline:
         if report["tasks"]:                      # between models: carry out anything approved meanwhile
             report["merged"] += process_approvals(cfg)
         rows = preflight(cfg)
@@ -495,11 +589,34 @@ def nightly(cfg: dict) -> int:
         if key in seen:            # the same model came back: its status did not move, do not loop
             break
         seen.add(key)
+        if assignment.get("slug") and not has_template(templates, assignment):
+            # Not something this ComfyUI can run yet (or not an image/video/audio model at all).
+            tell(cfg, "No built-in ComfyUI template mentions this model yet, so there is nothing to build on.",
+                 assignment["slug"], "waiting")
+            report["tasks"].append({"assignment": assignment, "status": "no_template", "slug": assignment["slug"]})
+            continue
         n = len(report["tasks"]) + 1
         safe = re.sub(r"[^a-z0-9.-]+", "-", key.lower()).strip("-") or "auto"
         log(f"task {n}: {key}")
         try:
             task = run_task(cfg, assignment, night_dir / f"{n:02d}-{safe}", f"lab/{today}-{safe}")
+        except UsageLimit as e:
+            # The plan's usage window is empty. The model goes back on the list untouched;
+            # wait for the reset if the night is long enough, otherwise stop here.
+            slug = assignment.get("slug", "")
+            resume = e.resume_at
+            can_wait = resume is not None and resume + dt.timedelta(minutes=3) < deadline
+            when = f"{resume:%H:%M}" if resume else "later"
+            tell(cfg, f"Paused: Claude usage limit reached, continues {when}." if can_wait
+                 else f"Stopped for tonight: Claude usage limit reached (resets {when}).",
+                 slug, "queued" if slug else "", server="queued" if slug else "")
+            log(f"usage limit: {e}")
+            report["usage_limit"] = str(e)[:200]
+            if not can_wait:
+                break
+            seen.discard(key)
+            time.sleep(max(60, (resume - dt.datetime.now()).total_seconds() + 180))
+            continue
         except Exception as e:     # one broken model must not end the night
             task = {"assignment": assignment, "status": "crashed", "error": str(e)[:300]}
             tell(cfg, f"Crashed: {e}", assignment.get("slug", ""), "failed" if assignment.get("slug") else "")
