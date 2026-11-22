@@ -720,6 +720,21 @@ _DOC_DIRS = ("", "research", "upload", "shorts", "edit")
 _DOC_EXT = (".md", ".txt", ".json", ".srt")
 
 
+def inherit(path: Path) -> None:
+    """Give a new file or folder the owner and access of the folder it sits in.
+
+    Plutus usually runs as root in its container; without this, what it creates
+    on a shared drive belongs to root and the people using the share cannot
+    edit or move it.
+    """
+    try:
+        st = path.parent.stat()
+        os.chown(path, st.st_uid, st.st_gid)
+        os.chmod(path, st.st_mode & (0o7777 if path.is_dir() else 0o666))
+    except OSError:
+        pass                                    # not the owner and not root: leave it as created
+
+
 def create_job(title: str, idea: str = "") -> str:
     """Make the folder for a new video and write the idea into it. Returns the job id."""
     clean = re.sub(r"[\\/:*?\"<>|\r\n]+", " ", title).strip(" .")[:70]
@@ -733,8 +748,10 @@ def create_job(title: str, idea: str = "") -> str:
     folder = parent / name
     try:
         folder.mkdir()
+        inherit(folder)
         if idea.strip():
             (folder / "IDEA.md").write_text(f"# {clean}\n\n{idea.strip()}\n", encoding="utf-8")
+            inherit(folder / "IDEA.md")
     except OSError as e:
         raise PermissionError(f"could not create the video folder: {e.strerror or e}") from e
     _cache["ts"] = 0.0
@@ -767,14 +784,19 @@ def write_doc(job_id: str, rel: str, text: str) -> dict:
     path = _doc_path(job_id, rel)
     kept = ""
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.parent.is_dir():
+            path.parent.mkdir(parents=True)
+            inherit(path.parent)
         if path.is_file():
             old_dir = path.parent / "_old"
-            old_dir.mkdir(exist_ok=True)
+            if not old_dir.is_dir():
+                old_dir.mkdir()
+                inherit(old_dir)
             kept_path = old_dir / f"{path.stem}_old_{time.strftime('%Y%m%d_%H%M%S')}{path.suffix}"
             path.rename(kept_path)
             kept = str(kept_path.relative_to(job_folder(job_id)))
         path.write_text(text, encoding="utf-8")
+        inherit(path)
     except OSError as e:
         raise PermissionError(f"could not write {rel}: {e.strerror or e}") from e
     _cache["ts"] = 0.0

@@ -60,7 +60,10 @@ def archive(job_id: str) -> Path:
     if dst.exists():
         raise FileExistsError(f"{dst.relative_to(jobs.youtube_root())} already exists")
     try:
-        dst.parent.mkdir(parents=True, exist_ok=True)
+        for parent in (dst.parent.parent, dst.parent):          # year, then month
+            if not parent.is_dir():
+                parent.mkdir()
+                jobs.inherit(parent)
         os.rename(src, dst)
     except OSError as e:
         raise PermissionError(
