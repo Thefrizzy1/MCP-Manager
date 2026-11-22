@@ -427,7 +427,9 @@ def process_approvals(cfg: dict) -> list[str]:
 def template_names(cfg: dict) -> list[str]:
     """Names, titles and model tags of ComfyUI's built-in templates (local ones)."""
     out: list[str] = []
-    pattern = str(Path(cfg["comfy_python"]).resolve().parents[1] / "lib" / "python*" / "site-packages"
+    # Not resolve(): a venv's python is a symlink to the system one, and the
+    # templates live in the venv.
+    pattern = str(Path(cfg["comfy_python"]).parent.parent / "lib" / "python*" / "site-packages"
                   / "comfyui_workflow_templates*" / "**" / "index.json")
     import glob
     for path in glob.glob(pattern, recursive=True)[:1]:
