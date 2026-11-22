@@ -101,9 +101,15 @@ def test_labels_tag_videos_and_sponsored_folders_label_themselves(yt):
     (yt / "yt" / "20261118_Meshy (sponsored)").mkdir()
     board = jobs.list_jobs(yt, force=True)
     by = {j["id"]: j for j in board["jobs"]}
-    assert [x["id"] for x in board["labels"]] == ["model", "general", "sponsored"]
-    assert by["20261118_Meshy (sponsored)"]["label"] == "sponsored" and by["20261111_Local Relight"]["label"] == ""
-    assert jobs.update_job(yt, "20261111_Local Relight", {"label": "model"})["label"] == "model"
+    assert {x["id"] for x in board["labels"]} == {"model", "general", "sponsored"}
+    assert by["20261118_Meshy (sponsored)"]["label"] == "sponsored"
+    assert by["20261111_Local Relight"]["label"] == "model"            # earned by its name
+    rows = board["labels"]
+    assert jobs.auto_label("LTX2.5 first impressions", rows) == "model"
+    assert jobs.auto_label("Wan2.2 GGUF on 4GB", rows) == "model"
+    assert jobs.auto_label("Channel Trailer", rows) == "general"       # nothing matched: the fallback
+    assert jobs.auto_label("I want a new GPU", rows) == "general"      # "wan" inside a word is not a match
+    assert jobs.update_job(yt, "20261111_Local Relight", {"label": "general"})["label"] == "general"   # by hand wins
     with pytest.raises(ValueError):
         jobs.update_job(yt, "20261111_Local Relight", {"label": "nope"})
     jobs.save_labels(yt, [{"name": "Model review", "id": "model", "color": "#8b5cf6"}, {"name": "Tutorial", "color": "#3b82f6"}])

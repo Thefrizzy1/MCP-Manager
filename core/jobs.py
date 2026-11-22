@@ -66,11 +66,29 @@ _cache: dict = {"ts": 0.0, "root": "", "jobs": []}
 
 
 # Colour labels for videos. The list is editable (data/jobs_labels.json); these are the defaults.
+# ``match``: words that put a video under this label when its folder name has one
+# of them. ``fallback``: the label for everything nothing else matched. The first
+# matching label in list order wins; a label set by hand always wins.
 DEFAULT_LABELS = [
-    {"id": "model", "name": "Model review", "color": "#8b5cf6"},
-    {"id": "general", "name": "General", "color": "#22a559"},
-    {"id": "sponsored", "name": "Sponsored", "color": "#ff6347"},
+    {"id": "sponsored", "name": "Sponsored", "color": "#ff6347", "match": ["sponsor"]},
+    {"id": "model", "name": "Model review", "color": "#8b5cf6",
+     "match": ["ltx", "wan", "qwen", "flux", "minimax", "h3", "scail", "krea", "z-image", "hunyuan",
+               "ideogram", "kandinsky", "sdxl", "sd3", "chroma", "hidream", "lora", "gguf", "seedvr",
+               "genjutsu", "relight"]},
+    {"id": "general", "name": "General", "color": "#22a559", "fallback": True},
 ]
+
+
+def auto_label(title: str, rows: list[dict]) -> str:
+    """The label a folder name earns by itself, or ''."""
+    words = set(re.findall(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", title.lower()))
+    flat = title.lower()
+    for r in rows:
+        for m in r.get("match") or []:
+            m = str(m).lower()
+            if m in words or (len(m) >= 5 and m in flat) or any(w.startswith(m) and w[len(m):].replace(".", "").isdigit() for w in words):
+                return r["id"]
+    return next((r["id"] for r in rows if r.get("fallback")), "")
 
 
 def _labels_path(root: Path) -> Path:
@@ -95,7 +113,12 @@ def save_labels(root: Path, rows: list[dict]) -> list[dict]:
         if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
             raise ValueError(f"colour of {lid!r} must look like #8b5cf6")
         seen.add(lid)
-        out.append({"id": lid, "name": str(r.get("name") or lid)[:40], "color": color})
+        row = {"id": lid, "name": str(r.get("name") or lid)[:40], "color": color}
+        if r.get("match"):
+            row["match"] = [str(m).lower()[:40] for m in r["match"]][:60]
+        if r.get("fallback"):
+            row["fallback"] = True
+        out.append(row)
     if not out:
         raise ValueError("at least one label is required")
     write_json(_labels_path(root), out)
@@ -369,7 +392,7 @@ def job_dirs(yt: Path) -> dict[str, tuple[Path, str]]:
 
 
 def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
-             where: str = "flat") -> dict | None:
+             where: str = "flat", label_rows: list[dict] | None = None) -> dict | None:
     """Read one video folder into a job record. None if it is not a job folder."""
     m = _JOB_RE.match(folder.name)
     if not m or not folder.is_dir():
@@ -496,7 +519,8 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
     return {
         "id": folder.name, "title": st.get("title") or title,
         # Set by hand; a folder named "(sponsored)" is labelled so by itself.
-        "label": st.get("label") or ("sponsored" if "sponsor" in folder.name.lower() else ""),
+        "label": st.get("label") or auto_label(title, label_rows if label_rows is not None else DEFAULT_LABELS),
+        "label_manual": bool(st.get("label")),
         "start": start.isoformat(), "sponsored": "sponsor" in folder.name.lower(),
         "stages": stages, "current": current,
         "last_activity": last_activity or None, "idle_days": idle_days,
@@ -528,12 +552,13 @@ def list_jobs(root: Path, *, force: bool = False) -> dict:
         if yt.is_dir():
             state = load_state(root)
             dirs = job_dirs(yt)
+            label_rows = labels(root)
             names = sorted(dirs, reverse=True)
             matches = _all_matches(root, dirs)
             _cache["matches"] = matches
             _cache["dirs"] = dirs
             for name in names:
-                job = scan_job(dirs[name][0], state, matches.get(name), dirs[name][1])
+                job = scan_job(dirs[name][0], state, matches.get(name), dirs[name][1], label_rows)
                 if job:
                     jobs.append(job)
         _cache.update(ts=now, root=str(yt), jobs=jobs)
@@ -550,7 +575,7 @@ def get_job(root: Path, job_id: str) -> dict | None:
     if "matches" not in _cache or _cache["root"] != str(youtube_root()):
         list_jobs(root, force=True)
     where = (_cache.get("dirs") or {}).get(job_id, (None, "flat"))[1]
-    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id), where)
+    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id), where, labels(root))
 
 
 def job_folder(job_id: str) -> Path | None:

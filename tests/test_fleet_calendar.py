@@ -52,3 +52,22 @@ def test_the_feed_needs_the_right_token(tmp_path):
     t = C.token(tmp_path)
     assert C.check_token(tmp_path, t) and not C.check_token(tmp_path, "") and not C.check_token(tmp_path, t + "x")
     assert C.token(tmp_path) == t and C.token(tmp_path, regenerate=True) != t
+
+
+def test_machine_work_hours_and_worker_settings(tmp_path):
+    F.register_machine(tmp_path, "windows-pc", "Windows PC")
+    row = F.set_schedule(tmp_path, "windows-pc", {"start": "03:00", "end": "06:00", "days": [0, 2, 9],
+                                                 "may_wake": True, "may_power_off": True})
+    assert row["schedule"] == {"enabled": True, "start": "03:00", "end": "06:00", "days": [0, 2],
+                               "may_wake": True, "may_power_off": True}
+    with pytest.raises(ValueError):
+        F.set_schedule(tmp_path, "windows-pc", {"start": "3am", "end": "06:00"})
+    with pytest.raises(KeyError):
+        F.set_schedule(tmp_path, "toaster", {"start": "03:00", "end": "06:00"})
+    ws = {w["id"]: w for w in F.workers(tmp_path)}
+    assert ws["manager"]["model"] == "fable" and ws["editor"]["home"] == "windows-pc"
+    F.set_worker(tmp_path, "manager", model="opus", home="gpu-server")
+    ws = {w["id"]: w for w in F.workers(tmp_path)}
+    assert ws["manager"]["model"] == "opus" and ws["manager"]["home"] == "gpu-server"
+    with pytest.raises(ValueError):
+        F.set_worker(tmp_path, "manager", model="gpt")

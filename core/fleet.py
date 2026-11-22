@@ -25,6 +25,7 @@ ONLINE_WINDOW = 12 * 60          # a report every 5 minutes; two missed = offlin
 # id -> label, what it is for, abilities as (text, state)
 WORKERS: dict[str, dict] = {
     "researcher": {
+        "home": "nas", "model": "opus",
         "label": "Researcher",
         "about": "Watches the niche so ideas and scripts start from facts.",
         "abilities": [
@@ -36,6 +37,7 @@ WORKERS: dict[str, dict] = {
         ],
     },
     "workflow_maker": {
+        "home": "gpu-server", "model": "opus",
         "label": "Workflow Maker",
         "about": "Turns new models into tested ComfyUI workflows.",
         "abilities": [
@@ -46,6 +48,7 @@ WORKERS: dict[str, dict] = {
         ],
     },
     "editor": {
+        "home": "windows-pc", "model": "opus",
         "label": "Editor",
         "about": "Prepares the edit so filming is the only manual part.",
         "abilities": [
@@ -56,6 +59,7 @@ WORKERS: dict[str, dict] = {
         ],
     },
     "manager": {
+        "home": "nas", "model": "fable",
         "label": "Manager",
         "about": "Keeps dates, mail and the daily picture in order.",
         "abilities": [
@@ -66,6 +70,7 @@ WORKERS: dict[str, dict] = {
         ],
     },
     "publisher": {
+        "home": "nas", "model": "opus",
         "label": "Publisher",
         "about": "Gets finished work out, only with your OK.",
         "abilities": [
@@ -138,6 +143,48 @@ def report_worker(root: Path, worker: str, text: str, busy: bool = True) -> dict
     return row
 
 
+MODELS = ("opus", "fable", "sonnet", "haiku")
+
+
+def set_schedule(root: Path, machine_id: str, schedule: dict) -> dict:
+    """When a machine may be switched on to work by itself.
+
+    ``start``/``end`` are HH:MM (a window that crosses midnight is fine),
+    ``days`` are 0 = Monday .. 6 = Sunday, ``may_wake`` lets the server power it
+    on at the start, ``may_power_off`` lets it shut down when its work is done.
+    """
+    import re
+    data = _load(root)
+    row = data["machines"].get(machine_id)
+    if row is None:
+        raise KeyError(f"no machine {machine_id!r}")
+    for key in ("start", "end"):
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(schedule.get(key, ""))):
+            raise ValueError(f"{key} must be a time like 03:00")
+    days = sorted({int(d) for d in schedule.get("days", range(7)) if 0 <= int(d) <= 6})
+    row["schedule"] = {"enabled": bool(schedule.get("enabled", True)), "start": schedule["start"],
+                       "end": schedule["end"], "days": days,
+                       "may_wake": bool(schedule.get("may_wake")),
+                       "may_power_off": bool(schedule.get("may_power_off"))}
+    data["machines"][machine_id] = row
+    write_json(_path(root), data)
+    return row
+
+
+def set_worker(root: Path, worker: str, model: str = "", home: str = "") -> None:
+    """Change which model a worker runs or which machine it lives on."""
+    if worker not in WORKERS:
+        raise KeyError(f"unknown worker {worker!r}")
+    data = _load(root)
+    if model:
+        if model not in MODELS:
+            raise ValueError(f"model must be one of {MODELS}")
+        data["workers"][worker + ":model"] = model
+    if home:
+        data["workers"][worker + ":home"] = home[:60]
+    write_json(_path(root), data)
+
+
 def this_machine(disk_path: str = "/") -> dict:
     """Resources of the machine this process runs on (the one hosting Plutus)."""
     ram = 0.0
@@ -193,6 +240,9 @@ def workers(root: Path, live: dict[str, dict] | None = None) -> list[dict]:
         states = [s for _t, s in spec["abilities"]]
         out.append({
             "id": wid, "label": spec["label"], "about": spec["about"],
+            # Which machine it lives on and which model it runs; both can be changed per install.
+            "home": (data["workers"].get(wid + ":home") or spec["home"]),
+            "model": (data["workers"].get(wid + ":model") or spec["model"]),
             "abilities": [{"text": t, "state": s} for t, s in spec["abilities"]],
             "active": any(s in ("running", "ready") for s in states),
             "busy": bool(act.get("busy")), "text": act.get("text", ""), "ts": act.get("ts", 0),

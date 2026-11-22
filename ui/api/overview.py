@@ -52,6 +52,7 @@ async def api_v1_overview():
     return {
         "machines": fleet.machines(ROOT, str(jobs.youtube_root()) if jobs.youtube_root().is_dir() else "/"),
         "workers": fleet.workers(ROOT, _live_workers()),
+        "models": list(fleet.MODELS),
         "calendar": {"path": f"/calendar/{calendar_feed.token(ROOT)}.ics", "events": len(events),
                      "upcoming": [e for e in events if e["date"] >= _today()][:12]},
     }
@@ -60,6 +61,46 @@ async def api_v1_overview():
 def _today() -> str:
     from datetime import date
     return date.today().isoformat()
+
+
+class ScheduleBody(BaseModel):
+    machine: str = Field(..., max_length=60)
+    enabled: bool = True
+    start: str = Field(..., max_length=5)
+    end: str = Field(..., max_length=5)
+    days: list[int] = Field(default_factory=lambda: list(range(7)), max_length=7)
+    may_wake: bool = False
+    may_power_off: bool = False
+
+
+@router.post("/api/v1/overview/schedule")
+async def api_v1_overview_schedule(body: ScheduleBody):
+    """Set the hours a machine may be switched on to work by itself."""
+    try:
+        fleet.set_schedule(ROOT, body.machine, body.model_dump(exclude={"machine"}))
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await api_v1_overview()
+
+
+class WorkerBody(BaseModel):
+    worker: str = Field(..., max_length=40)
+    model: str = Field(default="", max_length=20)
+    home: str = Field(default="", max_length=60)
+
+
+@router.post("/api/v1/overview/worker")
+async def api_v1_overview_worker(body: WorkerBody):
+    """Change a worker's model or the machine it lives on."""
+    try:
+        fleet.set_worker(ROOT, body.worker, body.model, body.home)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await api_v1_overview()
 
 
 class TokenBody(BaseModel):
