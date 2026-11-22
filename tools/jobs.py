@@ -348,12 +348,15 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         worker: str = Field(..., description="researcher, workflow_maker, workflow_manager, editor, manager or publisher")
         text: str = Field(..., description="What it is doing or just finished, one sentence", max_length=300)
         busy: bool = Field(default=True, description="true while working, false when reporting it is done")
+        machine: str = Field(default="", description="Machine it is working on")
 
     @mcp.tool(name="worker_report", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def worker_report(params: WorkerInput) -> str:
         """A worker says what it is working on, for the Overview page."""
         try:
             fleet.report_worker(_ROOT, params.worker, params.text, params.busy)
+            from core import studio
+            studio.mark_round(_ROOT, params.worker, params.busy, params.text, params.machine)
         except KeyError as e:
             return f"Error: {e}"
         return "✓ Noted."

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from core import jobs
+from core import jobs, studio
 from tools.jobs import sync_uploads
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
@@ -32,6 +32,13 @@ async def api_v1_jobs(request: Request):
     # The scan is blocking filesystem work (slow on a network mount).
     data = await asyncio.to_thread(jobs.list_jobs, ROOT, force=force)
     data["activity"] = jobs.recent_activity(ROOT, limit=30)
+    # What makes sense next on each video, and the work agents have in hand for it.
+    by_job = studio.by_job(ROOT)
+    data["jobs"] = [dict(j, actions=studio.actions(j, by_job.get(j["id"], [])),
+                         tasks=[{k: t[k] for k in ("id", "kind", "agent", "status", "reason")} | {
+                             "blocked": t.get("blocked", False)}
+                                for t in by_job.get(j["id"], []) if t["status"] in ("queued", "running", "failed")][:6])
+                    for j in data["jobs"]]
     return data
 
 

@@ -1,6 +1,8 @@
 import {
   LayoutDashboard,
   Clapperboard,
+  MessageSquare,
+  Video,
   LayoutGrid,
   Boxes,
   ScrollText,
@@ -33,7 +35,11 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     // Everything about making and publishing videos.
     label: 'YouTube Studio',
-    items: [{ id: 'jobs', label: 'Videos', icon: Clapperboard }],
+    items: [
+      { id: 'jobs', label: 'Videos', icon: Clapperboard },
+      { id: 'chat', label: 'Chat', icon: MessageSquare },
+      { id: 'film', label: 'Film', icon: Video },
+    ],
   },
   {
     // New models in, tested ComfyUI workflows out.

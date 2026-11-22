@@ -6,6 +6,8 @@ import { Connections } from '@/pages/Connections'
 import { Discover } from '@/pages/Discover'
 import { Trends } from '@/pages/Trends'
 import { Jobs } from '@/pages/Jobs'
+import { Chat } from '@/pages/Chat'
+import { Film } from '@/pages/Film'
 import { Overview } from '@/pages/Overview'
 import { Models } from '@/pages/Models'
 import { Permissions } from '@/pages/Permissions'
@@ -28,6 +30,10 @@ function renderPage(route: string) {
       return <Overview />
     case 'jobs':
       return <Jobs />
+    case 'chat':
+      return <Chat />
+    case 'film':
+      return <Film />
     case 'models':
       return <Models />
     case 'permissions':
@@ -50,6 +56,8 @@ const TITLES: Record<string, string> = {
   trends: 'Trends',
   overview: 'Overview',
   jobs: 'YouTube Studio',
+  chat: 'Chat',
+  film: 'Film',
   models: 'Workflow Maker',
   permissions: 'Permissions',
   agents: 'Runs',

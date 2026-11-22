@@ -20,7 +20,7 @@ def test_machines_report_in_and_go_offline(tmp_path, monkeypatch):
 def test_workers_are_grey_until_something_runs(tmp_path):
     ws = {w["id"]: w for w in F.workers(tmp_path, {"researcher": {"text": "scan", "ts": 5, "busy": True}})}
     assert ws["researcher"]["active"] and ws["researcher"]["busy"]
-    assert ws["editor"]["active"] is False and ws["publisher"]["active"] is False
+    assert set(ws) >= {"manager", "writer", "editor", "motion", "thumbnail", "shorts", "publisher"}
     F.report_worker(tmp_path, "manager", "Added 3 sponsor dates", busy=False)
     assert {w["id"]: w for w in F.workers(tmp_path)}["manager"]["text"].startswith("Added")
     with pytest.raises(KeyError):

@@ -89,7 +89,8 @@ def main() -> int:
 
     def say(text: str, busy: bool) -> None:
         try:
-            lab.plutus(cfg, "worker_report", {"params": {"worker": "workflow_manager", "text": text[:290], "busy": busy}},
+            lab.plutus(cfg, "worker_report", {"params": {"worker": "workflow_manager", "text": text[:290], "busy": busy,
+                                                         "machine": cfg.get("machine_id", "")}},
                        timeout=20)
         except Exception as e:
             lab.log(f"could not report: {e}")

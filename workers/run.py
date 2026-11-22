@@ -66,7 +66,8 @@ def shift(worker: str) -> int:
 
     def say(text: str, busy: bool) -> None:
         try:
-            lab.plutus(cfg, "worker_report", {"params": {"worker": worker, "text": text[:290], "busy": busy}}, timeout=20)
+            lab.plutus(cfg, "worker_report", {"params": {"worker": worker, "text": text[:290], "busy": busy,
+                                                         "machine": cfg.get("machine_id", "")}}, timeout=20)
         except Exception as e:
             lab.log(f"could not report: {e}")
 
@@ -89,6 +90,7 @@ def shift(worker: str) -> int:
     if res.get("is_error") or not summary:
         say("Shift ended without a result; see the run log on the server.", False)
         return 1
+    say(summary.splitlines()[-1][:280] if summary else "Round finished", False)   # closes the round on its timeline
     return 0
 
 

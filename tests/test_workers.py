@@ -47,3 +47,27 @@ def test_the_workflow_manager_never_works_in_the_labs_folder(tmp_path, monkeypat
     repo = wm.own_copy(cfg)
     assert str(repo).startswith(str(tmp_path / "state")) and "lab-working-folder" not in str(repo)
     assert all("lab-working-folder" not in c[0] for c in calls)
+
+
+disp = _load("dispatcher", "workers/dispatcher.py")
+
+
+def test_every_agent_has_a_brief_real_tools_and_no_dangerous_ones():
+    from core import studio
+    from ui.runtime import tools
+    served = set(tools.tool_names())
+    assert set(disp.TOOLS) == set(studio.KIND_AGENT.values())
+    forbidden = {"send_email", "proton_send_draft", "reddit_comment", "reddit_submit", "github_write_file"}
+    for agent, names in disp.TOOLS.items():
+        assert set(names) <= served, (agent, sorted(set(names) - served))
+        assert not (set(names) & forbidden) and not any(n.startswith(("ssh_", "docker_", "fs_", "proton_")) for n in names)
+        assert (ROOT / "workers" / "agents" / f"{agent}.md").is_file()
+    assert set(disp.ASK) == set(studio.KIND_AGENT)
+
+
+def test_the_prompt_carries_the_task_and_the_conversation():
+    task = {"id": 7, "agent": "manager", "kind": "chat", "job": "20261119_Video", "instruction": "make the hook shorter",
+            "thread": [{"role": "user", "agent": "", "text": "make the hook shorter"}]}
+    p = disp.build_prompt(task)
+    assert "# Channel Manager" in p and "20261119_Video" in p and "Owner: make the hook shorter" in p
+    assert "NOT REQUIRED:" in p

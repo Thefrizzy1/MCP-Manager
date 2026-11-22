@@ -23,73 +23,111 @@ from core.atomic_json import read_json, write_json
 ONLINE_WINDOW = 12 * 60          # a report every 5 minutes; two missed = offline
 
 # id -> label, what it is for, abilities as (text, state)
+# How an agent comes to work: "schedule" is a daily time it runs by itself,
+# "trigger" says in words what else starts it.
 WORKERS: dict[str, dict] = {
-    "researcher": {
-        "home": "nas", "model": "opus",
-        "label": "Researcher",
-        "about": "Watches the niche so ideas and scripts start from facts.",
+    "manager": {
+        "home": "nas", "model": "fable", "schedule": "06:30",
+        "label": "Channel Manager", "trigger": "When you write to it or add an idea",
+        "about": "The producer. Knows every video, hands work to the right agent, answers you.",
         "abilities": [
+            ("Answer you in the chat and delegate the work", "running"),
+            ("Set up a new idea: decide if it needs research, start the script", "running"),
+            ("File finished videos into the archive", "running"),
+            ("Put sponsor and review dates from mail into the calendar", "running"),
+            ("Morning page: what was done, numbers, weak spots", "planned"),
+        ],
+    },
+    "researcher": {
+        "home": "gpu-server", "model": "opus", "schedule": "04:30",
+        "label": "Researcher", "trigger": "When a video needs research",
+        "about": "Watches the niche and researches each video so scripts start from facts.",
+        "abilities": [
+            ("Research a video idea: facts, sources, angles", "running"),
             ("Spot new models and trends (Trend Radar)", "running"),
             ("Watch and transcribe new videos in the niche", "running"),
-            ("Track competitor channels and what works for them", "running"),
             ("Read Reddit and video comments for model requests", "running"),
             ("Write the daily research brief", "running"),
-            ("Find public workflows and note what they do well and badly", "planned"),
+        ],
+    },
+    "writer": {
+        "home": "gpu-server", "model": "opus", "schedule": "",
+        "label": "Writer", "trigger": "When research is done or a script is asked for",
+        "about": "Writes scripts in the channel's voice that are easy to read aloud.",
+        "abilities": [
+            ("Write the script with hook, structure and pacing", "running"),
+            ("Write the read-off version for filming", "running"),
+            ("Revise from your comments, keeping old versions", "running"),
+        ],
+    },
+    "editor": {
+        "home": "windows-pc", "model": "opus", "schedule": "",
+        "label": "Senior Editor", "trigger": "When you press Start edit",
+        "about": "Responsible for the whole cut and for what the other editors make.",
+        "abilities": [
+            ("Plan the cut: structure, takes, pacing, where graphics go", "running"),
+            ("Brief the Motion Graphics Artist", "running"),
+            ("Build and change the timeline in the editing program", "planned"),
+            ("Change one part of a cut without redoing the rest", "planned"),
+        ],
+    },
+    "motion": {
+        "home": "gpu-server", "model": "opus", "schedule": "",
+        "label": "Motion Graphics", "trigger": "When the Senior Editor asks for graphics",
+        "about": "Junior editor. Makes titles, lower thirds, diagrams and transitions.",
+        "abilities": [
+            ("List every graphic a video needs, with timing and text", "running"),
+            ("Render graphics with Remotion", "planned"),
+        ],
+    },
+    "thumbnail": {
+        "home": "windows-pc", "model": "opus", "schedule": "",
+        "label": "Thumbnail Maker", "trigger": "When a video has no thumbnail or you ask",
+        "about": "Designs thumbnails in the channel's style from frames and cutouts.",
+        "abilities": [
+            ("Thumbnail concepts with title pairings", "running"),
+            ("Render and revise thumbnails from your marks", "planned"),
+        ],
+    },
+    "shorts": {
+        "home": "windows-pc", "model": "opus", "schedule": "",
+        "label": "Shorts Editor", "trigger": "When a video is live and you press Make Shorts",
+        "about": "Finds the moments that work on their own and plans the vertical cuts.",
+        "abilities": [
+            ("Pick short-form moments from the published video", "running"),
+            ("Cut the vertical edits with captions", "planned"),
+        ],
+    },
+    "publisher": {
+        "home": "nas", "model": "opus", "schedule": "",
+        "label": "Publisher", "trigger": "When a cut is finished",
+        "about": "Gets finished work out, only with your OK.",
+        "abilities": [
+            ("Upload pack: titles, description, chapters, tags", "running"),
+            ("Upload and schedule on YouTube", "planned"),
+            ("Check what is live and track Shorts", "planned"),
         ],
     },
     "workflow_maker": {
-        "home": "gpu-server", "model": "opus",
-        "label": "Workflow Maker",
+        "home": "gpu-server", "model": "opus", "schedule": "",
+        "label": "Workflow Maker", "trigger": "When models are queued",
         "about": "Turns new models into tested ComfyUI workflows.",
         "abilities": [
             ("Build a workflow in the house style", "running"),
             ("Test on the GPU server and critique the result", "running"),
-            ("Second test on the 12 GB card", "planned"),
+            ("Second test on the 12 GB card", "ready"),
             ("Publish to GitHub and Hugging Face after your OK", "running"),
         ],
     },
     "workflow_manager": {
-        "home": "gpu-server", "model": "opus",
-        "label": "Workflow Manager",
+        "home": "gpu-server", "model": "opus", "schedule": "07:00",
+        "label": "Workflow Manager", "trigger": "",
         "about": "Keeps the published workflows healthy.",
         "abilities": [
             ("Check every download link and the repo's consistency", "running"),
             ("Watch open pull requests", "running"),
-            ("Notice a new ComfyUI version and line up re-tests", "running"),
-            ("Flag problems for you", "running"),
+            ("Notice a new ComfyUI version", "running"),
             ("Open the fix for a broken link or note by itself", "planned"),
-        ],
-    },
-    "editor": {
-        "home": "windows-pc", "model": "opus",
-        "label": "Editor",
-        "about": "Prepares the edit so filming is the only manual part.",
-        "abilities": [
-            ("Render motion graphics before filming", "planned"),
-            ("Record screen takes of workflow runs", "planned"),
-            ("Build the rough cut timeline", "planned"),
-            ("Cut Shorts from finished videos", "planned"),
-        ],
-    },
-    "manager": {
-        "home": "nas", "model": "fable",
-        "label": "YouTube Manager",
-        "about": "Keeps dates, mail and the daily picture in order.",
-        "abilities": [
-            ("File finished videos into the archive", "running"),
-            ("Put sponsor and review dates from mail into the calendar", "running"),
-            ("Draft replies to sponsor mail with rates and free slots", "planned"),
-            ("Morning page: what was done, numbers, weak spots", "planned"),
-        ],
-    },
-    "publisher": {
-        "home": "nas", "model": "opus",
-        "label": "Publisher",
-        "about": "Gets finished work out, only with your OK.",
-        "abilities": [
-            ("Upload pack: titles, description, chapters, thumbnails", "planned"),
-            ("Schedule the video and Shorts", "planned"),
-            ("Post to Reddit, CivitAI and socials", "planned"),
         ],
     },
 }
@@ -191,8 +229,9 @@ def set_schedule(root: Path, machine_id: str, schedule: dict) -> dict:
     return row
 
 
-def set_worker(root: Path, worker: str, model: str = "", home: str = "") -> None:
-    """Change which model a worker runs or which machine it lives on."""
+def set_worker(root: Path, worker: str, model: str = "", home: str = "",
+               schedule: str | None = None, enabled: bool | None = None) -> None:
+    """Change an agent's model, home machine, daily run time ('' = none) or switch it off."""
     if worker not in WORKERS:
         raise KeyError(f"unknown worker {worker!r}")
     data = _load(root)
@@ -202,6 +241,13 @@ def set_worker(root: Path, worker: str, model: str = "", home: str = "") -> None
         data["workers"][worker + ":model"] = model
     if home:
         data["workers"][worker + ":home"] = home[:60]
+    if schedule is not None:
+        import re
+        if schedule and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", schedule):
+            raise ValueError("schedule must be a time like 04:30, or empty")
+        data["workers"][worker + ":schedule"] = schedule
+    if enabled is not None:
+        data["workers"][worker + ":enabled"] = bool(enabled)
     write_json(_path(root), data)
 
 
@@ -247,25 +293,49 @@ def machines(root: Path, self_disk: str = "/") -> list[dict]:
     return rows
 
 
-def workers(root: Path, live: dict[str, dict] | None = None) -> list[dict]:
-    """Every worker with its abilities and what it is doing.
+def next_daily(at: str, now: float | None = None) -> int:
+    """Unix time of the next HH:MM (local), or 0 when there is no schedule."""
+    if not at:
+        return 0
+    now = now or time.time()
+    lt = time.localtime(now)
+    hh, mm = (int(x) for x in at.split(":"))
+    target = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+    return int(target if target > now else target + 86400)
 
-    ``live`` lets the caller pass activity it knows from elsewhere (the Trend
-    Radar's last run, the model lab's heartbeat) keyed by worker id.
+
+def workers(root: Path, live: dict[str, dict] | None = None,
+            states: dict[str, dict] | None = None) -> list[dict]:
+    """Every agent: abilities, schedule, what it is doing and on which machine.
+
+    ``states`` is the studio's view (running task, queue, last run) keyed by
+    agent; ``live`` is activity known from elsewhere (the lab's heartbeat).
     """
     data = _load(root)
     out = []
     for wid, spec in WORKERS.items():
+        st = (states or {}).get(wid) or {}
+        now_run = st.get("now") or {}
+        last = st.get("last") or {}
         act = (live or {}).get(wid) or data["workers"].get(wid) or {}
-        states = [s for _t, s in spec["abilities"]]
+        home = data["workers"].get(wid + ":home") or spec["home"]
+        busy = bool(now_run) or bool(act.get("busy"))
+        text = (f"{now_run.get('kind', '').replace('_', ' ')} · {now_run.get('job', '')[9:] or 'channel'}"
+                if now_run else act.get("text") or last.get("text", ""))
+        states_list = [s for _t, s in spec["abilities"]]
         out.append({
             "id": wid, "label": spec["label"], "about": spec["about"],
-            # Which machine it lives on and which model it runs; both can be changed per install.
-            "home": (data["workers"].get(wid + ":home") or spec["home"]),
-            "model": (data["workers"].get(wid + ":model") or spec["model"]),
             "abilities": [{"text": t, "state": s} for t, s in spec["abilities"]],
-            "active": any(s in ("running", "ready") for s in states),
-            "busy": bool(act.get("busy")), "text": act.get("text", ""), "ts": act.get("ts", 0),
-            "next": act.get("next", ""),
+            "active": any(s in ("running", "ready") for s in states_list),
+            "home": home, "at": (now_run.get("machine") or home) if busy else home,
+            "model": data["workers"].get(wid + ":model") or spec["model"],
+            "busy": busy, "text": text,
+            "since": now_run.get("started", 0),
+            "ts": max(act.get("ts", 0), last.get("finished", 0)),
+            "queued": st.get("queued", 0), "next": act.get("next", ""),
+            "schedule": data["workers"].get(wid + ":schedule", spec["schedule"]),
+            "next_run": next_daily(data["workers"].get(wid + ":schedule", spec["schedule"])),
+            "trigger": spec["trigger"],
+            "enabled": data["workers"].get(wid + ":enabled", True),
         })
     return out

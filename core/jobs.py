@@ -28,7 +28,7 @@ STAGE_LABELS = {
     "research": "Research", "script": "Script", "test": "Test", "film": "Film", "edit": "Edit",
     "packaging": "Packaging", "publish": "Publish", "shorts": "Shorts",
 }
-STATUSES = ("todo", "active", "done")
+STATUSES = ("todo", "active", "done", "skipped")
 
 _JOB_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})_(.+)$")
 _VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".mxf"}
@@ -197,20 +197,30 @@ def _stage_of_file(name: str) -> str | None:
 
 
 def _pick_thumbnails(upload: Path) -> list[str]:
-    """Thumbnail candidates in upload/, best guess first."""
+    """Thumbnail candidates in upload/ (and one folder below it, where drafts
+    are often kept), best guess first."""
+    imgs: list[tuple[str, os.DirEntry]] = []
     try:
-        imgs = [e for e in os.scandir(upload)
-                if e.is_file() and _visible(e.name) and Path(e.name).suffix.lower() in _IMAGE_EXT]
+        for e in os.scandir(upload):
+            if not _visible(e.name):
+                continue
+            if e.is_file() and Path(e.name).suffix.lower() in _IMAGE_EXT:
+                imgs.append((f"upload/{e.name}", e))
+            elif e.is_dir(follow_symlinks=False) and "thumb" in e.name.lower():
+                for f in os.scandir(e.path):
+                    if f.is_file() and _visible(f.name) and Path(f.name).suffix.lower() in _IMAGE_EXT:
+                        imgs.append((f"upload/{e.name}/{f.name}", f))
     except OSError:
         return []
 
-    def rank(e):
+    def rank(item):
+        rel, e = item
         low = e.name.lower()
         pri = (0 if low.startswith("thumbnail") else 1 if "fav" in low or "final" in low
                else 2 if low.startswith("thumb") else 3)
-        return (pri, -e.stat().st_mtime)
+        return (pri + (2 if rel.count("/") > 1 else 0), -e.stat().st_mtime)
 
-    return [f"upload/{e.name}" for e in sorted(imgs, key=rank)[:12]]
+    return [rel for rel, _e in sorted(imgs, key=rank)[:12]]
 
 
 _STOP = {"the", "a", "an", "of", "on", "in", "to", "for", "and", "vs", "my", "your", "i", "with",
@@ -392,7 +402,8 @@ def job_dirs(yt: Path) -> dict[str, tuple[Path, str]]:
 
 
 def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
-             where: str = "flat", label_rows: list[dict] | None = None) -> dict | None:
+             where: str = "flat", label_rows: list[dict] | None = None,
+             marks: dict[str, str] | None = None) -> dict | None:
     """Read one video folder into a job record. None if it is not a job folder."""
     m = _JOB_RE.match(folder.name)
     if not m or not folder.is_dir():
@@ -484,6 +495,8 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
             auto = "done" if signals.get(s) or later_evidence or signals["publish"] \
                 else "active" if has else "todo"
         status = overrides.get(s) if overrides.get(s) in STATUSES else auto
+        if s not in overrides and not has and (marks or {}).get(s) == "skipped":
+            status = "skipped"                    # found not required: crossed out, not in the way
         stages.append({
             "id": s, "label": STAGE_LABELS[s], "status": status, "auto": auto,
             "manual": s in overrides, "files": e["files"],
@@ -494,7 +507,7 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
             later_evidence = later_evidence or has
     stages.reverse()
 
-    current = next((s["id"] for s in stages if s["status"] != "done"), "done")
+    current = next((s["id"] for s in stages if s["status"] not in ("done", "skipped")), "done")
     last_activity = max([s["last"] or 0 for s in stages] + [0])
     if not last_activity:
         try:
@@ -552,13 +565,16 @@ def list_jobs(root: Path, *, force: bool = False) -> dict:
         if yt.is_dir():
             state = load_state(root)
             dirs = job_dirs(yt)
+            from core import studio                   # here, not at import: studio builds on jobs
+            marks = studio.stage_marks(root)
             label_rows = labels(root)
             names = sorted(dirs, reverse=True)
             matches = _all_matches(root, dirs)
             _cache["matches"] = matches
             _cache["dirs"] = dirs
             for name in names:
-                job = scan_job(dirs[name][0], state, matches.get(name), dirs[name][1], label_rows)
+                job = scan_job(dirs[name][0], state, matches.get(name), dirs[name][1], label_rows,
+                               marks.get(name))
                 if job:
                     jobs.append(job)
         _cache.update(ts=now, root=str(yt), jobs=jobs)
@@ -575,7 +591,9 @@ def get_job(root: Path, job_id: str) -> dict | None:
     if "matches" not in _cache or _cache["root"] != str(youtube_root()):
         list_jobs(root, force=True)
     where = (_cache.get("dirs") or {}).get(job_id, (None, "flat"))[1]
-    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id), where, labels(root))
+    from core import studio
+    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id), where, labels(root),
+                    studio.stage_marks(root).get(job_id))
 
 
 def job_folder(job_id: str) -> Path | None:
@@ -695,3 +713,99 @@ def recent_activity(root: Path, job_id: str = "", limit: int = 50) -> list[dict]
     if job_id:
         rows = [r for r in rows if r.get("job") == job_id]
     return list(reversed(rows[-limit:]))
+
+
+# ── documents inside a video folder, and new video folders ───────────────────
+_DOC_DIRS = ("", "research", "upload", "shorts", "edit")
+_DOC_EXT = (".md", ".txt", ".json", ".srt")
+
+
+def create_job(title: str, idea: str = "") -> str:
+    """Make the folder for a new video and write the idea into it. Returns the job id."""
+    clean = re.sub(r"[\\/:*?\"<>|\r\n]+", " ", title).strip(" .")[:70]
+    if not clean:
+        raise ValueError("a title is required")
+    yt = youtube_root()
+    parent = yt / OPEN_DIR if (yt / OPEN_DIR).is_dir() else yt
+    name = f"{date.today():%Y%m%d}_{clean}"
+    if name in job_dirs(yt):
+        raise FileExistsError(f"a video folder named {name} already exists")
+    folder = parent / name
+    try:
+        folder.mkdir()
+        if idea.strip():
+            (folder / "IDEA.md").write_text(f"# {clean}\n\n{idea.strip()}\n", encoding="utf-8")
+    except OSError as e:
+        raise PermissionError(f"could not create the video folder: {e.strerror or e}") from e
+    _cache["ts"] = 0.0
+    return name
+
+
+def _doc_path(job_id: str, rel: str) -> Path:
+    folder = job_folder(job_id)
+    if not folder:
+        raise KeyError(f"no video folder named {job_id!r}")
+    rel = rel.strip().replace("\\", "/").lstrip("/")
+    parts = rel.split("/")
+    if len(parts) > 2 or (len(parts) == 2 and parts[0] not in _DOC_DIRS) or ".." in parts \
+            or Path(rel).suffix.lower() not in _DOC_EXT or not parts[-1]:
+        raise ValueError("a document is a .md/.txt/.json/.srt file in the video folder or in its "
+                         "research, upload, shorts or edit folder")
+    return folder / rel
+
+
+def read_doc(job_id: str, rel: str, limit: int = 200_000) -> str:
+    path = _doc_path(job_id, rel)
+    if not path.is_file():
+        raise FileNotFoundError(f"{rel} does not exist in {job_id}")
+    return path.read_text(encoding="utf-8", errors="replace")[:limit]
+
+
+def write_doc(job_id: str, rel: str, text: str) -> dict:
+    """Write a document into a video folder. An existing file is never
+    overwritten: it moves to ``_old`` with a timestamp first."""
+    path = _doc_path(job_id, rel)
+    kept = ""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file():
+            old_dir = path.parent / "_old"
+            old_dir.mkdir(exist_ok=True)
+            kept_path = old_dir / f"{path.stem}_old_{time.strftime('%Y%m%d_%H%M%S')}{path.suffix}"
+            path.rename(kept_path)
+            kept = str(kept_path.relative_to(job_folder(job_id)))
+        path.write_text(text, encoding="utf-8")
+    except OSError as e:
+        raise PermissionError(f"could not write {rel}: {e.strerror or e}") from e
+    _cache["ts"] = 0.0
+    return {"written": rel, "previous_kept_as": kept, "bytes": len(text.encode("utf-8"))}
+
+
+def library_path(rel: str = "") -> Path:
+    """A path inside the shared library (00_Library), refusing anything outside it."""
+    base = (youtube_root() / "00_Library").resolve()
+    target = (base / rel.strip().lstrip("/")).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError("outside the library")
+    return target
+
+
+def library_list(rel: str = "") -> list[dict]:
+    target = library_path(rel)
+    if not target.is_dir():
+        raise FileNotFoundError(f"no library folder {rel!r}")
+    base = library_path()
+    out = []
+    for e in sorted(os.scandir(target), key=lambda e: (not e.is_dir(), e.name.lower())):
+        if e.name.startswith("."):
+            continue
+        out.append({"name": e.name, "rel": str(Path(e.path).relative_to(base)), "dir": e.is_dir(),
+                    "size": 0 if e.is_dir() else e.stat().st_size})
+    return out[:300]
+
+
+def library_read(rel: str, limit: int = 120_000) -> str:
+    target = library_path(rel)
+    if not target.is_file() or target.suffix.lower() not in _TEXT_EXT:
+        raise FileNotFoundError(f"{rel} is not a text file in the library")
+    return target.read_text(encoding="utf-8", errors="replace")[:limit]

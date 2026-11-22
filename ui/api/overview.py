@@ -6,7 +6,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from core import calendar_feed, fleet, jobs, lab_board
+from core import calendar_feed, fleet, jobs, lab_board, studio
 from core import trend_radar as tr
 from tools.jobs import sync_uploads
 from ui.api.deps import verify_auth
@@ -51,7 +51,7 @@ async def api_v1_overview():
     events = await _events()
     return {
         "machines": fleet.machines(ROOT, str(jobs.youtube_root()) if jobs.youtube_root().is_dir() else "/"),
-        "workers": fleet.workers(ROOT, _live_workers()),
+        "workers": fleet.workers(ROOT, _live_workers(), studio.agent_states(ROOT)),
         "models": list(fleet.MODELS),
         "calendar": {"path": f"/calendar/{calendar_feed.token(ROOT)}.ics", "events": len(events),
                      "upcoming": [e for e in events if e["date"] >= _today()][:12]},
@@ -89,13 +89,15 @@ class WorkerBody(BaseModel):
     worker: str = Field(..., max_length=40)
     model: str = Field(default="", max_length=20)
     home: str = Field(default="", max_length=60)
+    schedule: str | None = Field(default=None, max_length=5)
+    enabled: bool | None = None
 
 
 @router.post("/api/v1/overview/worker")
 async def api_v1_overview_worker(body: WorkerBody):
     """Change a worker's model or the machine it lives on."""
     try:
-        fleet.set_worker(ROOT, body.worker, body.model, body.home)
+        fleet.set_worker(ROOT, body.worker, body.model, body.home, body.schedule, body.enabled)
     except KeyError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:

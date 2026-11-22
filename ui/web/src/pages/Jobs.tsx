@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, ArchiveRestore, ChevronRight, File, Folder, Pin, RefreshCw, ChevronUp } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronRight, File, Folder, Pin, Plus, RefreshCw, ChevronUp } from 'lucide-react'
 import { api } from '@/lib/api'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -9,8 +9,10 @@ import { Drawer } from '@/components/ui/Drawer'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/cn'
+import { navigate } from '@/lib/router'
+import { Modal } from '@/components/ui/Modal'
 
-type Status = 'todo' | 'active' | 'done'
+type Status = 'todo' | 'active' | 'done' | 'skipped'
 interface Stage {
   id: string
   label: string
@@ -43,6 +45,8 @@ interface Job {
   thumbnail: string
   youtube_thumbnail: string
   label: string
+  actions: { id: string; label: string; route?: string }[]
+  tasks: { id: number; kind: string; agent: string; status: string; reason: string; blocked: boolean }[]
   published: { id: string; title: string; date: string; views: number | null } | null
 }
 interface Activity {
@@ -78,6 +82,17 @@ interface Detail {
   activity: Activity[]
 }
 
+const AGENT_NAME: Record<string, string> = {
+  manager: 'Channel Manager',
+  researcher: 'Researcher',
+  writer: 'Writer',
+  editor: 'Senior Editor',
+  motion: 'Motion Graphics',
+  thumbnail: 'Thumbnail Maker',
+  shorts: 'Shorts Editor',
+  publisher: 'Publisher',
+}
+
 /** One colour per stage, the same everywhere on the page. */
 const STAGE_COLOR: Record<string, string> = {
   research: 'var(--room-slate)',
@@ -102,6 +117,7 @@ function Stepper({ job }: { job: Job }) {
         const current = s.id === job.current
         // The first stage that is not finished: coloured once work on it has started,
         // light grey while it is only ready to be picked up.
+        const skipped = s.status === 'skipped'
         const started = current && s.status === 'active'
         const ready = current && s.status === 'todo'
         const color = STAGE_COLOR[s.id]
@@ -110,7 +126,7 @@ function Stepper({ job }: { job: Job }) {
           <div
             key={s.id}
             role="listitem"
-            title={`${s.label}: ${s.status === 'done' ? 'done' : started ? 'working on it' : ready ? 'ready to start' : s.status === 'active' ? 'started' : 'not started'}`}
+            title={`${s.label}: ${skipped ? 'not needed for this video' : s.status === 'done' ? 'done' : started ? 'working on it' : ready ? 'ready to start' : s.status === 'active' ? 'started' : 'not started'}`}
             className="relative flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium"
             style={{
               marginLeft: first ? 0 : -7,
@@ -126,7 +142,8 @@ function Stepper({ job }: { job: Job }) {
                     : s.status === 'active'
                       ? `color-mix(in srgb, ${color} 14%, var(--surface-2))`
                       : 'var(--surface-hover)',
-              color: started ? '#fff' : ready ? '#2C2C2A' : s.status === 'todo' ? 'var(--ink-3)' : 'var(--ink)',
+              color: started ? '#fff' : ready ? '#2C2C2A' : s.status === 'todo' || skipped ? 'var(--ink-3)' : 'var(--ink)',
+              textDecoration: skipped ? 'line-through' : undefined,
             }}
           >
             <span className="truncate px-3">
@@ -140,7 +157,17 @@ function Stepper({ job }: { job: Job }) {
   )
 }
 
-function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetails: (id: string) => void }) {
+function JobRow({
+  job,
+  labels,
+  onDetails,
+  onAction,
+}: {
+  job: Job
+  labels: Label[]
+  onDetails: (id: string) => void
+  onAction: (job: Job, action: Job['actions'][number]) => void
+}) {
   const label = labels.find((l) => l.id === job.label)
   const [open, setOpen] = useState(false)
   return (
@@ -187,6 +214,22 @@ function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetai
               </div>
             )}
             {job.note && <div className="text-ink">{job.note}</div>}
+            {job.tasks.map((t) => (
+              <div key={t.id} className={t.status === 'failed' || t.blocked ? 'text-danger' : 'text-ink'}>
+                {AGENT_NAME[t.agent] ?? t.agent}:{' '}
+                {t.blocked ? 'blocked by a failed step' : t.status === 'running' ? `working on ${t.kind.replace('_', ' ')}` : t.status === 'failed' ? `${t.kind.replace('_', ' ')} failed. ${t.reason}` : `${t.kind.replace('_', ' ')} is next in line`}
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {job.actions.map((a) => (
+                <Button key={a.id} size="sm" variant="primary" onClick={() => onAction(job, a)}>
+                  {a.label}
+                </Button>
+              ))}
+              <Button size="sm" onClick={() => navigate(`chat?job=${encodeURIComponent(job.id)}`)}>
+                Talk about it
+              </Button>
+            </div>
             <Button size="sm" onClick={() => onDetails(job.id)}>
               Files, thumbnails and settings
             </Button>
@@ -416,6 +459,34 @@ export function Jobs() {
   const [open, setOpen] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [filter, setFilter] = useState<string | null>(null) // null = all, '' = unlabelled
+  const [adding, setAdding] = useState(false)
+  const [idea, setIdea] = useState('')
+  const [title, setTitle] = useState('')
+  const toast = useToast()
+
+  async function act(job: Job, a: Job['actions'][number]) {
+    if (a.route) return navigate(`${a.route}?job=${encodeURIComponent(job.id)}`)
+    try {
+      await api.post('/api/v1/studio/action', { job: job.id, action: a.id })
+      toast.success(`${a.label}: handed to the team.`)
+      qc.setQueryData(['jobs'], await api.get<Board>('/api/v1/jobs?refresh=1'))
+    } catch (e) {
+      toast.error(String(e))
+    }
+  }
+
+  async function addIdea() {
+    try {
+      const r = await api.post<{ job: string }>('/api/v1/studio/idea', { idea, title })
+      setAdding(false)
+      setIdea('')
+      setTitle('')
+      qc.setQueryData(['jobs'], await api.get<Board>('/api/v1/jobs?refresh=1'))
+      navigate(`chat?job=${encodeURIComponent(r.job)}`)
+    } catch (e) {
+      toast.error(String(e))
+    }
+  }
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['jobs'],
@@ -442,6 +513,9 @@ export function Jobs() {
         title="YouTube Studio"
                 actions={
           <>
+            <Button size="sm" variant="primary" onClick={() => setAdding(true)}>
+              <Plus size={14} /> Add an idea
+            </Button>
             <Button size="sm" onClick={rescan} disabled={refreshing}>
               <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Rescan
             </Button>
@@ -481,7 +555,7 @@ export function Jobs() {
               {active.length === 0 ? (
                 <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing in progress.</p>
               ) : (
-                shown(active).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} />)
+                shown(active).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} onAction={act} />)
               )}
             </Card>
 
@@ -496,7 +570,7 @@ export function Jobs() {
                 <span className="text-[13px] font-semibold text-ink">Archive</span>
                 <span className="text-[12px] text-ink-3">{archived.length}</span>
               </button>
-              {showArchived && shown(archived).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} />)}
+              {showArchived && shown(archived).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} onAction={act} />)}
             </Card>
 
             {data.activity.length > 0 && (
@@ -515,6 +589,31 @@ export function Jobs() {
         )}
       </PageBody>
       {open && <JobDrawer id={open} onClose={() => setOpen(null)} />}
+      {adding && (
+        <Modal open onClose={() => setAdding(false)} title="Add an idea">
+          <div className="space-y-3">
+            <textarea
+              autoFocus
+              value={idea}
+              onChange={(e) => setIdea(e.target.value)}
+              placeholder="Describe the video in your own words. The Channel Manager sets up the rest."
+              className="h-40 w-full rounded-[var(--radius-sm)] border border-border-strong bg-surface p-3 text-[14px] text-ink"
+            />
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Working title (optional)"
+              className="h-9 w-full rounded-[var(--radius-sm)] border border-border-strong bg-surface px-3 text-[13px] text-ink"
+            />
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setAdding(false)}>Cancel</Button>
+              <Button variant="primary" disabled={idea.trim().length < 5} onClick={addIdea}>
+                Start
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   )
 }

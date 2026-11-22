@@ -11,6 +11,10 @@ const PROPS: Record<string, [number, number, string][]> = {
   editor: [[5, 9, 'TETET'], [6, 9, 'ETETE'], [7, 9, 'TTTTT'], [8, 9, 'TTTTT']], // clapperboard
   manager: [[4, 10, 'DD'], [5, 9, 'TTTT'], [6, 9, 'TEET'], [7, 9, 'TTTT'], [8, 9, 'TEET'], [9, 9, 'TTTT']], // clipboard
   workflow_manager: [[4, 9, 'T.T'], [5, 9, 'TTT'], [6, 10, 'T'], [7, 10, 'T'], [8, 10, 'T'], [9, 10, 'D']], // wrench
+  writer: [[4, 12, 'D'], [5, 11, 'T'], [6, 10, 'T'], [7, 9, 'EEEE'], [8, 9, 'EDDE'], [9, 9, 'EEEE']], // pen over paper
+  motion: [[4, 11, 'T'], [5, 10, 'TTT'], [6, 9, 'TTTTT'], [7, 10, 'TTT'], [8, 11, 'T'], [9, 11, 'D']], // star on a wand
+  thumbnail: [[5, 9, 'DDDDD'], [6, 9, 'DTTED'], [7, 9, 'DTETD'], [8, 9, 'DETTD'], [9, 9, 'DDDDD']], // picture frame
+  shorts: [[4, 10, 'DDD'], [5, 10, 'DTD'], [6, 10, 'DED'], [7, 10, 'DTD'], [8, 10, 'DTD'], [9, 10, 'DDD']], // phone, upright
   publisher: [[5, 11, 'TT'], [6, 9, 'TTTT'], [7, 9, 'TTTT'], [8, 11, 'TT'], [6, 13, 'E'], [7, 13, 'E']], // megaphone
 }
 /** body, dark, light tint per worker */
@@ -19,7 +23,11 @@ export const WORKER_RAMP: Record<string, [string, string, string]> = {
   workflow_maker: ['#7F77DD', '#3C3489', '#AFA9EC'],
   editor: ['#D85A30', '#712B13', '#F0997B'],
   manager: ['#BA7517', '#633806', '#EF9F27'],
-  workflow_manager: ['#D4537E', '#72243E', '#ED93B1'],
+  workflow_manager: ['#E24B4A', '#791F1F', '#F09595'],
+  writer: ['#639922', '#27500A', '#97C459'],
+  motion: ['#D4537E', '#72243E', '#ED93B1'],
+  thumbnail: ['#C9A227', '#6B5410', '#EBD46A'],
+  shorts: ['#2AA7B8', '#0E4F58', '#7FD3DE'],
   publisher: ['#1D9E75', '#085041', '#5DCAA5'],
 }
 const GRAY: [string, string, string] = ['#888780', '#444441', '#B4B2A9']
