@@ -311,12 +311,12 @@ def match_uploads(candidates: list[dict], videos: list[dict]) -> dict[str, dict]
     return out
 
 
-def _all_matches(root: Path, yt: Path, names: list[str]) -> dict[str, dict]:
+def _all_matches(root: Path, dirs: dict[str, tuple[Path, str]]) -> dict[str, dict]:
     videos = load_uploads(root)["videos"]
     if not videos:
         return {}
     cands = []
-    for name in names:
+    for name, (path, _where) in dirs.items():
         m = _JOB_RE.match(name)
         if not m:
             continue
@@ -325,11 +325,51 @@ def _all_matches(root: Path, yt: Path, names: list[str]) -> dict[str, dict]:
         except ValueError:
             continue
         cands.append({"id": name, "start": start, "title": m[4].replace("_", " "),
-                      "pack": _pack_text(yt / name)})
+                      "pack": _pack_text(path)})
     return match_uploads(cands, videos)
 
 
-def scan_job(folder: Path, state: dict | None = None, video: dict | None = None) -> dict | None:
+OPEN_DIR, ARCHIVE_DIR = "01_Open_Jobs", "02_Archive"
+
+
+def job_dirs(yt: Path) -> dict[str, tuple[Path, str]]:
+    """Every job folder by name, with where it sits: flat, open or archive.
+
+    Two layouts are understood. Flat: dated folders directly in the root. Sorted:
+    ``01_Open_Jobs/<job>`` and ``02_Archive/<year>/<month>/<job>`` (a job directly
+    under the year also counts). Anything else, such as a library or a misc
+    folder, is not a job wherever it has a date in its name.
+    """
+    out: dict[str, tuple[Path, str]] = {}
+
+    def take(parent: Path, where: str) -> None:
+        try:
+            for e in os.scandir(parent):
+                if e.is_dir(follow_symlinks=False) and _JOB_RE.match(e.name):
+                    out.setdefault(e.name, (Path(e.path), where))
+        except OSError:
+            pass
+
+    take(yt / OPEN_DIR, "open")
+    arch = yt / ARCHIVE_DIR
+    try:
+        years = [e for e in os.scandir(arch) if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        years = []
+    for y in years:
+        take(Path(y.path), "archive")
+        try:
+            for m in os.scandir(y.path):
+                if m.is_dir(follow_symlinks=False) and not _JOB_RE.match(m.name):
+                    take(Path(m.path), "archive")
+        except OSError:
+            pass
+    take(yt, "flat")
+    return out
+
+
+def scan_job(folder: Path, state: dict | None = None, video: dict | None = None,
+             where: str = "flat") -> dict | None:
     """Read one video folder into a job record. None if it is not a job folder."""
     m = _JOB_RE.match(folder.name)
     if not m or not folder.is_dir():
@@ -440,11 +480,18 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None)
             last_activity = 0
     idle_days = int((time.time() - last_activity) / 86400) if last_activity else None
 
-    archived = st.get("archived")
-    if archived is None:        # automatic: finished, or untouched for a month
-        archived = current == "done" or (idle_days is not None and idle_days > ARCHIVE_AFTER_DAYS)
-    if st.get("pinned"):
-        archived = False
+    # What the rules say, wherever the folder sits: finished, or untouched for a month.
+    should_archive = current == "done" or (idle_days is not None and idle_days > ARCHIVE_AFTER_DAYS)
+    if where == "archive":      # sorted layout: the folder's place is the answer
+        archived = True
+    elif where == "open":
+        archived = bool(st.get("archived"))
+    else:
+        archived = st.get("archived")
+        if archived is None:
+            archived = should_archive
+        if st.get("pinned"):
+            archived = False
 
     return {
         "id": folder.name, "title": st.get("title") or title,
@@ -454,6 +501,7 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None)
         "stages": stages, "current": current,
         "last_activity": last_activity or None, "idle_days": idle_days,
         "archived": bool(archived), "archived_manual": st.get("archived") is not None,
+        "where": where, "should_archive": bool(should_archive) and where == "open",
         "pinned": bool(st.get("pinned")),
         "deadline": st.get("deadline") or "", "note": st.get("note") or "",
         "publish_url": publish_url,
@@ -479,14 +527,13 @@ def list_jobs(root: Path, *, force: bool = False) -> dict:
         jobs = []
         if yt.is_dir():
             state = load_state(root)
-            try:
-                names = sorted(os.listdir(yt), reverse=True)
-            except OSError:
-                names = []
-            matches = _all_matches(root, yt, names)
+            dirs = job_dirs(yt)
+            names = sorted(dirs, reverse=True)
+            matches = _all_matches(root, dirs)
             _cache["matches"] = matches
+            _cache["dirs"] = dirs
             for name in names:
-                job = scan_job(yt / name, state, matches.get(name))
+                job = scan_job(dirs[name][0], state, matches.get(name), dirs[name][1])
                 if job:
                     jobs.append(job)
         _cache.update(ts=now, root=str(yt), jobs=jobs)
@@ -502,7 +549,8 @@ def get_job(root: Path, job_id: str) -> dict | None:
         return None
     if "matches" not in _cache or _cache["root"] != str(youtube_root()):
         list_jobs(root, force=True)
-    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id))
+    where = (_cache.get("dirs") or {}).get(job_id, (None, "flat"))[1]
+    return scan_job(folder, load_state(root), (_cache.get("matches") or {}).get(job_id), where)
 
 
 def job_folder(job_id: str) -> Path | None:
@@ -510,8 +558,11 @@ def job_folder(job_id: str) -> Path | None:
     if not job_id or "/" in job_id or "\\" in job_id or job_id in (".", "..") \
             or not _JOB_RE.match(job_id):
         return None
-    folder = youtube_root() / job_id
-    return folder if folder.is_dir() else None
+    hit = (_cache.get("dirs") or {}).get(job_id) if _cache.get("root") == str(youtube_root()) else None
+    if hit and hit[0].is_dir():
+        return hit[0]
+    hit = job_dirs(youtube_root()).get(job_id)       # not scanned yet, or it was just moved
+    return hit[0] if hit else None
 
 
 def resolve_file(job_id: str, rel: str) -> Path | None:

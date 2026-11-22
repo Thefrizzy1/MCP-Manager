@@ -95,12 +95,13 @@ const dayLabel = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
 /** The pipeline as arrows: finished stages tinted, the current one solid, the rest empty. */
-function Stepper({ job }: { job: Job }) {
+function Stepper({ job, tint }: { job: Job; tint?: string }) {
   return (
     <div className="flex min-w-0 flex-1" role="list" aria-label={`Stages of ${job.title}`}>
       {job.stages.map((s, i) => {
         const current = s.id === job.current
-        const color = STAGE_COLOR[s.id]
+        // A labelled video wears its label's colour across the whole bar.
+        const color = tint ?? STAGE_COLOR[s.id]
         const first = i === 0
         return (
           <div
@@ -143,7 +144,6 @@ function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetai
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-hover"
-        style={{ boxShadow: label ? `inset 4px 0 0 ${label.color}` : undefined }}
         title={label ? label.name : undefined}
       >
         <ChevronRight size={14} className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
@@ -160,15 +160,9 @@ function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetai
         )}
         <div className="w-[200px] shrink-0">
           <div className="truncate text-[13px] font-semibold text-ink">{job.title}</div>
-          {label && (
-            <div className="flex items-center gap-1 text-[11px]" style={{ color: label.color }}>
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: label.color }} />
-              {label.name}
-            </div>
-          )}
           {job.deadline && <div className="text-[11px] text-danger">due {job.deadline.slice(5)}</div>}
         </div>
-        <Stepper job={job} />
+        <Stepper job={job} tint={label?.color} />
       </button>
       {open && (
         <div className="border-t border-border bg-surface-2 px-4 py-3 pl-[52px]">

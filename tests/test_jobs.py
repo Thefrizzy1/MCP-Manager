@@ -110,3 +110,22 @@ def test_labels_tag_videos_and_sponsored_folders_label_themselves(yt):
     assert [x["id"] for x in jobs.labels(yt)] == ["model", "tutorial"]
     with pytest.raises(ValueError):
         jobs.save_labels(yt, [{"name": "Bad", "color": "purple"}])
+
+
+def test_the_sorted_layout_is_read_and_place_decides_archive(tmp_path, monkeypatch):
+    root = tmp_path / "yt"
+    (root / "01_Open_Jobs" / "20261119_Open one" / "edit").mkdir(parents=True)
+    (root / "01_Open_Jobs" / "20261119_Open one" / "SCRIPT.md").write_text("s")
+    (root / "02_Archive" / "2026" / "10" / "20261014_Old one").mkdir(parents=True)
+    (root / "02_Archive" / "2025" / "20250507_Directly under the year").mkdir(parents=True)
+    (root / "03_Miscs" / "20261105_Bang Shorts").mkdir(parents=True)
+    (root / "00_Library").mkdir()
+    (root / "20261120_Still flat").mkdir()
+    monkeypatch.setenv("YOUTUBE_ROOT", str(root))
+    jobs._cache.update(ts=0.0, root="")
+    by = {j["id"]: j for j in jobs.list_jobs(tmp_path, force=True)["jobs"]}
+    assert set(by) == {"20261119_Open one", "20261014_Old one", "20250507_Directly under the year", "20261120_Still flat"}
+    assert by["20261119_Open one"]["where"] == "open" and by["20261119_Open one"]["archived"] is False
+    assert by["20261014_Old one"]["archived"] is True and by["20250507_Directly under the year"]["archived"] is True
+    assert jobs.resolve_file("20261119_Open one", "SCRIPT.md") is not None
+    assert jobs.job_folder("20261105_Bang Shorts") is None          # misc is not a job
