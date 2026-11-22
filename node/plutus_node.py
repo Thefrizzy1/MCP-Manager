@@ -47,8 +47,20 @@ DEFAULTS = {
     "idle_minutes": 15,                 # no input for this long before a power-off is allowed
     "poll_seconds": 30,
     "disk_path": "",
+    "name": "",                         # display name on the Overview
+    "role": "",                         # one sentence: what this machine is for
+    "can": [],                          # what it can do, as short lines
+    "form": "",                         # how it is drawn: "server" or "laptop"
 }
 WIN = platform.system() == "Windows"
+MAC = platform.system() == "Darwin"
+
+
+def _sysctl(key: str) -> str:
+    try:
+        return subprocess.run(["sysctl", "-n", key], capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def load_config() -> dict:
@@ -89,6 +101,9 @@ def plutus(cfg: dict, tool: str, args: dict | None = None, timeout: int = 40) ->
 
 # ── this machine ─────────────────────────────────────────────────────────────
 def gpu_now() -> dict:
+    if MAC:                                         # Apple silicon: the chip is the GPU, memory is shared
+        chip = _sysctl("machdep.cpu.brand_string")
+        return {"gpu": chip} if chip else {}
     try:
         out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
                               "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=15).stdout
@@ -114,6 +129,8 @@ def ram_gb() -> int:
             ms.dwLength = ctypes.sizeof(MS)
             ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(ms))
             return round(ms.ullTotalPhys / 1e9)
+        if MAC:
+            return round(int(_sysctl("hw.memsize")) / 1024 ** 3)
         with open("/proc/meminfo") as fh:
             return round(int(next(l for l in fh if l.startswith("MemTotal:")).split()[1]) / 1e6)
     except Exception:
@@ -125,6 +142,8 @@ def boot_ts() -> int:
         if WIN:
             import ctypes
             return int(time.time() - ctypes.windll.kernel32.GetTickCount64() / 1000)
+        if MAC:
+            return int(re.search(r"sec = (\d+)", _sysctl("kern.boottime")).group(1))
         with open("/proc/uptime") as fh:
             return int(time.time() - float(fh.read().split()[0]))
     except Exception:
@@ -160,6 +179,13 @@ def lan_mac(cfg: dict) -> str:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect((host, 9))
             ip = sock.getsockname()[0]
+        if MAC:
+            out = subprocess.run(["ifconfig"], capture_output=True, text=True, timeout=10).stdout
+            for block in re.split(r"\n(?=\S)", out):
+                if f"inet {ip} " in block:
+                    m = re.search(r"ether ([0-9a-f:]{17})", block)
+                    if m:
+                        return m.group(1).upper()
         if WIN:
             out = subprocess.run(["powershell", "-NoProfile", "-Command",
                                   f"(Get-NetIPAddress -IPAddress {ip} | Get-NetAdapter).MacAddress"],
@@ -387,9 +413,15 @@ def tick(cfg: dict, doing: str = "") -> str:
 def main() -> int:
     cfg = load_config()
     once = len(sys.argv) > 1 and sys.argv[1] == "once"
-    log(f"node {cfg['machine']} -> {cfg['plutus_mcp']} (does: {', '.join(cfg['kinds'])})")
+    log(f"node {cfg['machine']} -> {cfg['plutus_mcp']} (does: {', '.join(cfg['kinds']) or 'reporting only'})")
+    described = False
     while True:
         try:
+            if not described and cfg["report"] and (cfg["name"] or cfg["role"] or cfg["can"] or cfg["form"]):
+                plutus(cfg, "machine_report", {"machine": cfg["machine"], "name": cfg["name"], "role": cfg["role"],
+                                               "can_json": json.dumps(cfg["can"]) if cfg["can"] else "",
+                                               "form": cfg["form"]})
+                described = True
             state = tick(cfg)
         except Exception as e:
             state = "error"

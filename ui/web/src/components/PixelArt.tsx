@@ -89,3 +89,40 @@ export function PixelServer({ x, y, on, busy, fans }: { x: number; y: number; on
     </g>
   )
 }
+
+const LAPTOP_OPEN = [
+  '..DDDDDDDDDDDD..', '..DSSSSSSSSSSD..', '..DSSSSSSSSSSD..', '..DSSSSSSSSSSD..', '..DSSSSSSSSSSD..', '..DSSSSSSSSSSD..',
+  '..DSSSSSSSSSSD..', '..DDDDDDDDDDDD..', '.BBBBBBBBBBBBBB.', 'BBKKKKKKKKKKKKBB', 'BBBBBBTTTTBBBBBB', 'DDDDDDDDDDDDDDDD',
+]
+const LAPTOP_CLOSED = [
+  '................', '................', '................', '................', '................', '................',
+  '................', '................', '................', '.DDDDDDDDDDDDDD.', 'BBBBBBBBBBBBBBBB', 'DDDDDDDDDDDDDDDD',
+]
+
+/** A laptop: lid open with a lit screen when it is on, lid shut when it is off. */
+export function PixelLaptop({ x, y, on, busy }: { x: number; y: number; on: boolean; busy: boolean }) {
+  const s = 6
+  const rows = on ? LAPTOP_OPEN : LAPTOP_CLOSED
+  return (
+    <g shapeRendering="crispEdges" opacity={on ? 1 : 0.6}>
+      {rows.flatMap((row, ry) =>
+        row.split('').map((ch, rx) => {
+          if (ch === '.') return null
+          const fill =
+            ch === 'D' ? '#444441' : ch === 'S' ? (busy ? '#AFA9EC' : '#85B7EB') : ch === 'K' ? '#5F5E5A' : ch === 'T' ? '#B4B2A9' : on ? '#888780' : '#B4B2A9'
+          return (
+            <rect key={`${rx}-${ry}`} x={x + rx * s} y={y + ry * s} width={s} height={s} fill={fill}
+              className={ch === 'S' && busy && (rx + ry) % 3 === 0 ? 'px-led on' : undefined} />
+          )
+        }),
+      )}
+      {on && (
+        <g>
+          {[[4, 2, 5], [4, 4, 7], [4, 6, 4]].map(([cx, cy, w]) => (
+            <rect key={cy} x={x + cx * s} y={y + cy * s + 1} width={w * s} height={3} fill="#F1EFE8" opacity={0.85} />
+          ))}
+        </g>
+      )}
+    </g>
+  )
+}

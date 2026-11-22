@@ -7,7 +7,7 @@ import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Drawer } from '@/components/ui/Drawer'
 import { useToast } from '@/components/ui/Toast'
-import { PixelRobot, PixelServer, WORKER_RAMP } from '@/components/PixelArt'
+import { PixelLaptop, PixelRobot, PixelServer, WORKER_RAMP } from '@/components/PixelArt'
 import { cn } from '@/lib/cn'
 
 interface Schedule {
@@ -29,6 +29,7 @@ interface Machine {
   doing?: string
   next?: string
   schedule?: Schedule
+  form?: 'server' | 'laptop'
   specs?: {
     cores?: number
     ram_gb?: number
@@ -94,16 +95,20 @@ function FleetMap({ data, onMachine, onWorker }: { data: Data; onMachine: (id: s
         const s = m.specs ?? {}
         const line = !m.online
           ? m.seen
-            ? `off · last seen ${ago(m.seen)}`
+            ? `${m.form === 'laptop' ? 'closed' : 'off'} · last seen ${ago(m.seen)}`
             : 'off · not connected yet'
           : working
             ? clip(m.doing!, 32)
-            : [s.gpu ? `${s.vram_gb} GB GPU` : s.cores ? `${s.cores} cores` : '', s.disk_free_gb != null ? `${s.disk_free_gb} GB free` : ''].filter(Boolean).join(' · ') || 'idle'
+            : [s.gpu && s.vram_gb ? `${s.vram_gb} GB GPU` : s.gpu ? s.gpu : s.cores ? `${s.cores} cores` : '', s.disk_free_gb != null ? `${s.disk_free_gb} GB free` : ''].filter(Boolean).join(' · ') || 'idle'
         return (
           <g key={m.id}>
             <g role="button" tabIndex={0} className="cursor-pointer" onClick={() => onMachine(m.id)} onKeyDown={(e) => e.key === 'Enter' && onMachine(m.id)}>
               <rect x={i * COL + 8} y={4} width={COL - 16} height={150} rx={10} fill="transparent" />
-              <PixelServer x={cx - 48} y={22} on={m.online} busy={working} fans={s.gpu ? 2 : 1} />
+              {m.form === 'laptop' ? (
+                <PixelLaptop x={cx - 48} y={22} on={m.online} busy={working} />
+              ) : (
+                <PixelServer x={cx - 48} y={22} on={m.online} busy={working} fans={s.gpu ? 2 : 1} />
+              )}
               <text x={cx} y={118} textAnchor="middle" style={{ fill: 'var(--ink)', fontSize: 14, fontWeight: 600 }}>
                 {clip(m.name, 26)}
               </text>

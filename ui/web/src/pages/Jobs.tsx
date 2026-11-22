@@ -95,37 +95,42 @@ const dayLabel = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
 /** The pipeline as arrows: finished stages tinted, the current one solid, the rest empty. */
-function Stepper({ job, tint }: { job: Job; tint?: string }) {
+function Stepper({ job }: { job: Job }) {
   return (
     <div className="flex min-w-0 flex-1" role="list" aria-label={`Stages of ${job.title}`}>
       {job.stages.map((s, i) => {
         const current = s.id === job.current
-        // A labelled video wears its label's colour across the whole bar.
-        const color = tint ?? STAGE_COLOR[s.id]
+        // The first stage that is not finished: coloured once work on it has started,
+        // light grey while it is only ready to be picked up.
+        const started = current && s.status === 'active'
+        const ready = current && s.status === 'todo'
+        const color = STAGE_COLOR[s.id]
         const first = i === 0
         return (
           <div
             key={s.id}
             role="listitem"
-            title={`${s.label}: ${s.status === 'done' ? 'done' : current ? 'working on it' : s.status === 'active' ? 'started' : 'not started'}`}
+            title={`${s.label}: ${s.status === 'done' ? 'done' : started ? 'working on it' : ready ? 'ready to start' : s.status === 'active' ? 'started' : 'not started'}`}
             className="relative flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium"
             style={{
               marginLeft: first ? 0 : -7,
               clipPath: first
                 ? 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)'
                 : 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)',
-              background: current
+              background: started
                 ? color
-                : s.status === 'done'
-                  ? `color-mix(in srgb, ${color} 30%, var(--surface))`
-                  : s.status === 'active'
-                    ? `color-mix(in srgb, ${color} 14%, var(--surface-2))`
-                    : 'var(--surface-hover)',
-              color: current ? '#fff' : s.status === 'todo' ? 'var(--ink-3)' : 'var(--ink)',
+                : ready
+                  ? '#D3D1C7'
+                  : s.status === 'done'
+                    ? `color-mix(in srgb, ${color} 30%, var(--surface))`
+                    : s.status === 'active'
+                      ? `color-mix(in srgb, ${color} 14%, var(--surface-2))`
+                      : 'var(--surface-hover)',
+              color: started ? '#fff' : ready ? '#2C2C2A' : s.status === 'todo' ? 'var(--ink-3)' : 'var(--ink)',
             }}
           >
             <span className="truncate px-3">
-              {s.status === 'done' && !current ? '✓ ' : ''}
+              {s.status === 'done' ? '✓ ' : ''}
               {s.label}
             </span>
           </div>
@@ -143,10 +148,12 @@ function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetai
       <button
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-hover"
+        className={cn('flex w-full items-center gap-3 px-3 py-2.5 text-left', label ? 'hover:brightness-110' : 'hover:bg-surface-hover')}
+        // A labelled video's whole row is its label's colour.
+        style={label ? { background: label.color } : undefined}
         title={label ? label.name : undefined}
       >
-        <ChevronRight size={14} className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
+        <ChevronRight size={14} className={cn('shrink-0 transition-transform', label ? 'text-white/80' : 'text-ink-3', open && 'rotate-90')} />
         {job.youtube_thumbnail || job.thumbnail ? (
           <img
             src={job.youtube_thumbnail || fileUrl(job.id, job.thumbnail)}
@@ -159,10 +166,12 @@ function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetai
           <div className="h-9 w-16 shrink-0 rounded-[4px] bg-surface-hover" />
         )}
         <div className="w-[200px] shrink-0">
-          <div className="truncate text-[13px] font-semibold text-ink">{job.title}</div>
-          {job.deadline && <div className="text-[11px] text-danger">due {job.deadline.slice(5)}</div>}
+          <div className={cn('truncate text-[13px] font-semibold', label ? 'text-white' : 'text-ink')}>{job.title}</div>
+          {job.deadline && (
+            <div className={cn('text-[11px]', label ? 'font-semibold text-white' : 'text-danger')}>due {job.deadline.slice(5)}</div>
+          )}
         </div>
-        <Stepper job={job} tint={label?.color} />
+        <Stepper job={job} />
       </button>
       {open && (
         <div className="border-t border-border bg-surface-2 px-4 py-3 pl-[52px]">

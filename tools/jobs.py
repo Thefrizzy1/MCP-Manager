@@ -315,6 +315,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         name: str = Field(default="", description="Display name (first report or to rename)")
         role: str = Field(default="", description="What the machine is for, one sentence")
         can_json: str = Field(default="", description="JSON list of what it can do, when describing the machine", max_length=2000)
+        form: str = Field(default="", description="How to draw it: server or laptop")
 
     @mcp.tool(name="machine_report", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def machine_report(params: MachineInput) -> str:
@@ -325,10 +326,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         describes the machine.
         """
         try:
-            if params.name or params.role or params.can_json:
+            if params.name or params.role or params.can_json or params.form:
                 can = _json.loads(params.can_json) if params.can_json else None
                 fleet.register_machine(_ROOT, params.machine, params.name, params.role,
-                                       can if isinstance(can, list) else None)
+                                       can if isinstance(can, list) else None, params.form)
             if params.specs_json or params.doing or params.next_up:
                 specs = _json.loads(params.specs_json) if params.specs_json else None
                 fleet.report_machine(_ROOT, params.machine, specs if isinstance(specs, dict) else None,

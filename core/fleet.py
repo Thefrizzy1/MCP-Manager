@@ -94,8 +94,11 @@ def _load(root: Path) -> dict:
     return data
 
 
+FORMS = ("server", "laptop")
+
+
 def register_machine(root: Path, machine_id: str, name: str = "", role: str = "",
-                     can: list[str] | None = None) -> dict:
+                     can: list[str] | None = None, form: str = "") -> dict:
     """Add or describe a machine: what it is called, what it is for, what it can do."""
     mid = (machine_id or "").strip().lower()
     if not mid:
@@ -108,6 +111,8 @@ def register_machine(root: Path, machine_id: str, name: str = "", role: str = ""
         row["role"] = role[:200]
     if can is not None:
         row["can"] = [str(c)[:120] for c in can][:12]
+    if form in FORMS:
+        row["form"] = form                       # how it is drawn: a rack unit or a laptop
     row.setdefault("name", mid)
     data["machines"][mid] = row
     write_json(_path(root), data)
