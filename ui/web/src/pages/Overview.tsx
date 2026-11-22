@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Copy } from 'lucide-react'
@@ -397,7 +398,7 @@ export function Overview() {
   }
   async function copy() {
     try {
-      await navigator.clipboard.writeText(feed)
+      if (!(await copyText(feed))) throw new Error('copy failed')
       toast.success('Calendar link copied.')
     } catch {
       toast.error('Could not copy. Select the link and copy it by hand.')

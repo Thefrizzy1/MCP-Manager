@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard'
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check, CircleCheck, Copy, Cpu, TriangleAlert } from 'lucide-react'
@@ -26,7 +27,7 @@ function EndpointBar({ url }: { url: string }) {
       <button
         aria-label="Copy MCP endpoint"
         onClick={() => {
-          navigator.clipboard?.writeText(url)
+          copyText(url)
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         }}

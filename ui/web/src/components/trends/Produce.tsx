@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard'
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Clapperboard, Download, Film, Mic, Moon, Package, Plus, Power, RefreshCw, Trash2, Upload } from 'lucide-react'
@@ -343,10 +344,10 @@ function Editor({ id, jobs, renderOk, onDeleted }: { id: number; jobs: Record<st
       <Card>
         <CardHeader title="Scripts" subtitle="Copy to the PC, or download the whole package above." />
         <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
-          <Section title="script.md (StudioForge)" action={<Button size="sm" variant="ghost" onClick={() => navigator.clipboard?.writeText(p.script_md ?? '').then(() => toast.success('Copied'))}>Copy</Button>}>
+          <Section title="script.md (StudioForge)" action={<Button size="sm" variant="ghost" onClick={() => copyText(p.script_md ?? '').then(() => toast.success('Copied'))}>Copy</Button>}>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] text-ink">{p.script_md}</pre>
           </Section>
-          <Section title="VibeVoice script" action={<Button size="sm" variant="ghost" onClick={() => navigator.clipboard?.writeText(q.data?.voice_script ?? '').then(() => toast.success('Copied'))}>Copy</Button>}>
+          <Section title="VibeVoice script" action={<Button size="sm" variant="ghost" onClick={() => copyText(q.data?.voice_script ?? '').then(() => toast.success('Copied'))}>Copy</Button>}>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-surface-2 p-3 text-[11.5px] text-ink">{q.data?.voice_script}</pre>
           </Section>
         </div>

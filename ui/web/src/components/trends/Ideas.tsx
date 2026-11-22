@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard'
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Archive, ChevronDown, ChevronRight, Copy, Image as ImageIcon, Lightbulb, Star, Clapperboard, Upload } from 'lucide-react'
@@ -147,7 +148,7 @@ function CopyBlock({ label, text }: { label: string; text?: string }) {
         <Button
           size="sm"
           variant="ghost"
-          onClick={() => navigator.clipboard?.writeText(text).then(() => toast.success('Copied'), () => toast.error('Copy failed'))}
+          onClick={() => copyText(text).then((ok) => (ok ? toast.success('Copied') : toast.error('Copy failed')))}
         >
           <Copy size={12} /> Copy
         </Button>

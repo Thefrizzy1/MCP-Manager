@@ -1,3 +1,4 @@
+import { copyText } from '@/lib/clipboard'
 import { useState } from 'react'
 import { Check, X, Loader2, Plus } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -72,7 +73,7 @@ function Cmd({ label, cmd, tone = 'muted' }: { label: string; cmd: string; tone?
         <button
           className="ml-auto rounded px-1.5 py-0.5 text-[11px] text-ink-3 hover:bg-surface-hover"
           onClick={() => {
-            navigator.clipboard?.writeText(cmd)
+            copyText(cmd)
             setCopied(true)
             setTimeout(() => setCopied(false), 1500)
           }}
