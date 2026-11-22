@@ -338,9 +338,14 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return f"Error: {e}"
         return f"✓ {params.machine} noted."
 
+    @mcp.tool(name="worker_settings", annotations={"readOnlyHint": True})
+    async def worker_settings() -> str:
+        """Every worker as JSON: id, label, model, home machine. A worker's runner reads its model here."""
+        return _json.dumps([{k: w[k] for k in ("id", "label", "model", "home")} for w in fleet.workers(_ROOT)])
+
     class WorkerInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-        worker: str = Field(..., description="researcher, workflow_maker, editor, manager or publisher")
+        worker: str = Field(..., description="researcher, workflow_maker, workflow_manager, editor, manager or publisher")
         text: str = Field(..., description="What it is doing or just finished, one sentence", max_length=300)
         busy: bool = Field(default=True, description="true while working, false when reporting it is done")
 

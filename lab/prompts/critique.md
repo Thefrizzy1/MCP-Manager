@@ -10,6 +10,9 @@ Check, in this order:
    Broken means: black or grey frames, pure noise, a frozen clip, heavy artefacts, missing
    audio where the model makes audio, or an output that ignores the prompt. It does not have
    to be perfect; it must not be broken.
+   Also open `samples/workflow.png`: it must be a real screenshot of the graph in ComfyUI with
+   readable groups and notes. A diagram drawn from the JSON, a cut-off picture, or any node
+   outlined in red is an issue.
 2. **Is it easy to use?** Would a beginner know what to change? Are all inputs in group 1
    with titles that say what to put there? Is anything they must touch hidden later?
 3. **Are the notes correct?** Compare every file name, folder, step count, resolution and
@@ -24,4 +27,4 @@ Write `{{RUN_DIR}}/review.json`:
   "issues": ["<specific, fixable: file, what is wrong, what it should be>"],
   "lessons": ["<only what would help on other workflows>"]}`
 Pass only if 1, 3, 4 and 5 are clean. Usability nits alone do not fail it; list them.
-Context you may ignore: {{COMFY_URL}} {{COMFY_DIR}} {{MODELS_DIR}} {{INPUTS_DIR}} {{LESSONS}} {{MANIFEST}} {{ASSIGNMENT}} {{MAX_GB}} {{ISSUES}} {{SLUG}}
+Context you may ignore: {{COMFY_URL}} {{COMFY_DIR}} {{MODELS_DIR}} {{INPUTS_DIR}} {{LESSONS}} {{MANIFEST}} {{ASSIGNMENT}} {{MAX_GB}} {{ISSUES}} {{SLUG}} {{SHOT}}

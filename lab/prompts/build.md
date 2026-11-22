@@ -55,9 +55,14 @@ whether the model passed is decided after the critique, not by you. Put the same
 6. Look at the outputs yourself (read the image, or extract frames from a video with
    ffmpeg and read them). A black frame, noise, a frozen clip or missing audio is a
    failure even when ComfyUI reports success. Fix and rerun.
-7. Write the folder: json, README.md, changelog.md, downloads.md, models.json, samples.
+7. Take the workflow picture. `samples/workflow.png` must be a real screenshot of the graph in
+   ComfyUI, not a drawing you render from the JSON. Run, while the models are still on disk:
+   `{{SHOT}} <the workflow .json> <folder>/samples/workflow.png`
+   For a folder with several workflow files, name the others `workflow-<name>.png`. Open the
+   picture and check the groups, input titles and notes are readable and nothing is cut off.
+8. Write the folder: json, README.md, changelog.md, downloads.md, models.json, samples.
    Add the row to the root README. Run `python scripts/check_repo.py` and fix what it reports.
-8. If you learned something that will matter on other nights, add one line to `{{LESSONS}}`.
+9. If you learned something that will matter on other nights, add one line to `{{LESSONS}}`.
 
 ## Finish
 Write `{{RUN_DIR}}/result.json`:

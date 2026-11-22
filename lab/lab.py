@@ -47,7 +47,8 @@ DEFAULTS = {
     "min_free_gb": 60,
     "task_timeout_min": 150,
     "critique_timeout_min": 25,
-    "fix_rounds": 2,            # how often a failed critique may send the work back
+    "fix_rounds": 2,
+    "shot_python": "",          # python with playwright, for real screenshots of the graph; "" = none            # how often a failed critique may send the work back
     "night_hours": 7,           # stop starting new models after this long
     "max_tasks": 20,
     "machine_id": "gpu-server",
@@ -486,6 +487,8 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
         MANIFEST=HERE / "inputs" / "manifest.json", ASSIGNMENT=json.dumps(assignment),
         MAX_GB=int(shutil.disk_usage(cfg["models_dir"]).free / 1e9 - 20), ISSUES="none",
         SLUG=slug or "(choose one: lowercase-with-dashes, the Trend Radar slug when it has one)",
+        SHOT=(f"{cfg['shot_python']} {HERE / 'shot.py'} http://127.0.0.1:{cfg['comfy_port']}"
+              if cfg["shot_python"] else "(no screenshot tool on this machine: say so in not_verified)"),
     )
     comfy = start_comfy(cfg, run_dir)
     try:

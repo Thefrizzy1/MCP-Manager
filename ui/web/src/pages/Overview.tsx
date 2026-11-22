@@ -117,14 +117,14 @@ function FleetMap({ data, onMachine, onWorker }: { data: Data; onMachine: (id: s
               </text>
             </g>
             {team.map((w, k) => {
-              const rx = cx + (k - (team.length - 1) / 2) * 78
+              const rx = cx + (k - (team.length - 1) / 2) * (team.length > 3 ? 62 : 78)
               return (
                 <g key={w.id} role="button" tabIndex={0} className="cursor-pointer" onClick={() => onWorker(w.id)} onKeyDown={(e) => e.key === 'Enter' && onWorker(w.id)}>
                   <line x1={rx} y1={146} x2={rx} y2={164} stroke="var(--border-strong)" strokeDasharray="2 3" />
                   <rect x={rx - 38} y={164} width={76} height={120} rx={8} fill="transparent" />
                   <PixelRobot kind={w.id} x={rx - 30} y={170} px={5} active={w.active} busy={w.busy} />
                   <text x={rx} y={248} textAnchor="middle" style={{ fill: w.active ? 'var(--ink)' : 'var(--ink-3)', fontSize: 12, fontWeight: 600 }}>
-                    {w.label}
+                    {w.label.replace(' Manager', ' Mgr').replace('Workflow Maker', 'Maker')}
                   </text>
                   <text x={rx} y={264} textAnchor="middle" style={{ fill: w.busy ? (WORKER_RAMP[w.id]?.[0] ?? 'var(--accent)') : 'var(--ink-3)', fontSize: 11 }}>
                     {!w.active ? 'not set up' : w.busy ? 'working' : 'idle'}

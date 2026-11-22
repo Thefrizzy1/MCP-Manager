@@ -54,7 +54,7 @@ def test_sessions_never_get_the_tokens(monkeypatch):
 
 def test_prompts_render_with_every_placeholder_filled():
     keys = ("DATE RUN_DIR REPO MODELS_DIR INPUTS_DIR COMFY_URL COMFY_DIR STYLE LESSONS "
-            "MANIFEST ASSIGNMENT MAX_GB ISSUES SLUG").split()
+            "MANIFEST ASSIGNMENT MAX_GB ISSUES SLUG SHOT").split()
     values = {k: k.lower() for k in keys}
     for name in ("build.md", "critique.md"):
         assert "{{" not in lab.render(name, **values)

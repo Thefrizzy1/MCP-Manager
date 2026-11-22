@@ -30,9 +30,10 @@ WORKERS: dict[str, dict] = {
         "about": "Watches the niche so ideas and scripts start from facts.",
         "abilities": [
             ("Spot new models and trends (Trend Radar)", "running"),
-            ("Watch and transcribe videos in the niche", "ready"),
-            ("Track competitor channels and what works for them", "ready"),
-            ("Read Reddit and video comments for requests", "ready"),
+            ("Watch and transcribe new videos in the niche", "running"),
+            ("Track competitor channels and what works for them", "running"),
+            ("Read Reddit and video comments for model requests", "running"),
+            ("Write the daily research brief", "running"),
             ("Find public workflows and note what they do well and badly", "planned"),
         ],
     },
@@ -45,6 +46,18 @@ WORKERS: dict[str, dict] = {
             ("Test on the GPU server and critique the result", "running"),
             ("Second test on the 12 GB card", "planned"),
             ("Publish to GitHub and Hugging Face after your OK", "running"),
+        ],
+    },
+    "workflow_manager": {
+        "home": "gpu-server", "model": "opus",
+        "label": "Workflow Manager",
+        "about": "Keeps the published workflows healthy.",
+        "abilities": [
+            ("Check every download link and the repo's consistency", "running"),
+            ("Watch open pull requests", "running"),
+            ("Notice a new ComfyUI version and line up re-tests", "running"),
+            ("Flag problems for you", "running"),
+            ("Open the fix for a broken link or note by itself", "planned"),
         ],
     },
     "editor": {
@@ -60,11 +73,11 @@ WORKERS: dict[str, dict] = {
     },
     "manager": {
         "home": "nas", "model": "fable",
-        "label": "Manager",
+        "label": "YouTube Manager",
         "about": "Keeps dates, mail and the daily picture in order.",
         "abilities": [
             ("File finished videos into the archive", "running"),
-            ("Keep the calendar: planned dates and reviews from mail", "planned"),
+            ("Put sponsor and review dates from mail into the calendar", "running"),
             ("Draft replies to sponsor mail with rates and free slots", "planned"),
             ("Morning page: what was done, numbers, weak spots", "planned"),
         ],

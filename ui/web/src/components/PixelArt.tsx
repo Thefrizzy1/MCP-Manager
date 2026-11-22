@@ -10,6 +10,7 @@ const PROPS: Record<string, [number, number, string][]> = {
   workflow_maker: [[5, 9, 'TTTTT'], [6, 9, 'TEEET'], [7, 9, 'TEEET'], [8, 9, 'TTTTT'], [9, 8, 'DDDDDD']], // laptop
   editor: [[5, 9, 'TETET'], [6, 9, 'ETETE'], [7, 9, 'TTTTT'], [8, 9, 'TTTTT']], // clapperboard
   manager: [[4, 10, 'DD'], [5, 9, 'TTTT'], [6, 9, 'TEET'], [7, 9, 'TTTT'], [8, 9, 'TEET'], [9, 9, 'TTTT']], // clipboard
+  workflow_manager: [[4, 9, 'T.T'], [5, 9, 'TTT'], [6, 10, 'T'], [7, 10, 'T'], [8, 10, 'T'], [9, 10, 'D']], // wrench
   publisher: [[5, 11, 'TT'], [6, 9, 'TTTT'], [7, 9, 'TTTT'], [8, 11, 'TT'], [6, 13, 'E'], [7, 13, 'E']], // megaphone
 }
 /** body, dark, light tint per worker */
@@ -18,6 +19,7 @@ export const WORKER_RAMP: Record<string, [string, string, string]> = {
   workflow_maker: ['#7F77DD', '#3C3489', '#AFA9EC'],
   editor: ['#D85A30', '#712B13', '#F0997B'],
   manager: ['#BA7517', '#633806', '#EF9F27'],
+  workflow_manager: ['#D4537E', '#72243E', '#ED93B1'],
   publisher: ['#1D9E75', '#085041', '#5DCAA5'],
 }
 const GRAY: [string, string, string] = ['#888780', '#444441', '#B4B2A9']
@@ -25,7 +27,7 @@ const GRAY: [string, string, string] = ['#888780', '#444441', '#B4B2A9']
 export function PixelRobot({ kind, x, y, px, active, busy }: { kind: string; x: number; y: number; px: number; active: boolean; busy: boolean }) {
   const c = active ? (WORKER_RAMP[kind] ?? GRAY) : GRAY
   const rows = BASE.map((r) => r.split(''))
-  for (const [row, col, str] of PROPS[kind] ?? []) str.split('').forEach((ch, k) => (rows[row][col + k] = ch))
+  for (const [row, col, str] of PROPS[kind] ?? []) str.split('').forEach((ch, k) => ch !== '.' && (rows[row][col + k] = ch))
   return (
     <g shapeRendering="crispEdges" opacity={active ? 1 : 0.55} className={busy ? 'px-bob' : undefined}>
       {rows.flatMap((r, ry) =>
