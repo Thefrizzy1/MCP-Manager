@@ -21,6 +21,7 @@ from ui.api import (
     health,
     jobs,
     models,
+    overview,
     permissions,
     profiles,
     providers,
@@ -42,6 +43,8 @@ _PUBLIC_ROUTERS = (
     # Only the OAuth callback: Google redirects the consenting browser there,
     # often on another origin (localhost), so no session cookie arrives with it.
     google.public_router,
+    # The calendar feed: a secret link, because calendar apps cannot sign in.
+    overview.public_router,
 )
 
 # Routers whose every route is guarded by verify_auth.
@@ -50,6 +53,7 @@ _AUTHED_ROUTERS = (
     files.router,
     jobs.router,
     models.router,
+    overview.router,
     permissions.router,
     health.router,
     connections.router,

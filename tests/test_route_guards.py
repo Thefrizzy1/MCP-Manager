@@ -23,6 +23,9 @@ PUBLIC_PATHS = {
     # Google's OAuth redirect. It finishes only a sign-in this process started
     # (matching `state`, PKCE verifier held server-side) — see ui/api/google.py.
     "/api/v1/google/callback",
+    # The calendar feed. Calendar apps cannot sign in, so the random token in
+    # the path is the key; a wrong token is a 404. See core/calendar_feed.py.
+    "/calendar/{token}.ics",
 }
 
 

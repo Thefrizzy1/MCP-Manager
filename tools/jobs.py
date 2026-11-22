@@ -278,3 +278,92 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         except ValueError as e:
             return f"Error: {e}"
         return f"✓ Queued {row['slug']}."
+
+    # ── Machines, workers and the calendar: how the platform sees its own fleet. ──
+    from core import calendar_feed, fleet
+
+    class MachineInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        machine: str = Field(..., description="Short id of the machine, e.g. gpu-server, windows-pc")
+        specs_json: str = Field(default="", description="JSON resources: cores, ram_gb, gpu, vram_gb, gpu_util, vram_used_gb, disk_free_gb, disk_total_gb, os, load", max_length=2000)
+        doing: str = Field(default="", description="What it is doing right now, in a few words; empty = idle", max_length=200)
+        next_up: str = Field(default="", description="What it is scheduled to do next", max_length=200)
+        name: str = Field(default="", description="Display name (first report or to rename)")
+        role: str = Field(default="", description="What the machine is for, one sentence")
+        can_json: str = Field(default="", description="JSON list of what it can do, when describing the machine", max_length=2000)
+
+    @mcp.tool(name="machine_report", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def machine_report(params: MachineInput) -> str:
+        """A machine reports in: its resources, what it is doing and what is next.
+
+        Shown on the Overview page. Send it every few minutes; a machine that
+        stops reporting shows as offline. With name/role/can_json it also
+        describes the machine.
+        """
+        try:
+            if params.name or params.role or params.can_json:
+                can = _json.loads(params.can_json) if params.can_json else None
+                fleet.register_machine(_ROOT, params.machine, params.name, params.role,
+                                       can if isinstance(can, list) else None)
+            if params.specs_json or params.doing or params.next_up:
+                specs = _json.loads(params.specs_json) if params.specs_json else None
+                fleet.report_machine(_ROOT, params.machine, specs if isinstance(specs, dict) else None,
+                                     params.doing, params.next_up)
+        except ValueError as e:
+            return f"Error: {e}"
+        return f"✓ {params.machine} noted."
+
+    class WorkerInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        worker: str = Field(..., description="researcher, workflow_maker, editor, manager or publisher")
+        text: str = Field(..., description="What it is doing or just finished, one sentence", max_length=300)
+        busy: bool = Field(default=True, description="true while working, false when reporting it is done")
+
+    @mcp.tool(name="worker_report", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def worker_report(params: WorkerInput) -> str:
+        """A worker says what it is working on, for the Overview page."""
+        try:
+            fleet.report_worker(_ROOT, params.worker, params.text, params.busy)
+        except KeyError as e:
+            return f"Error: {e}"
+        return "✓ Noted."
+
+    class EventInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        date: str = Field(..., description="Day of the entry, YYYY-MM-DD")
+        title: str = Field(..., description="Short title as it should read in the calendar", min_length=2, max_length=200)
+        description: str = Field(default="", description="Details: what is due, who it is for, what to prepare", max_length=3000)
+        link: str = Field(default="", description="Link to open from the entry (mail thread, document, video)")
+        kind: str = Field(default="other", description="publish, deadline, review, film, sponsor, workflow or other")
+        job: str = Field(default="", description="Video folder it belongs to, if any")
+        ref: str = Field(default="", description="Stable id so the same entry is updated rather than duplicated")
+
+    @mcp.tool(name="calendar_add_event", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def calendar_add_event(params: EventInput) -> str:
+        """Put a dated entry in the channel calendar (planned publish, script review, sponsor date).
+
+        Published videos, video deadlines and published workflows appear on
+        their own; add only what those do not cover. Reuse ``ref`` to move or
+        reword an entry.
+        """
+        try:
+            e = calendar_feed.add_event(_ROOT, params.date, params.title, params.description,
+                                        params.link, params.job, params.kind, params.ref)
+        except ValueError as ex:
+            return f"Error: {ex}"
+        return f"✓ {e['date']} {e['title']} (id {e['id']})"
+
+    class EventRemoveInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        event_id: str = Field(..., description="Id of an entry added with calendar_add_event")
+
+    @mcp.tool(name="calendar_remove_event", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def calendar_remove_event(params: EventRemoveInput) -> str:
+        """Remove an entry that was added by hand or by a worker."""
+        return "✓ Removed." if calendar_feed.remove_event(_ROOT, params.event_id) else "Error: no such entry."
+
+    @mcp.tool(name="calendar_events", annotations={"readOnlyHint": True})
+    async def calendar_events() -> str:
+        """The entries added to the channel calendar by hand or by workers, oldest first."""
+        rows = calendar_feed.custom_events(_ROOT)
+        return "\n".join(f"- {e['date']} [{e['kind']}] {e['title']} (id {e['id']})" for e in rows) or "No added entries."

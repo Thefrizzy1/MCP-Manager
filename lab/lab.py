@@ -16,6 +16,7 @@ The runner — not the model — owns every step that reaches outside:
     python3 lab.py preflight     check the machine is ready, change nothing
     python3 lab.py nightly       the whole night (what the timer runs)
     python3 lab.py approvals     carry out requests approved in the dashboard
+    python3 lab.py beat          report this machine's resources and activity (every few minutes)
     python3 lab.py cleanup DATE  delete what a run downloaded (also runs itself)
 """
 from __future__ import annotations
@@ -48,6 +49,7 @@ DEFAULTS = {
     "critique_timeout_min": 25,
     "night_hours": 7,           # stop starting new models after this long
     "max_tasks": 20,
+    "machine_id": "gpu-server",  # how this machine is named on the Overview page
     "hf_repo": "",              # Hugging Face mirror, e.g. "you/your-workflows"; "" = none
     "gpu_lock": ["gpu-lock", "lab"],
     # Succeeds only when the GPU is free; a busy GPU skips the night. [] = no check.
@@ -470,6 +472,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
     git(repo, "checkout", "-q", "-B", branch)
     (run_dir / "models_before.json").write_text(json.dumps(snapshot(Path(cfg["models_dir"]))))
     slug = assignment.get("slug", "")
+    (state / "current.json").write_text(json.dumps({"slug": slug, "model": assignment.get("model", "")}))
     tell(cfg, "Lab started on this model", slug, "testing" if slug else "", name=assignment.get("model", ""),
          server="testing")
     (state / "LESSONS.md").touch()
@@ -546,10 +549,54 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
         git(repo, "stash", "-u", "-m", f"lab {branch} paused at the usage limit", check=False)
         raise
     finally:
+        (state / "current.json").unlink(missing_ok=True)
         stop_comfy(comfy)
         out["cleanup"] = cleanup(cfg, run_dir)
         git(repo, "checkout", "-q", "main", check=False)
     return out
+
+
+def machine_specs(cfg: dict) -> dict:
+    """This machine's resources, read with standard tools. Missing tools just leave gaps."""
+    specs: dict = {"cores": os.cpu_count() or 0}
+    try:
+        with open("/proc/meminfo") as fh:
+            specs["ram_gb"] = round(int(next(l for l in fh if l.startswith("MemTotal:")).split()[1]) / 1e6)
+    except (OSError, StopIteration, ValueError):
+        pass
+    try:
+        du = shutil.disk_usage(cfg["models_dir"] if Path(cfg["models_dir"]).exists() else "/")
+        specs.update(disk_free_gb=round(du.free / 1e9), disk_total_gb=round(du.total / 1e9))
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,memory.used,utilization.gpu",
+                              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=15).stdout
+        name, total, used, util = [x.strip() for x in out.strip().splitlines()[0].split(",")]
+        specs.update(gpu=name.replace("NVIDIA ", ""), vram_gb=round(int(total) / 1024),
+                     vram_used_gb=round(int(used) / 1024, 1), gpu_util=int(util))
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        pass
+    return specs
+
+
+def beat(cfg: dict) -> None:
+    """Report this machine to the Overview page: resources, current work, what is next."""
+    state = Path(cfg["state_dir"])
+    cur = read_json(state / "current.json", {})
+    running = subprocess.run(["pgrep", "-f", "[l]ab.py nightly"], capture_output=True).returncode == 0
+    doing = f"Model lab: {cur.get('model') or cur.get('slug') or 'working'}" if running and cur else \
+        "Model lab: between models" if running else ""
+    nxt = ""
+    try:
+        rows = json.loads(plutus(cfg, "lab_list", timeout=20) or "[]")
+        queued = sum(1 for r in rows if r.get("status") == "queued")
+        nxt = f"{queued} model(s) queued for the lab" if queued else "Nothing queued"
+    except Exception:
+        pass
+    plutus(cfg, "machine_report", {"params": {"machine": cfg["machine_id"],
+                                              "specs_json": json.dumps(machine_specs(cfg)),
+                                              "doing": doing or " ", "next_up": nxt}}, timeout=20)
 
 
 def mark_published(cfg: dict, pr: str) -> None:
@@ -701,6 +748,9 @@ def main() -> int:
         return 0 if print_preflight(preflight(cfg)) else 1
     if cmd == "nightly":
         return nightly(cfg)
+    if cmd == "beat":
+        beat(cfg)
+        return 0
     if cmd == "approvals":
         print(process_approvals(cfg))
         return 0

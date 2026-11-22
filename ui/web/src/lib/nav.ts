@@ -1,6 +1,7 @@
 import {
   LayoutDashboard,
   Clapperboard,
+  LayoutGrid,
   Boxes,
   ScrollText,
   ShieldCheck,
@@ -24,6 +25,11 @@ export interface NavGroup {
 }
 
 export const NAV_GROUPS: NavGroup[] = [
+  {
+    // Machines, workers and the calendar at a glance.
+    label: 'Studio',
+    items: [{ id: 'overview', label: 'Overview', icon: LayoutGrid }],
+  },
   {
     // Everything about making and publishing videos.
     label: 'YouTube Studio',
