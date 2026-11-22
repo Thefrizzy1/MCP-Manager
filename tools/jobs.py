@@ -149,6 +149,26 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return f"Error: {e}"
         return "✓ Saved and read back.\n" + _line(j)
 
+    class OrganiseInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        dry_run: bool = Field(default=True, description="true = only list what would move; false = move what is allowed")
+
+    @mcp.tool(name="jobs_archive_finished", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def jobs_archive_finished(params: OrganiseInput) -> str:
+        """Move videos that are live into the archive (02_Archive/<year>/<month>).
+
+        A video is due once it is published and its Shorts are done, or it has
+        been live for two weeks. Runs by itself every half hour; call it to see
+        what is due or to run it now. Obeys the nas.archive_videos permission.
+        """
+        import asyncio
+        from core import organiser
+        await sync_uploads()
+        rows = await asyncio.to_thread(organiser.run, _ROOT, dry_run=params.dry_run)
+        if not rows:
+            return "Nothing is due for the archive."
+        return "\n".join(f"- {r['title']}: {r['result']} ({r['why']})" for r in rows)
+
     class LogInput(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
         text: str = Field(..., description="One sentence: what was finished", min_length=3, max_length=500)

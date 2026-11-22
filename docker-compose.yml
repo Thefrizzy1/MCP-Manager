@@ -68,8 +68,9 @@ services:
       # account under ./data, which is already persisted above.
 
       # ── Job board: one job per YYYYMMDD_Title folder ────────────────────────
-      # Mount the folder that holds your video project folders, read-only. Plutus
-      # never writes into it; job state lives in ./data.
+      # Mount the folder that holds your video project folders. Read-only (:ro) is
+      # enough for the board. Leave :ro off if the organiser should move finished
+      # videos from 01_Open_Jobs into 02_Archive; it only ever renames folders.
       # - /path/to/your/video/projects:/data/youtube:ro
 
       # ── Optional: expose host folders to the filesystem tools ──────────────

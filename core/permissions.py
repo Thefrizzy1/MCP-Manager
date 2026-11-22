@@ -32,6 +32,8 @@ ACTIONS: dict[str, tuple[str, str, str, str]] = {
                     "Push a lab/ branch to the workflows repo and open a draft PR."),
     "lab.merge_pr": ("Model lab", "Publish workflows (merge to main)", "ask",
                      "Merge a reviewed workflow PR so it is public on GitHub."),
+    "nas.archive_videos": ("Files", "Move finished videos to the archive", "ask",
+                           "Move a video folder from the open jobs into the archive once it is live. Nothing is deleted."),
     "email.create_draft": ("Email", "Write reply drafts", "allow",
                            "Save a drafted reply in the mailbox. Nothing is sent."),
     "email.send": ("Email", "Send email", "ask", "Send a message from your address."),

@@ -194,7 +194,7 @@ def test_every_service_tool_is_gated_not_just_the_carded_ones():
     # Studio edition: delegation and rooms are not served at all. The job board
     # is Plutus's own store (a state file beside the read-only NAS mount), so
     # like them it has no connection to tick.
-    assert set(ungated) <= {"jobs_board", "jobs_get", "jobs_update", "jobs_log",
+    assert set(ungated) <= {"jobs_board", "jobs_get", "jobs_update", "jobs_log", "jobs_archive_finished",
                             "studio_permissions", "studio_request_approval",
                             "studio_approval_done",
                             "lab_next", "lab_report", "lab_queue", "lab_list",

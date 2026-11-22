@@ -521,12 +521,16 @@ async def ui_lifespan(_app):
     loop_task = asyncio.create_task(
         beta_cache_background_loop(ROOT, lambda: tools.raw_manager, _services_live)
     )
+    from core import organiser
+    organiser_task = asyncio.create_task(organiser.loop(ROOT))
     agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled,
                           run_task=_run_task_bg, run_room=_run_room_bg)
     yield
     agent_scheduler.shutdown()
     loop_task.cancel()
-    try:
-        await loop_task
-    except asyncio.CancelledError:
-        pass
+    organiser_task.cancel()
+    for task in (loop_task, organiser_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass

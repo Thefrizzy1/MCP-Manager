@@ -59,6 +59,7 @@ WORKERS: dict[str, dict] = {
         "label": "Manager",
         "about": "Keeps dates, mail and the daily picture in order.",
         "abilities": [
+            ("File finished videos into the archive", "running"),
             ("Keep the calendar: planned dates and reviews from mail", "planned"),
             ("Draft replies to sponsor mail with rates and free slots", "planned"),
             ("Morning page: what was done, numbers, weak spots", "planned"),
