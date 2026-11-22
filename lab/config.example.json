@@ -9,6 +9,7 @@
   "inputs_dir": "/srv/lab/inputs",
   "state_dir": "/srv/lab/state",
   "hf_repo": "",
+  "second_test_machine": "",
   "night_hours": 7,
   "max_tasks": 20,
   "min_free_gb": 60,

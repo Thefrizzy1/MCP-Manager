@@ -124,8 +124,10 @@ def report_machine(root: Path, machine_id: str, specs: dict | None = None, doing
     row = data["machines"].get(mid) or {"id": mid, "name": mid}
     if specs:
         keep = ("cpu", "cores", "ram_gb", "gpu", "vram_gb", "gpu_util", "vram_used_gb",
-                "disk_free_gb", "disk_total_gb", "os", "load")
+                "disk_free_gb", "disk_total_gb", "os", "load", "mac", "boot_ts")
         row["specs"] = {k: specs[k] for k in keep if k in specs}
+        if specs.get("mac"):
+            row["mac"] = str(specs["mac"])[:17]      # remembered while it is off, to wake it
     row.update(doing=(doing or "").strip()[:200], next=(next_up or "").strip()[:200], seen=int(time.time()))
     data["machines"][mid] = row
     write_json(_path(root), data)

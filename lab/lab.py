@@ -49,7 +49,8 @@ DEFAULTS = {
     "critique_timeout_min": 25,
     "night_hours": 7,           # stop starting new models after this long
     "max_tasks": 20,
-    "machine_id": "gpu-server",  # how this machine is named on the Overview page
+    "machine_id": "gpu-server",
+    "second_test_machine": "",   # node that repeats the test on the smaller card, e.g. "windows-pc"; "" = none  # how this machine is named on the Overview page
     "hf_repo": "",              # Hugging Face mirror, e.g. "you/your-workflows"; "" = none
     "gpu_lock": ["gpu-lock", "lab"],
     # Succeeds only when the GPU is free; a busy GPU skips the night. [] = no check.
@@ -535,6 +536,10 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
                       "not_verified": "; ".join(result.get("not_verified") or [])[:400]}
             tell(cfg, "Workflow built and reviewed. Ready for you to check and publish.", slug, "built",
                  out["pr"], review=review, server="done")
+            note = queue_second_test(cfg, run_dir, repo, result, slug)
+            if note:
+                log(note)
+                out["second_test"] = note
             try:
                 if json.loads(gh(repo, "pr", "view", out["pr"], "--json", "state"))["state"] == "MERGED":
                     out["status"] = "published"
@@ -601,6 +606,36 @@ def beat(cfg: dict) -> None:
     plutus(cfg, "machine_report", {"params": {"machine": cfg["machine_id"],
                                               "specs_json": json.dumps(machine_specs(cfg)),
                                               "doing": doing or " ", "next_up": nxt}}, timeout=20)
+
+
+def queue_second_test(cfg: dict, run_dir: Path, repo: Path, result: dict, slug: str) -> str:
+    """Hand the same test to the second machine's node. Returns a note for the log."""
+    if not cfg["second_test_machine"] or not slug:
+        return ""
+    prompts = []
+    for f in sorted((run_dir / "final").glob("*.api.json"))[:6]:
+        try:
+            prompts.append({"name": f.name.removesuffix(".api.json"), "prompt": json.loads(f.read_text())})
+        except (OSError, ValueError):
+            continue
+    if not prompts:
+        return "no final/*.api.json prompts were saved, so the second test was not queued"
+    models = read_json(repo / str(result.get("folder") or "") / "models.json", {}).get("files") or []
+    blob = json.dumps(prompts)
+    try:
+        names = [p.name for p in Path(cfg["inputs_dir"]).iterdir() if p.is_file()]
+    except OSError:
+        names = []
+    inputs = [n for n in names if json.dumps(n)[1:-1] in blob]
+    payload = {"slug": slug, "prompts": prompts, "inputs": inputs,
+               "models": [{k: m.get(k) for k in ("name", "url", "dest", "required")} for m in models if m.get("url")]}
+    try:
+        plutus(cfg, "node_queue_job", {"params": {"machine": cfg["second_test_machine"], "kind": "comfy_test",
+                                                  "payload_json": json.dumps(payload), "ref": f"test-{slug}"}},
+               timeout=60)
+    except Exception as e:
+        return f"could not queue the second test: {e}"
+    return f"second test queued for {cfg['second_test_machine']} ({len(prompts)} prompt(s))"
 
 
 def mark_published(cfg: dict, pr: str) -> None:

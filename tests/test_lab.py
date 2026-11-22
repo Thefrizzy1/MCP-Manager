@@ -114,3 +114,24 @@ def test_models_without_a_builtin_template_are_not_attempted():
     for slug in ("mistral-large-4-1t", "deepseek-v4.1-flash-1017", "nvidia-nemotron-3.5-bolt"):
         assert not lab.has_template(names, {"slug": slug, "model": slug}), slug
     assert lab.has_template([], {"slug": "anything"})            # no index to check against
+
+
+def test_the_second_test_gets_the_same_prompts_models_and_inputs(tmp_path, monkeypatch):
+    run, repo, inputs = tmp_path / "run", tmp_path / "repo", tmp_path / "in"
+    (run / "final").mkdir(parents=True)
+    (repo / "workflows" / "x").mkdir(parents=True)
+    inputs.mkdir()
+    (inputs / "portrait.png").write_bytes(b"x")
+    (inputs / "unused.mp4").write_bytes(b"x")
+    (run / "final" / "t2i.api.json").write_text(json.dumps({"1": {"class_type": "LoadImage", "inputs": {"image": "portrait.png"}}}))
+    (repo / "workflows" / "x" / "models.json").write_text(json.dumps({"files": [
+        {"name": "m.safetensors", "url": "https://hf/m", "dest": "vae", "required": True, "note": "1 GB"}]}))
+    sent = {}
+    monkeypatch.setattr(lab, "plutus", lambda cfg, tool, args=None, timeout=60: sent.update(args["params"]) or "ok")
+    cfg = {"second_test_machine": "pc", "inputs_dir": str(inputs)}
+    note = lab.queue_second_test(cfg, run, repo, {"folder": "workflows/x"}, "sdxl")
+    payload = json.loads(sent["payload_json"])
+    assert "queued for pc" in note and sent["machine"] == "pc" and sent["ref"] == "test-sdxl"
+    assert payload["inputs"] == ["portrait.png"] and payload["models"][0]["name"] == "m.safetensors"
+    assert payload["prompts"][0]["name"] == "t2i"
+    assert lab.queue_second_test({"second_test_machine": "", "inputs_dir": ""}, run, repo, {}, "sdxl") == ""

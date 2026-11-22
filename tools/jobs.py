@@ -391,3 +391,69 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         """The entries added to the channel calendar by hand or by workers, oldest first."""
         rows = calendar_feed.custom_events(_ROOT)
         return "\n".join(f"- {e['date']} [{e['kind']}] {e['title']} (id {e['id']})" for e in rows) or "No added entries."
+
+    # ── Nodes: the small program on each machine asks for work and reports back. ──
+    from core import node_jobs
+
+    class NodeNextInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        machine: str = Field(..., description="The node's machine id, e.g. windows-pc")
+        kinds_json: str = Field(default="", description="JSON list of job kinds this node can do; empty = all")
+        boot_ts: int = Field(default=0, description="Unix time this machine was switched on")
+
+    @mcp.tool(name="node_next_job", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def node_next_job(params: NodeNextInput) -> str:
+        """A node asks what to do. Returns JSON: {"job": {...}} or {"job": null, "waiting": n, "may_power_off": bool}.
+
+        Jobs are only handed out inside the machine's work hours, or when the
+        server itself switched the machine on.
+        """
+        kinds = _json.loads(params.kinds_json) if params.kinds_json else None
+        return _json.dumps(node_jobs.next_for(_ROOT, params.machine, kinds if isinstance(kinds, list) else None,
+                                              params.boot_ts))
+
+    class NodeDoneInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        job_id: int = Field(..., description="Id of the job that was handed out")
+        ok: bool = Field(..., description="true if it worked")
+        result_json: str = Field(default="", description="JSON result of the job", max_length=20000)
+
+    @mcp.tool(name="node_job_done", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def node_job_done(params: NodeDoneInput) -> str:
+        """A node reports a finished job. A finished test on the second machine shows on the model's Test arrow."""
+        try:
+            result = _json.loads(params.result_json) if params.result_json else {}
+            job = node_jobs.finish(_ROOT, params.job_id, params.ok, result if isinstance(result, dict) else {})
+        except (KeyError, ValueError) as e:
+            return f"Error: {e}"
+        if job["kind"] == "comfy_test" and job["payload"].get("slug"):
+            runs = job["result"].get("runs") or []
+            good = [r for r in runs if r.get("ok")]
+            if params.ok and good:
+                text = (f"{len(good)} run(s) on {job['result'].get('gpu', 'the second card')}: slowest "
+                        f"{max(r.get('seconds', 0) for r in good):.0f} s, peak "
+                        f"{max(r.get('peak_vram_gb', 0) for r in good):.1f} GB")
+            else:
+                text = "Failed: " + str(job["result"].get("error") or next(
+                    (r.get("error") for r in runs if r.get("error")), "no run finished"))[:300]
+            lab_board.report(_ROOT, job["payload"]["slug"], text, gpu3060="done" if params.ok and good else "failed")
+        return "✓ Noted."
+
+    class NodeQueueInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        machine: str = Field(..., description="Machine that should do it, e.g. windows-pc")
+        kind: str = Field(..., description="comfy_test (run prompts on that machine's ComfyUI and measure) or wake")
+        payload_json: str = Field(default="", description="JSON payload of the job", max_length=400000)
+        ref: str = Field(default="", description="Stable reference so the same job is not queued twice")
+
+    @mcp.tool(name="node_queue_job", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def node_queue_job(params: NodeQueueInput) -> str:
+        """Queue work for a machine. It is done the next time that machine is on inside its work hours."""
+        try:
+            payload = _json.loads(params.payload_json) if params.payload_json else {}
+            job = node_jobs.add(_ROOT, params.machine, params.kind, payload if isinstance(payload, dict) else {}, params.ref)
+        except ValueError as e:
+            return f"Error: {e}"
+        if job["kind"] == "comfy_test" and job["payload"].get("slug"):
+            lab_board.report(_ROOT, job["payload"]["slug"], "Waiting for the second machine to be on", gpu3060="queued")
+        return f"✓ Queued job {job['id']} for {job['machine']}."

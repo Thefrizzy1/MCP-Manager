@@ -523,13 +523,16 @@ async def ui_lifespan(_app):
     )
     from core import organiser
     organiser_task = asyncio.create_task(organiser.loop(ROOT))
+    from core import node_jobs
+    wake_task = asyncio.create_task(node_jobs.loop(ROOT))
     agent_scheduler.start(run_agent=_run_agent_bg, run_tool=_run_tool_scheduled,
                           run_task=_run_task_bg, run_room=_run_room_bg)
     yield
     agent_scheduler.shutdown()
     loop_task.cancel()
     organiser_task.cancel()
-    for task in (loop_task, organiser_task):
+    wake_task.cancel()
+    for task in (loop_task, organiser_task, wake_task):
         try:
             await task
         except asyncio.CancelledError:

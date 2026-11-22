@@ -166,6 +166,7 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
                            approval queue. Only the dashboard can grant.
     fleet.py               Machines (they report in) and workers (roles + abilities).
     calendar_feed.py       The subscribable iCalendar feed and its added entries.
+    node_jobs.py           The queue of work for machines, work hours, wake planning.
     organiser.py           Moves videos that are live from the open jobs to the archive.
     lab_board.py           Models the lab should test and how far each got.
     jobs.py                Job board: one job per NAS video folder, stage read off

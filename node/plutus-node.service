@@ -1,0 +1,13 @@
+[Unit]
+Description=Plutus node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/plutus-node/plutus_node.py
+WorkingDirectory=/opt/plutus-node
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=multi-user.target

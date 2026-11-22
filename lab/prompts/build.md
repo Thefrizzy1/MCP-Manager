@@ -44,6 +44,9 @@ whether the model passed is decided after the critique, not by you. Put the same
    one, then restructure it: numbered groups, plain-language input titles, the two notes.
 5. Run it through the API with the standard inputs until it completes without error.
    Record wall time and peak VRAM. Save two outputs to the workflow's `samples/` as .webp.
+   Save the exact API-format prompt of each run you keep as a sample to
+   `{{RUN_DIR}}/final/<name>.api.json` (what you POST as `prompt`). The same prompts are
+   run again on a 12 GB card later, so they must load the standard inputs by file name.
 6. Look at the outputs yourself (read the image, or extract frames from a video with
    ffmpeg and read them). A black frame, noise, a frozen clip or missing audio is a
    failure even when ComfyUI reports success. Fix and rerun.
