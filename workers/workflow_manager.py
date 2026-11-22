@@ -47,14 +47,28 @@ def newer(a: str, b: str) -> bool:
     return bool(a and b) and num(a) > num(b)
 
 
+def own_copy(cfg: dict) -> Path:
+    """This worker's own checkout of the workflows repo.
+
+    Never the lab's working folder: the lab may be in the middle of a model on a
+    branch with unsaved work, and switching branches under it would lose that.
+    """
+    repo = Path(cfg["state_dir"]) / "workers" / "workflow_manager" / "repo"
+    if not (repo / ".git").is_dir():
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "clone", "-q", "https://" + cfg["workflows_remote"], str(repo)], check=True)
+    lab.git(repo, "checkout", "-q", "main")
+    lab.git(repo, "pull", "-q", "--ff-only")
+    return repo
+
+
 def check(cfg: dict) -> dict:
-    repo = Path(cfg["workflows_repo"])
     out: dict = {"problems": [], "prs": [], "comfy": {}}
     try:
-        lab.git(repo, "checkout", "-q", "main")
-        lab.git(repo, "pull", "-q", "--ff-only")
-    except RuntimeError as e:
+        repo = own_copy(cfg)
+    except (RuntimeError, subprocess.CalledProcessError) as e:
         out["problems"].append(f"could not update the repo: {e}")
+        return out
     r = subprocess.run([sys.executable, "scripts/check_repo.py", "--links"], cwd=repo,
                        capture_output=True, text=True, timeout=1800)
     if r.returncode:

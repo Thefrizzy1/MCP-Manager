@@ -36,3 +36,14 @@ def test_every_worker_tool_exists_and_none_can_send_or_delete():
 def test_version_comparison():
     assert wm.newer("0.46.0", "0.45.3") and wm.newer("0.45.10", "0.45.3")
     assert not wm.newer("0.45.3", "0.45.3") and not wm.newer("", "0.45.3") and not wm.newer("0.45.3", "")
+
+
+def test_the_workflow_manager_never_works_in_the_labs_folder(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(wm.lab, "git", lambda repo, *a, **k: calls.append((str(repo), a)) or "")
+    monkeypatch.setattr(wm.subprocess, "run", lambda *a, **k: calls.append(("clone", a[0])) or None)
+    cfg = {"state_dir": str(tmp_path / "state"), "workflows_repo": str(tmp_path / "lab-working-folder"),
+           "workflows_remote": "github.com/o/r.git"}
+    repo = wm.own_copy(cfg)
+    assert str(repo).startswith(str(tmp_path / "state")) and "lab-working-folder" not in str(repo)
+    assert all("lab-working-folder" not in c[0] for c in calls)
