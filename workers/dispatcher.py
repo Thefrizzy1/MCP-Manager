@@ -34,10 +34,10 @@ TOOLS = {
                                   "reddit_search reddit_post_comments huggingface_model_info huggingface_search_models "
                                   "github_repo_info trend_radar_candidate trend_radar_list").split(),
     "writer": COMMON + "youtube_transcript youtube_video web_read".split(),
-    "editor": COMMON + "studio_delegate".split(),
-    "motion": COMMON,
-    "thumbnail": COMMON + "youtube_search youtube_video trend_radar_title_research".split(),
-    "shorts": COMMON + "youtube_transcript youtube_video youtube_comments".split(),
+    "editor": COMMON + "studio_delegate studio_view_image".split(),
+    "motion": COMMON + ["studio_view_image"],
+    "thumbnail": COMMON + "studio_view_image youtube_search youtube_video trend_radar_title_research".split(),
+    "shorts": COMMON + "studio_view_image youtube_transcript youtube_video youtube_comments".split(),
     "publisher": COMMON + "youtube_video youtube_keywords youtube_search trend_radar_title_research".split(),
 }
 TIMEOUT_MIN = {"manager": 12, "researcher": 35, "writer": 30, "editor": 25, "motion": 20,

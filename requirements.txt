@@ -17,3 +17,4 @@ pypdf[crypto]>=5.0.0,<8.0.0
 # Deliberately no upper cap — YouTube changes its pages every few weeks and only
 # a current yt-dlp keeps up; a pinned one would slowly stop reading anything.
 yt-dlp>=2026.1.1
+Pillow>=10.0

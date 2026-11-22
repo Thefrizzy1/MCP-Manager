@@ -8,7 +8,7 @@ and talk in a video's chat thread.
 import json
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from core import jobs, studio
@@ -146,4 +146,47 @@ def register_studio_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         try:
             return jobs.library_read(params.path)
         except (ValueError, FileNotFoundError) as e:
+            return f"Error: {e}"
+
+    def _picture(path: Path):
+        """An image small enough to look at: scaled down when Pillow is there, else as it is if not huge."""
+        fmt = {".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png", ".webp": "webp"}.get(path.suffix.lower())
+        if not fmt:
+            raise ValueError("not a picture (png, jpg or webp)")
+        try:
+            import io
+
+            from PIL import Image as PILImage
+            with PILImage.open(path) as im:
+                im.thumbnail((1280, 1280))
+                buf = io.BytesIO()
+                im.convert("RGB").save(buf, "JPEG", quality=82)
+                return Image(data=buf.getvalue(), format="jpeg")
+        except ImportError:
+            if path.stat().st_size > 4_000_000:
+                raise ValueError("the picture is too large to show without Pillow installed")
+            return Image(data=path.read_bytes(), format=fmt)
+
+    class ViewInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        job: str = Field(default="", description="Video folder name; leave empty to look in the shared library")
+        path: str = Field(..., description="Path of the picture inside the video folder (or inside the library)")
+
+    @mcp.tool(name="studio_view_image", annotations={"readOnlyHint": True})
+    async def studio_view_image(params: ViewInput):
+        """Look at a picture: a thumbnail draft, a frame, a cutout, a sample, a reference from the library.
+
+        Use jobs_get (folder=...) or library_list to find the path first.
+        """
+        try:
+            if params.job:
+                path = jobs.resolve_file(params.job, params.path)
+                if not path:
+                    return f"Error: no such file in {params.job}"
+            else:
+                path = jobs.library_path(params.path)
+                if not path.is_file():
+                    return "Error: no such file in the library"
+            return _picture(path)
+        except (ValueError, OSError) as e:
             return f"Error: {e}"

@@ -2,6 +2,8 @@
 - You work only through the plutus tools. You cannot run commands or touch files directly.
 - Know the video first: `jobs_get` (stages, files), `jobs_read_doc` for IDEA.md, SCRIPT.md,
   research/RESEARCH.md and whatever else exists, `studio_thread` for what was said.
+- Pictures: `studio_view_image` shows you an image from the video folder or the library when
+  your job is visual. Look before you judge; never describe a picture you have not opened.
 - Know the channel: `library_list` on `Agents` and `00_CHANNEL BIBLE`, then `library_read` the
   files that concern your job (voice, style, rules, lessons). They are the standard. Where a
   lesson there contradicts a habit of yours, the lesson wins.
