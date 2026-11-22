@@ -280,7 +280,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             if not params.slug:
                 lab_board.beat(_ROOT, params.text)
                 return "✓ Noted."
-            review = _json.loads(params.review_json) if params.review_json else None
+            try:
+                review = _json.loads(params.review_json) if params.review_json else None
+            except ValueError:
+                review = None                    # a broken review must not lose the status report
             row = lab_board.report(_ROOT, params.slug, params.text, params.status, params.pr,
                                    params.name, review if isinstance(review, dict) else None,
                                    params.gpu3060, params.update_pr, params.server_test)
@@ -464,5 +467,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         except ValueError as e:
             return f"Error: {e}"
         if job["kind"] == "comfy_test" and job["payload"].get("slug"):
-            lab_board.report(_ROOT, job["payload"]["slug"], "Waiting for the second machine to be on", gpu3060="queued")
+            lab_board.report(_ROOT, job["payload"]["slug"],
+                             "Optional second test on the 12 GB card is lined up for when that PC is on. "
+                             "You can publish without it.", gpu3060="queued")
         return f"✓ Queued job {job['id']} for {job['machine']}."

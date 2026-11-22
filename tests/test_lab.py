@@ -135,3 +135,21 @@ def test_the_second_test_gets_the_same_prompts_models_and_inputs(tmp_path, monke
     assert payload["inputs"] == ["portrait.png"] and payload["models"][0]["name"] == "m.safetensors"
     assert payload["prompts"][0]["name"] == "t2i"
     assert lab.queue_second_test({"second_test_machine": "", "inputs_dir": ""}, run, repo, {}, "sdxl") == ""
+
+
+def test_a_status_report_is_retried_and_its_review_stays_valid_json(monkeypatch):
+    calls = []
+    def flaky(cfg, tool, args=None, timeout=20):
+        calls.append(args["params"])
+        if len(calls) < 3:
+            raise OSError("Plutus is restarting")
+        return "ok"
+    monkeypatch.setattr(lab, "plutus", flaky)
+    monkeypatch.setattr(lab.time, "sleep", lambda s: None)
+    lab.tell({}, "Built", "anima", "built", "https://x/pull/4", review={"summary": "s" * 9000, "samples": ["a.webp"]})
+    assert len(calls) == 3
+    review = json.loads(calls[-1]["review_json"])                 # still parses
+    assert len(review["summary"]) == 700 and review["samples"] == ["a.webp"]
+    calls.clear()
+    monkeypatch.setattr(lab, "plutus", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
+    lab.tell({}, "just a progress line", "anima")                 # no status: one try, never raises

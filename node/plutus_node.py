@@ -96,7 +96,12 @@ def plutus(cfg: dict, tool: str, args: dict | None = None, timeout: int = 40) ->
                    "params": {"name": tool, "arguments": {"params": args or {}}}}, sid)
     if "error" in res:
         raise RuntimeError(f"{tool}: {res['error']}")
-    return "\n".join(c.get("text", "") for c in res.get("result", {}).get("content", []))
+    text = "\n".join(c.get("text", "") for c in res.get("result", {}).get("content", []))
+    # A tool that refused its input answers normally but flags the result as an
+    # error. Treat that as a failure too, or a rejected report looks like a sent one.
+    if res.get("result", {}).get("isError"):
+        raise RuntimeError(f"{tool}: {text[:300]}")
+    return text
 
 
 # ── this machine ─────────────────────────────────────────────────────────────

@@ -112,7 +112,12 @@ def plutus(cfg: dict, tool: str, args: dict | None = None, timeout: int = 60) ->
                    "params": {"name": tool, "arguments": args or {}}}, sid)
     if "error" in res:
         raise RuntimeError(f"{tool}: {res['error']}")
-    return "\n".join(c.get("text", "") for c in res.get("result", {}).get("content", []))
+    text = "\n".join(c.get("text", "") for c in res.get("result", {}).get("content", []))
+    # A tool that refused its input answers normally but flags the result as an
+    # error. Treat that as a failure too, or a rejected report looks like a sent one.
+    if res.get("result", {}).get("isError"):
+        raise RuntimeError(f"{tool}: {text[:300]}")
+    return text
 
 
 def permission(cfg: dict, action: str) -> str:
@@ -148,14 +153,24 @@ def permission(cfg: dict, action: str) -> str:
 
 def tell(cfg: dict, text: str, slug: str = "", status: str = "", pr: str = "", name: str = "",
          review: dict | None = None, server: str = "") -> None:
-    """Progress for the Workflow Maker page. Never lets a reporting failure stop the night."""
-    try:
-        plutus(cfg, "lab_report", {"params": {"slug": slug, "text": text[:390], "status": status,
-                                              "pr": pr, "name": name, "server_test": server if slug else "",
-                                              "review_json": json.dumps(review)[:5900] if review else ""}},
-               timeout=20)
-    except Exception as e:
-        log(f"could not report progress: {e}")
+    """Progress for the Workflow Maker page. Never lets a reporting failure stop the night.
+
+    A report that changes a model's status is the one thing the owner acts on,
+    so it is retried for a few minutes: Plutus may just be restarting.
+    """
+    if review:                                   # keep each field short; never cut the JSON itself
+        review = {k: (v[:700] if isinstance(v, str) else v) for k, v in review.items()}
+    params = {"slug": slug, "text": text[:390], "status": status, "pr": pr, "name": name,
+              "server_test": server if slug else "", "review_json": json.dumps(review) if review else ""}
+    tries = 6 if status else 1
+    for attempt in range(tries):
+        try:
+            plutus(cfg, "lab_report", {"params": params}, timeout=20)
+            return
+        except Exception as e:
+            log(f"could not report progress ({attempt + 1}/{tries}): {e}")
+            if attempt + 1 < tries:
+                time.sleep(30)
 
 
 def next_assignment(cfg: dict, state: Path) -> dict:
@@ -678,7 +693,17 @@ def nightly(cfg: dict) -> int:
             break
         assignment = next_assignment(cfg, state)
         key = assignment.get("slug") or assignment.get("model") or "auto"
-        if key in seen:            # the same model came back: its status did not move, do not loop
+        if key in seen:
+            # The same model came back, so its outcome never reached the board. Say it
+            # again and ask once more before giving up, rather than ending the night.
+            last = next((t for t in reversed(report["tasks"]) if t.get("slug") == key), None)
+            if last and not last.get("resent"):
+                last["resent"] = True
+                status = {"pr_opened": "built", "published": "published"}.get(last.get("status"), "failed")
+                tell(cfg, "Result of the last run, sent again.", key, status, last.get("pr", ""),
+                     server="done" if status != "failed" else "failed")
+                seen.discard(key)
+                continue
             break
         seen.add(key)
         if assignment.get("slug") and not assignment.get("note", "").lower().startswith("resume") \
