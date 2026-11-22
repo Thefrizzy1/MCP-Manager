@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, FlaskConical, Plus, X } from 'lucide-react'
+import { Clapperboard, ExternalLink, FlaskConical, Plus, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/cn'
+import { navigate } from '@/lib/router'
 
 interface LabEntry {
   slug: string
@@ -16,6 +17,7 @@ interface LabEntry {
   updated: number
   log: { ts: number; text: string }[]
   publish_requested?: boolean
+  video?: string
   update_pr?: string
   gpu3060?: { status: 'queued' | 'testing' | 'done' | 'failed'; text: string; ts: number }
   server?: { status: 'queued' | 'testing' | 'done' | 'failed'; text: string; ts: number }
@@ -232,10 +234,12 @@ function Row({
   model,
   onSet,
   onPublish,
+  onVideo,
 }: {
   model: Model
   onSet: (slug: string, name: string, status: string) => void
   onPublish: (slug: string) => void
+  onVideo: (slug: string) => void
 }) {
   const [open, setOpen] = useState(false)
   const lab = model.lab
@@ -255,7 +259,12 @@ function Row({
           </div>
         </button>
         <Steps model={model} onPublish={() => onPublish(model.slug)} />
-        <div className="flex w-[104px] shrink-0 justify-end gap-1">
+        <div className="flex w-[214px] shrink-0 justify-end gap-1">
+          {lab && (lab.status === 'built' || lab.status === 'published') && (
+            <Button size="sm" variant={lab.video ? 'default' : 'primary'} onClick={() => onVideo(model.slug)}>
+              <Clapperboard size={13} /> {lab.video ? 'Open video' : 'Make a video'}
+            </Button>
+          )}
           {!lab || lab.status === 'skipped' || lab.status === 'failed' || lab.status === 'waiting' ? (
             <Button size="sm" onClick={() => onSet(model.slug, model.name, 'queued')}>
               <Plus size={13} /> Test
@@ -317,6 +326,17 @@ export function Models() {
       toast.error(String(e))
     }
   }
+  async function toVideo(slug: string) {
+    try {
+      const r = await api.post<{ job: string; created: boolean }>('/api/v1/models/to_video', { slug })
+      if (r.created) toast.success('Video created. The Channel Manager is setting it up.')
+      qc.invalidateQueries({ queryKey: ['models'] })
+      qc.invalidateQueries({ queryKey: ['jobs'] })
+      navigate(`chat?job=${encodeURIComponent(r.job)}`)
+    } catch (e) {
+      toast.error(String(e))
+    }
+  }
   const set = (slug: string, name: string, status: string) => post('/api/v1/models/set', { slug, name, status })
 
   const all = data?.models ?? []
@@ -353,7 +373,7 @@ export function Models() {
             <CardHeader title={`In the lab (${inLab.length})`} />
             {inLab.length === 0 && <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing queued. Pick models below or press “Test all new models”.</p>}
             {inLab.map((m) => (
-              <Row key={m.slug} model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} />
+              <Row key={m.slug} model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} onVideo={toVideo} />
             ))}
           </Card>
 
@@ -369,7 +389,7 @@ export function Models() {
             />
             {fresh.length === 0 && <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing new right now.</p>}
             {fresh.map((m) => (
-              <Row key={m.slug} model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} />
+              <Row key={m.slug} model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} onVideo={toVideo} />
             ))}
           </Card>
         </div>

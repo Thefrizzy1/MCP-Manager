@@ -6,7 +6,9 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core import lab_board, permissions
+import asyncio
+
+from core import jobs, lab_board, permissions, studio
 from core import trend_radar as tr
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
@@ -88,6 +90,55 @@ async def api_v1_models_publish(body: PublishBody):
     lab_board.report(ROOT, row["slug"], "You approved publishing. The lab will merge it shortly.")
     lab_board.set_flag(ROOT, row["slug"], "publish_requested", True)
     return await api_v1_models()
+
+
+def video_brief(row: dict) -> str:
+    """The idea text for a video about a tested workflow: what it is and what was measured."""
+    r = row.get("review") or {}
+    lines = [f"Make a video about {row.get('name') or row['slug']}, using the workflow the lab built and tested.", ""]
+    if r.get("title"):
+        lines.append(f"Workflow: {r['title']}")
+    if r.get("repo") and r.get("folder"):
+        branch = "main" if row.get("status") == "published" else r.get("branch", "main")
+        lines.append(f"Workflow files: https://github.com/{r['repo']}/tree/{branch}/{r['folder']}")
+    if row.get("pr"):
+        lines.append(f"Pull request: {row['pr']}")
+    for key, label in (("summary", "What it does"), ("tested", "Tested"), ("critique", "Review"),
+                       ("not_verified", "Not verified")):
+        if r.get(key):
+            lines.append(f"{label}: {r[key]}")
+    g = row.get("gpu3060") or {}
+    if g.get("status") == "done":
+        lines.append(f"On the 12 GB card: {g.get('text', '')}")
+    return "\n".join(lines)
+
+
+@router.post("/api/v1/models/to_video")
+async def api_v1_models_to_video(body: PublishBody):
+    """'Make a video' on a tested model: create the video folder with what the lab
+    found, and have the Channel Manager start research and script. Asking twice
+    opens the same video instead of making a second one."""
+    slug = body.slug.strip().lower()
+    row = lab_board.entries(ROOT).get(slug)
+    if not row:
+        raise HTTPException(404, "No such model on the lab's list")
+    if row.get("status") not in ("built", "published"):
+        raise HTTPException(409, "The workflow is not tested yet")
+    if row.get("video") and jobs.job_folder(row["video"]):
+        return {"job": row["video"], "created": False}
+    idea = video_brief(row)
+    name = row.get("name") or slug
+    try:
+        try:
+            job = await asyncio.to_thread(jobs.create_job, name, idea)
+        except FileExistsError:
+            job = await asyncio.to_thread(jobs.create_job, f"{name} workflow", idea)
+    except (ValueError, PermissionError, FileExistsError) as e:
+        raise HTTPException(400, str(e))
+    studio.post(ROOT, job, "user", idea)
+    studio.add_task(ROOT, job, "intake", idea)
+    lab_board.set_flag(ROOT, slug, "video", job)
+    return {"job": job, "created": True}
 
 
 class QueueNewBody(BaseModel):

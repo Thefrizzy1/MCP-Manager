@@ -109,3 +109,27 @@ def test_a_skipped_step_shows_skipped_even_when_later_files_exist(tmp_path, monk
     S.add_task(tmp_path, "20261122_Fun test", "research", status="not_required", reason="fun")
     st = {s["id"]: s["status"] for s in jobs.get_job(tmp_path, "20261122_Fun test")["stages"]}
     assert st["research"] == "skipped" and st["script"] == "active"
+
+
+def test_a_tested_model_becomes_a_video_once(tmp_path, monkeypatch):
+    import asyncio
+    from core import lab_board
+    from ui.api import models as M
+    root = tmp_path / "yt"
+    (root / "01_Open_Jobs").mkdir(parents=True)
+    monkeypatch.setenv("YOUTUBE_ROOT", str(root))
+    monkeypatch.setattr(M, "ROOT", tmp_path)
+    jobs._cache.update(ts=0.0, root="")
+    lab_board.report(tmp_path, "anima", "ready", "built", pr="https://x/pull/4", name="Anima",
+                     review={"repo": "o/r", "branch": "lab/x", "folder": "workflows/anima/anima",
+                             "samples": [], "tested": "2 runs, 41 s", "summary": "Text to image."})
+    first = asyncio.run(M.api_v1_models_to_video(M.PublishBody(slug="anima")))
+    assert first["created"] and first["job"].endswith("_Anima")
+    idea = (root / "01_Open_Jobs" / first["job"] / "IDEA.md").read_text()
+    assert "workflows/anima/anima" in idea and "2 runs, 41 s" in idea and "lab/x" in idea
+    assert [t["kind"] for t in S.tasks(tmp_path, first["job"])] == ["intake"]
+    again = asyncio.run(M.api_v1_models_to_video(M.PublishBody(slug="anima")))
+    assert again == {"job": first["job"], "created": False}
+    lab_board.queue(tmp_path, "sdxl", "SDXL")
+    with pytest.raises(Exception):
+        asyncio.run(M.api_v1_models_to_video(M.PublishBody(slug="sdxl")))      # not tested yet
