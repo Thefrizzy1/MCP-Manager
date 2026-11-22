@@ -47,6 +47,8 @@ async def sync_uploads(root: Path = _ROOT, *, force: bool = False) -> dict:
 def _line(j: dict) -> str:
     bar = "".join(_SYM[s["status"]] for s in j["stages"])
     extra = []
+    if j.get("label"):
+        extra.append(f"label {j['label']}")
     if j["deadline"]:
         extra.append(f"deadline {j['deadline']}")
     if j["idle_days"] is not None:
@@ -78,7 +80,8 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return f"Error: the YouTube folder is not mounted at {data['root']} (set YOUTUBE_ROOT)."
         rows = [j for j in data["jobs"] if params.include_archived or not j["archived"]]
         hidden = len(data["jobs"]) - len(rows)
-        out = [f"## Job board — {len(rows)} job(s)", ""] + [_line(j) for j in rows]
+        out = [f"## Job board — {len(rows)} job(s)",
+               "Labels: " + ", ".join(f"{x['id']} ({x['name']})" for x in data["labels"]), ""] + [_line(j) for j in rows]
         if hidden:
             out += ["", f"{hidden} archived job(s) not shown."]
         return "\n".join(out)
@@ -122,6 +125,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         note: Optional[str] = Field(default=None, description="Short note shown on the board", max_length=4000)
         publish_url: Optional[str] = Field(default=None, description="YouTube URL once the video is live")
         archived: Optional[bool] = Field(default=None, description="Hide from / return to the active board")
+        label: Optional[str] = Field(default=None, description="Colour label id (jobs_board lists them), or empty string to clear")
         publish_match: Optional[bool] = Field(default=None, description="false = the automatically matched upload is the wrong video; true = allow matching again")
 
     @mcp.tool(name="jobs_update", annotations={"readOnlyHint": False, "destructiveHint": False})
@@ -133,7 +137,7 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         changes: dict = {}
         if params.stage:
             changes["stages"] = {params.stage: params.status or "done"}
-        for key in ("deadline", "note", "publish_url", "archived", "publish_match"):
+        for key in ("deadline", "note", "publish_url", "archived", "publish_match", "label"):
             val = getattr(params, key)
             if val is not None:
                 changes[key] = val

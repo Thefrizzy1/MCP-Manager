@@ -497,6 +497,9 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             if result.get("status") != "built":
                 break
             log("critique session")
+            # Still under test until the critique agrees, whatever the build session reported.
+            tell(cfg, "Built. Now being checked by a second session.", slug or result.get("slug", ""),
+                 "testing", server="testing")
             (run_dir / "review.json").unlink(missing_ok=True)
             run_session(cfg, render("critique.md", **values), repo, run_dir / f"critique{attempt}.log",
                         allowed=READONLY, timeout_min=cfg["critique_timeout_min"], mcp=None)
@@ -507,6 +510,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
             if verdict.get("verdict") == "pass":
                 break
             values["ISSUES"] = json.dumps(verdict.get("issues", []))
+            tell(cfg, "Fix round: working through the critique's issues.", slug, "testing", server="testing")
         result = read_json(run_dir / "result.json", {"status": "no_result"})
         out.update(result=result, review=verdict)
         slug = slug or result.get("slug", "")

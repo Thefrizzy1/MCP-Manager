@@ -65,6 +65,44 @@ _CACHE_TTL = 120.0
 _cache: dict = {"ts": 0.0, "root": "", "jobs": []}
 
 
+# Colour labels for videos. The list is editable (data/jobs_labels.json); these are the defaults.
+DEFAULT_LABELS = [
+    {"id": "model", "name": "Model review", "color": "#8b5cf6"},
+    {"id": "general", "name": "General", "color": "#22a559"},
+    {"id": "sponsored", "name": "Sponsored", "color": "#ff6347"},
+]
+
+
+def _labels_path(root: Path) -> Path:
+    return Path(root) / "data" / "jobs_labels.json"
+
+
+def labels(root: Path) -> list[dict]:
+    data = read_json(_labels_path(root), None)
+    if isinstance(data, list) and data and all(isinstance(x, dict) and x.get("id") for x in data):
+        return data
+    return [dict(x) for x in DEFAULT_LABELS]
+
+
+def save_labels(root: Path, rows: list[dict]) -> list[dict]:
+    """Replace the label list. Ids are kept stable so tagged videos keep their label."""
+    out, seen = [], set()
+    for r in rows:
+        lid = re.sub(r"[^a-z0-9-]+", "-", str(r.get("id") or r.get("name") or "").lower()).strip("-")
+        color = str(r.get("color") or "")
+        if not lid or lid in seen:
+            continue
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise ValueError(f"colour of {lid!r} must look like #8b5cf6")
+        seen.add(lid)
+        out.append({"id": lid, "name": str(r.get("name") or lid)[:40], "color": color})
+    if not out:
+        raise ValueError("at least one label is required")
+    write_json(_labels_path(root), out)
+    _cache["ts"] = 0.0
+    return out
+
+
 def youtube_root() -> Path:
     """Where the NAS YouTube folder is mounted inside this process."""
     return Path(os.getenv("YOUTUBE_ROOT", "/data/youtube"))
@@ -410,6 +448,8 @@ def scan_job(folder: Path, state: dict | None = None, video: dict | None = None)
 
     return {
         "id": folder.name, "title": st.get("title") or title,
+        # Set by hand; a folder named "(sponsored)" is labelled so by itself.
+        "label": st.get("label") or ("sponsored" if "sponsor" in folder.name.lower() else ""),
         "start": start.isoformat(), "sponsored": "sponsor" in folder.name.lower(),
         "stages": stages, "current": current,
         "last_activity": last_activity or None, "idle_days": idle_days,
@@ -452,7 +492,7 @@ def list_jobs(root: Path, *, force: bool = False) -> dict:
         _cache.update(ts=now, root=str(yt), jobs=jobs)
     return {"root": str(yt), "mounted": yt.is_dir(), "stages": [
         {"id": s, "label": STAGE_LABELS[s]} for s in STAGES], "jobs": jobs,
-        "scanned": int(_cache["ts"]),
+        "scanned": int(_cache["ts"]), "labels": labels(root),
         "uploads_synced": load_uploads(root)["ts"]}
 
 
@@ -517,7 +557,7 @@ def list_folder(job_id: str, rel: str = "") -> list[dict] | None:
 
 
 _ALLOWED_FIELDS = {"archived", "pinned", "deadline", "note", "publish_url", "title", "thumbnail",
-                   "publish_match"}
+                   "publish_match", "label"}
 
 
 def update_job(root: Path, job_id: str, changes: dict) -> dict:
@@ -545,6 +585,8 @@ def update_job(root: Path, job_id: str, changes: dict) -> dict:
                     raise ValueError(f"unknown status {status!r}")
             st["stages"] = cur
         elif key in _ALLOWED_FIELDS:
+            if key == "label" and val and val not in {x["id"] for x in labels(root)}:
+                raise ValueError(f"unknown label {val!r}")
             if key == "deadline" and val:
                 datetime.strptime(str(val), "%Y-%m-%d")      # raises ValueError if malformed
             if val is None or val == "":

@@ -44,7 +44,7 @@ async def api_v1_job_detail(job: str, rel: str = ""):
     listing = await asyncio.to_thread(jobs.list_folder, job, rel)
     if listing is None:
         raise HTTPException(400, "Not a folder inside this job")
-    return {"job": rec, "rel": rel, "files": listing,
+    return {"job": rec, "rel": rel, "files": listing, "labels": jobs.labels(ROOT),
             "activity": jobs.recent_activity(ROOT, job_id=job, limit=30)}
 
 
@@ -75,6 +75,20 @@ class JobUpdate(BaseModel):
     publish_url: str | None = Field(default=None, max_length=500)
     thumbnail: str | None = Field(default=None, max_length=500)
     publish_match: bool | None = None    # false = the matched upload is the wrong video
+    label: str | None = Field(default=None, max_length=40)   # label id, '' = none
+
+
+class LabelsBody(BaseModel):
+    labels: list[dict] = Field(..., max_length=24)
+
+
+@router.post("/api/v1/jobs/labels")
+async def api_v1_job_labels(body: LabelsBody):
+    """Replace the list of colour labels (name + colour each)."""
+    try:
+        return {"labels": jobs.save_labels(ROOT, body.labels)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.post("/api/v1/jobs/update")

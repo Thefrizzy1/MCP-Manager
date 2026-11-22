@@ -13,7 +13,8 @@ Assignment: {{ASSIGNMENT}}
 ## Show your progress
 The owner watches this on a page. At each real step (model chosen, downloading, first clean
 run, outputs checked, folder written) call `lab_report` on the plutus MCP server with
-`slug` = `{{SLUG}}` and one plain sentence in `text`. Put the same slug in result.json.
+`slug` = `{{SLUG}}` and one plain sentence in `text`. Leave `status` and every other field empty:
+whether the model passed is decided after the critique, not by you. Put the same slug in result.json.
 
 ## Read first
 1. `{{STYLE}}` — the house style. It is the standard the critique will hold you to.

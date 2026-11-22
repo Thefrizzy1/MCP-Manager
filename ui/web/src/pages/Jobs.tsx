@@ -42,6 +42,7 @@ interface Job {
   thumbnails: string[]
   thumbnail: string
   youtube_thumbnail: string
+  label: string
   published: { id: string; title: string; date: string; views: number | null } | null
 }
 interface Activity {
@@ -50,7 +51,13 @@ interface Activity {
   who: string
   text: string
 }
+interface Label {
+  id: string
+  name: string
+  color: string
+}
 interface Board {
+  labels: Label[]
   root: string
   mounted: boolean
   stages: { id: string; label: string }[]
@@ -65,6 +72,7 @@ interface FileRow {
 }
 interface Detail {
   job: Job
+  labels?: Label[]
   rel: string
   files: FileRow[]
   activity: Activity[]
@@ -126,7 +134,8 @@ function Stepper({ job }: { job: Job }) {
   )
 }
 
-function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void }) {
+function JobRow({ job, labels, onDetails }: { job: Job; labels: Label[]; onDetails: (id: string) => void }) {
+  const label = labels.find((l) => l.id === job.label)
   const [open, setOpen] = useState(false)
   return (
     <div className="border-b border-border last:border-b-0">
@@ -134,6 +143,8 @@ function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void 
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-hover"
+        style={{ boxShadow: label ? `inset 4px 0 0 ${label.color}` : undefined }}
+        title={label ? label.name : undefined}
       >
         <ChevronRight size={14} className={cn('shrink-0 text-ink-3 transition-transform', open && 'rotate-90')} />
         {job.youtube_thumbnail || job.thumbnail ? (
@@ -149,6 +160,12 @@ function JobRow({ job, onDetails }: { job: Job; onDetails: (id: string) => void 
         )}
         <div className="w-[200px] shrink-0">
           <div className="truncate text-[13px] font-semibold text-ink">{job.title}</div>
+          {label && (
+            <div className="flex items-center gap-1 text-[11px]" style={{ color: label.color }}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: label.color }} />
+              {label.name}
+            </div>
+          )}
           {job.deadline && <div className="text-[11px] text-danger">due {job.deadline.slice(5)}</div>}
         </div>
         <Stepper job={job} />
@@ -236,6 +253,27 @@ function JobDrawer({ id, onClose }: { id: string; onClose: () => void }) {
               </Button>
             )}
           </div>
+
+          <section>
+            <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Label</h3>
+            <div className="flex flex-wrap gap-1.5">
+              {(data.labels ?? []).map((l) => (
+                <button
+                  key={l.id}
+                  aria-pressed={job.label === l.id}
+                  onClick={() => save({ label: job.label === l.id ? '' : l.id })}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[12px]"
+                  style={{
+                    borderColor: l.color,
+                    background: job.label === l.id ? l.color : 'transparent',
+                    color: job.label === l.id ? '#fff' : 'var(--ink)',
+                  }}
+                >
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          </section>
 
           <section>
             <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-ink-3">Stages</h3>
@@ -374,6 +412,7 @@ export function Jobs() {
   const [showArchived, setShowArchived] = useState(false)
   const [open, setOpen] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [filter, setFilter] = useState<string | null>(null) // null = all, '' = unlabelled
   const qc = useQueryClient()
   const { data, isLoading } = useQuery({
     queryKey: ['jobs'],
@@ -391,6 +430,7 @@ export function Jobs() {
 
   const all = data?.jobs ?? []
   const archived = all.filter((j) => j.archived)
+  const shown = (rows: Job[]) => (filter === null ? rows : rows.filter((j) => (j.label || '') === filter))
   const active = all.filter((j) => !j.archived)
 
   return (
@@ -416,12 +456,29 @@ export function Jobs() {
           />
         ) : (
           <div className="space-y-5">
+            <div className="flex flex-wrap gap-1.5">
+              {[{ id: null as string | null, name: 'All', color: '' }, ...data.labels, { id: '', name: 'No label', color: '' }].map((l) => (
+                <button
+                  key={String(l.id)}
+                  aria-pressed={filter === l.id}
+                  onClick={() => setFilter(l.id)}
+                  className={cn(
+                    'inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[12px]',
+                    filter === l.id ? 'border-border-strong bg-surface-hover text-ink' : 'border-border text-ink-2 hover:bg-surface-hover',
+                  )}
+                >
+                  {l.color && <span className="h-2 w-2 rounded-full" style={{ background: l.color }} />}
+                  {l.name}
+                </button>
+              ))}
+            </div>
+
             <Card>
               <CardHeader title="In progress" />
               {active.length === 0 ? (
                 <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing in progress.</p>
               ) : (
-                active.map((j) => <JobRow key={j.id} job={j} onDetails={setOpen} />)
+                shown(active).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} />)
               )}
             </Card>
 
@@ -436,7 +493,7 @@ export function Jobs() {
                 <span className="text-[13px] font-semibold text-ink">Archive</span>
                 <span className="text-[12px] text-ink-3">{archived.length}</span>
               </button>
-              {showArchived && archived.map((j) => <JobRow key={j.id} job={j} onDetails={setOpen} />)}
+              {showArchived && shown(archived).map((j) => <JobRow key={j.id} job={j} labels={data.labels} onDetails={setOpen} />)}
             </Card>
 
             {data.activity.length > 0 && (
