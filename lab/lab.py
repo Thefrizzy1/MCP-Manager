@@ -47,6 +47,7 @@ DEFAULTS = {
     "min_free_gb": 60,
     "task_timeout_min": 150,
     "critique_timeout_min": 25,
+    "fix_rounds": 2,            # how often a failed critique may send the work back
     "night_hours": 7,           # stop starting new models after this long
     "max_tasks": 20,
     "machine_id": "gpu-server",
@@ -489,7 +490,7 @@ def run_task(cfg: dict, assignment: dict, run_dir: Path, branch: str) -> dict:
     comfy = start_comfy(cfg, run_dir)
     try:
         verdict: dict = {}
-        for attempt in (1, 2):                     # build, critique, one fix round
+        for attempt in range(1, int(cfg["fix_rounds"]) + 2):   # build, critique, then the fix rounds
             log(f"build session, attempt {attempt}")
             run_session(cfg, render("build.md", **values), repo, run_dir / f"build{attempt}.log",
                         allowed=ALLOW, timeout_min=cfg["task_timeout_min"], mcp=mcp)
@@ -677,7 +678,8 @@ def nightly(cfg: dict) -> int:
         if key in seen:            # the same model came back: its status did not move, do not loop
             break
         seen.add(key)
-        if assignment.get("slug") and not has_template(templates, assignment):
+        if assignment.get("slug") and not assignment.get("note", "").lower().startswith("resume") \
+                and not has_template(templates, assignment):
             # Not something this ComfyUI can run yet (or not an image/video/audio model at all).
             tell(cfg, "No built-in ComfyUI template mentions this model yet, so there is nothing to build on.",
                  assignment["slug"], "waiting")

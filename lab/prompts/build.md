@@ -8,7 +8,12 @@ Assignment: {{ASSIGNMENT}}
   that has no folder under `workflows/` yet. If there is none, do a **recheck**: pick the
   workflow whose changelog entry is oldest, run it on this ComfyUI, and fix what broke.
 - Anything else in the assignment names the model or workflow to do.
+- A note that starts with "Resume" means earlier work on this model is saved in this repo's
+  `git stash`. Run `git stash list`, apply the newest stash for this model with
+  `git stash apply`, and finish from there instead of starting over.
 - Issues from the last critique of tonight's work (fix exactly these if not "none"): {{ISSUES}}
+  In a fix round change only what the issues name. Do not rerun tests whose results are not
+  in question; re-measure only when an issue says a number is wrong.
 
 ## Show your progress
 The owner watches this on a page. At each real step (model chosen, downloading, first clean
