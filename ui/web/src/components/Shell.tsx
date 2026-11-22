@@ -3,6 +3,7 @@ import { useIsFetching } from '@tanstack/react-query'
 import { Menu } from 'lucide-react'
 import { Sidebar } from './Sidebar'
 import { DefaultPasswordBanner } from './DefaultPasswordBanner'
+import { NewVersionBanner } from './NewVersionBanner'
 
 export function Shell({ route, children }: { route: string; children: ReactNode }) {
   const [mobileNav, setMobileNav] = useState(false)
@@ -38,6 +39,7 @@ export function Shell({ route, children }: { route: string; children: ReactNode 
           </button>
           <span className="text-[14px] font-semibold text-ink">Plutus</span>
         </div>
+        <NewVersionBanner />
         <DefaultPasswordBanner />
         {children}
       </main>

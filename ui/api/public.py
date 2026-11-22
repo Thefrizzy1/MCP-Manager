@@ -28,6 +28,14 @@ async def ui():
     return RedirectResponse(url="/app")
 
 
+def _web_build() -> str:
+    from ui.runtime import DIST_DIR
+    try:
+        return next((p.name for p in sorted((DIST_DIR / "assets").glob("index-*.js"))), "")
+    except OSError:
+        return ""
+
+
 @router.get("/server/health")
 async def server_health():
     """Unauthenticated liveness probe (used by the Docker healthcheck).
@@ -46,5 +54,8 @@ async def server_health():
         "mcp_alive": mcp_alive,
         "ui_port": cfg.ui_port,
         "uptime_s": int(time.time() - _started_at),
+        # Which web build this server holds. An open tab compares it with the
+        # script it is running and offers a reload when they differ.
+        "build": _web_build(),
     }
     return JSONResponse(body, status_code=200 if mcp_alive else 503)
