@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpToLine, Clapperboard, ExternalLink, FlaskConical, Plus, X } from 'lucide-react'
+import { ArrowUpToLine, Clapperboard, ExternalLink, FlaskConical, GripVertical, Plus, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -319,6 +319,8 @@ export function Models() {
   const toast = useToast()
   const qc = useQueryClient()
   const [showAll, setShowAll] = useState(false)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [over, setOver] = useState<string | null>(null)
   const { data } = useQuery({
     queryKey: ['models'],
     queryFn: () => api.get<Data>('/api/v1/models'),
@@ -356,6 +358,7 @@ export function Models() {
       if (ra === 1) return (a.lab!.added ?? 0) - (b.lab!.added ?? 0)
       return b.lab!.updated - a.lab!.updated
     })
+  const queuedSlugs = inLab.filter((m) => m.lab!.status === 'queued').map((m) => m.slug)
   const fresh = all
     .filter((m) => !m.lab && !m.covered && (showAll || (m.released && m.age_days <= 45)))
     .sort((a, b) => a.age_days - b.age_days || b.hot - a.hot)
@@ -385,9 +388,55 @@ export function Models() {
           <Card>
             <CardHeader title={`In the lab (${inLab.length})`} />
             {inLab.length === 0 && <p className="px-4 pb-4 text-[12.5px] text-ink-3">Nothing queued. Pick models below or press “Test all new models”.</p>}
-            {inLab.map((m) => (
-              <Row key={m.slug} model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} onVideo={toVideo} />
-            ))}
+            {inLab.map((m) => {
+              const queued = m.lab!.status === 'queued'
+              return (
+                <div
+                  key={m.slug}
+                  draggable={queued}
+                  onDragStart={(e) => {
+                    setDragging(m.slug)
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null)
+                    setOver(null)
+                  }}
+                  onDragOver={(e) => {
+                    if (!dragging || !queued) return
+                    e.preventDefault()
+                    if (over !== m.slug) setOver(m.slug)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (!dragging || dragging === m.slug || !queued) return
+                    const order = queuedSlugs.filter((s) => s !== dragging)
+                    const at = order.indexOf(m.slug)
+                    // dropping on a row below the dragged one puts it after that row, above puts it before
+                    order.splice(queuedSlugs.indexOf(dragging) < queuedSlugs.indexOf(m.slug) ? at + 1 : at, 0, dragging)
+                    setDragging(null)
+                    setOver(null)
+                    post('/api/v1/models/order', { slugs: order })
+                  }}
+                  className={cn(
+                    'relative',
+                    queued && 'cursor-grab active:cursor-grabbing',
+                    dragging === m.slug && 'opacity-40',
+                    over === m.slug && dragging !== m.slug && 'outline outline-2 -outline-offset-2 outline-accent',
+                  )}
+                >
+                  {queued && (
+                    <GripVertical size={14} className="pointer-events-none absolute left-0.5 top-3.5 text-ink-3" aria-hidden />
+                  )}
+                  {queued && (
+                    <span className="pointer-events-none absolute right-2 top-0.5 text-[10.5px] text-ink-3">
+                      {queuedSlugs.indexOf(m.slug) === 0 ? 'next' : `#${queuedSlugs.indexOf(m.slug) + 1}`}
+                    </span>
+                  )}
+                  <Row model={m} onSet={set} onPublish={(slug) => post('/api/v1/models/publish', { slug })} onVideo={toVideo} />
+                </div>
+              )
+            })}
           </Card>
 
           <Card>

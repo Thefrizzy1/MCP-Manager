@@ -64,6 +64,25 @@ def to_front(root: Path, slug: str, name: str = "") -> dict:
     return data["models"][slug]
 
 
+def reorder(root: Path, slugs: list[str]) -> list[str]:
+    """Put the queued models in this order (the lab tests the first one next).
+    Queued models missing from the list keep their place after the given ones."""
+    data = _load(root)
+    queued = sorted((r for r in data["models"].values() if r.get("status") == "queued"),
+                    key=lambda r: r.get("added", 0))
+    if not queued:
+        return []
+    wanted = [s.strip().lower() for s in slugs]
+    order = [s for s in dict.fromkeys(wanted) if data["models"].get(s, {}).get("status") == "queued"]
+    order += [r["slug"] for r in queued if r["slug"] not in order]
+    start = queued[0].get("added", 0)
+    for i, slug in enumerate(order):
+        data["models"][slug]["added"] = start + i
+    # rows that are not queued but sort between them do not matter: next_queued only looks at queued ones
+    write_json(_path(root), data)
+    return order
+
+
 def next_queued(root: Path) -> dict | None:
     """Oldest queued model, or None. A model already being tested is returned
     again so an interrupted night resumes it instead of starting another."""

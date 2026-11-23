@@ -64,6 +64,17 @@ async def api_v1_models_set(body: QueueBody):
     return await api_v1_models()
 
 
+class OrderBody(BaseModel):
+    slugs: list[str] = Field(..., max_length=500)
+
+
+@router.post("/api/v1/models/order")
+async def api_v1_models_order(body: OrderBody):
+    """Reorder the lab queue: the first slug is tested next."""
+    lab_board.reorder(ROOT, body.slugs)
+    return await api_v1_models()
+
+
 class PublishBody(BaseModel):
     slug: str = Field(..., min_length=1, max_length=120)
 

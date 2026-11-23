@@ -51,3 +51,13 @@ def test_to_front_makes_a_model_next(tmp_path):
     assert B.next_queued(tmp_path)["slug"] == "flux-3"
     B.to_front(tmp_path, "new-one", "New One")          # not on the list yet: queued and first
     assert B.next_queued(tmp_path)["slug"] == "new-one"
+
+
+def test_reorder_sets_the_lab_queue_order(tmp_path):
+    for s in ("a", "b", "c", "d"):
+        B.queue(tmp_path, s)
+    B.report(tmp_path, "a", status="published")
+    assert B.reorder(tmp_path, ["d", "b", "nope", "a"]) == ["d", "b", "c"]   # unknown / not queued ignored
+    assert B.next_queued(tmp_path)["slug"] == "d"
+    B.reorder(tmp_path, ["c"])
+    assert B.next_queued(tmp_path)["slug"] == "c"
