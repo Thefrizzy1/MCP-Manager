@@ -5,7 +5,15 @@ What the dispatcher and the agents' sessions use: take a task, finish it,
 delegate work, read and write a video's documents, read the shared library,
 and talk in a video's chat thread.
 """
+import asyncio
+import base64
+import io
 import json
+import os
+import re
+import shutil
+import subprocess
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP, Image
@@ -190,3 +198,176 @@ def register_studio_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
             return _picture(path)
         except (ValueError, OSError) as e:
             return f"Error: {e}"
+
+    # ── Real thumbnails: compose in HTML, render on a machine with a browser ──
+    RENDER_DIR = _ROOT / "data" / "render"
+    _ASSET = re.compile(r"""(src|href)=(["'])(asset|library):([^"']+)\2""")
+
+    def _data_uri(path: Path) -> str:
+        """An image as a data URI, scaled down to at most 1600 px (thumbnails are 1280 wide)."""
+        mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+                ".svg": "image/svg+xml"}.get(path.suffix.lower())
+        if not mime:
+            raise ValueError(f"{path.name} is not an image")
+        raw = path.read_bytes()
+        if mime != "image/svg+xml":
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(io.BytesIO(raw)) as im:
+                    if max(im.size) > 1600:
+                        im.thumbnail((1600, 1600))
+                        buf = io.BytesIO()
+                        keep_alpha = im.mode in ("RGBA", "LA", "P")
+                        im.save(buf, "PNG" if keep_alpha else "JPEG", **({} if keep_alpha else {"quality": 90}))
+                        raw, mime = buf.getvalue(), ("image/png" if keep_alpha else "image/jpeg")
+            except Exception:                  # no Pillow, or a file it cannot read: send it as it is
+                pass
+        return f"data:{mime};base64," + base64.b64encode(raw).decode()
+
+    def _inline(job: str, html: str) -> str:
+        def sub(m):
+            where, rel = m.group(3), m.group(4)
+            if where == "asset":
+                path = jobs.resolve_file(job, rel)
+                if not path:
+                    raise ValueError(f"asset:{rel} is not a file in {job}")
+            else:
+                path = jobs.library_path(rel)
+                if not path.is_file():
+                    raise ValueError(f"library:{rel} is not a file in the library")
+            return f'{m.group(1)}={m.group(2)}{_data_uri(path)}{m.group(2)}'
+        return _ASSET.sub(sub, html)
+
+    class RenderInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        job: str = Field(..., description="Video folder name")
+        name: str = Field(..., description="File name for the picture, e.g. 'concept A v1' (saved as upload/thumbs/<name>.png)", max_length=80)
+        html: str = Field(..., description="A complete HTML page, 1280x720. Images: src=\"asset:<path in the video folder>\" or src=\"library:<path in 00_Library>\". Google Fonts links work.", min_length=20, max_length=200000)
+
+    @mcp.tool(name="thumbnail_render", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def thumbnail_render(params: RenderInput) -> str:
+        """Render a thumbnail from HTML into a real 1280x720 PNG in the video's upload/thumbs folder.
+
+        Waits up to about three minutes for the render machine. Look at the result
+        with studio_view_image before calling it done. An existing picture of the
+        same name is kept in _old.
+        """
+        from core import node_jobs
+        if not jobs.job_folder(params.job):
+            return f"Error: no video folder named {params.job!r}"
+        name = re.sub(r"[^\w .()-]+", "", params.name).strip()[:80] or "thumbnail"
+        try:
+            html = _inline(params.job, params.html)
+        except (ValueError, OSError) as e:
+            return f"Error: {e}"
+        RENDER_DIR.mkdir(parents=True, exist_ok=True)
+        ref = f"{int(time.time() * 1000)}"
+        (RENDER_DIR / f"{ref}.html").write_text(html, encoding="utf-8")
+        machine = os.getenv("RENDER_MACHINE", "gpu-render")
+        job = node_jobs.add(_ROOT, machine, "render_html",
+                            {"ref": ref, "job": params.job, "out": f"upload/thumbs/{name}.png", "width": 1280, "height": 720})
+        for _ in range(90):
+            await asyncio.sleep(2)
+            cur = next((j for j in node_jobs.jobs(_ROOT, machine) if j["id"] == job["id"]), None)
+            if cur and cur["status"] in ("done", "failed"):
+                (RENDER_DIR / f"{ref}.html").unlink(missing_ok=True)
+                if cur["status"] == "failed":
+                    return "Error: the render failed: " + str(cur["result"].get("error", "unknown"))[:400]
+                return f"✓ rendered upload/thumbs/{name}.png. Look at it with studio_view_image."
+        return (f"Error: the render machine ({machine}) did not pick the job up within three minutes. "
+                "It is still queued and will be saved when it runs.")
+
+    class FetchInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        job_id: int = Field(..., description="Node job id")
+
+    @mcp.tool(name="node_fetch_render", annotations={"readOnlyHint": True})
+    async def node_fetch_render(params: FetchInput) -> str:
+        """Node: the HTML page of a render job, with its images inlined."""
+        from core import node_jobs
+        job = next((j for j in node_jobs.jobs(_ROOT) if j["id"] == params.job_id and j["kind"] == "render_html"), None)
+        if not job:
+            return "Error: no such render job"
+        path = RENDER_DIR / f"{job['payload']['ref']}.html"
+        return path.read_text(encoding="utf-8") if path.is_file() else "Error: the page is gone"
+
+    class PutInput(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        job_id: int = Field(..., description="Node job id of a render job")
+        data_b64: str = Field(..., description="The PNG, base64", max_length=30_000_000)
+
+    @mcp.tool(name="node_put_render", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def node_put_render(params: PutInput) -> str:
+        """Node: deliver the rendered picture of a render job into its video folder."""
+        from core import node_jobs
+        job = next((j for j in node_jobs.jobs(_ROOT) if j["id"] == params.job_id and j["kind"] == "render_html"), None)
+        if not job or job["status"] != "running":
+            return "Error: no running render job with that id"
+        raw = base64.b64decode(params.data_b64)
+        if not raw.startswith(b"\x89PNG"):
+            return "Error: not a PNG"
+        folder = jobs.job_folder(job["payload"]["job"])
+        if not folder:
+            return "Error: the video folder is gone"
+        out = folder / job["payload"]["out"]
+        for d in (out.parent.parent, out.parent):
+            if not d.is_dir():
+                d.mkdir()
+                jobs.inherit(d)
+        if out.is_file():
+            old = out.parent / "_old"
+            if not old.is_dir():
+                old.mkdir()
+                jobs.inherit(old)
+            out.rename(old / f"{out.stem}_old_{time.strftime('%Y%m%d_%H%M%S')}{out.suffix}")
+        out.write_bytes(raw)
+        jobs.inherit(out)
+        jobs._cache["ts"] = 0.0
+        return f"✓ saved {job['payload']['out']}"
+
+    class FramesInput(BaseModel):
+        model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+        job: str = Field(..., description="Video folder name")
+        video: str = Field(..., description="Path of the video file inside the video folder")
+        times_json: str = Field(default="", description="JSON list of seconds to grab, e.g. [3, 12.5, 40]. Empty = 12 frames spread over the clip")
+
+    @mcp.tool(name="jobs_video_frames", annotations={"readOnlyHint": False, "destructiveHint": False})
+    async def jobs_video_frames(params: FramesInput) -> str:
+        """Grab still frames from a video in the folder into upload/frames, to look at or use in a thumbnail."""
+        if not shutil.which("ffmpeg"):
+            return "Error: ffmpeg is not installed where Plutus runs"
+        src = jobs.resolve_file(params.job, params.video)
+        if not src:
+            return f"Error: no file {params.video!r} in {params.job}"
+        try:
+            probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(src)],
+                                   capture_output=True, text=True, timeout=60)
+            duration = float(probe.stdout.strip() or 0)
+        except (ValueError, subprocess.TimeoutExpired):
+            duration = 0.0
+        try:
+            times = [float(t) for t in json.loads(params.times_json)] if params.times_json else []
+        except (ValueError, TypeError):
+            return "Error: times_json must be a JSON list of numbers"
+        if not times:
+            if not duration:
+                return "Error: could not read the clip's length; give times_json"
+            times = [round(duration * (i + 0.5) / 12, 2) for i in range(12)]
+        out_dir = jobs.job_folder(params.job) / "upload" / "frames"
+        for d in (out_dir.parent, out_dir):
+            if not d.is_dir():
+                d.mkdir()
+                jobs.inherit(d)
+        stem = re.sub(r"[^\w-]+", "_", src.stem)[:40]
+        saved = []
+        for t in times[:24]:
+            if duration and t > duration:
+                continue
+            out = out_dir / f"{stem}_{t:08.2f}s.jpg"
+            r = await asyncio.to_thread(subprocess.run, ["ffmpeg", "-y", "-v", "error", "-ss", str(t), "-i", str(src),
+                                                         "-frames:v", "1", "-q:v", "2", str(out)],
+                                        capture_output=True, text=True, timeout=120)
+            if r.returncode == 0 and out.is_file():
+                jobs.inherit(out)
+                saved.append(str(out.relative_to(jobs.job_folder(params.job))))
+        return "✓ saved:\n" + "\n".join(saved) if saved else "Error: no frame could be grabbed"

@@ -15,7 +15,9 @@ Call `worker_report` (worker `manager`) with one plain sentence when you start.
      and a one-line quote of the sentence that sets the date
    - kind `sponsor`, `review`, `film` or `deadline`; `job` set to the video folder when one matches
    - a stable `ref` (sponsor-what, e.g. `meshy-draft`) so a moved date updates the entry
-   Where a date moved, update the entry. Where a deal is clearly off, `calendar_remove_event`.
+   - `evidence` (which mail) and `evidence_at` (that mail's sent date and time)
+   Where a date moved, update the entry. If the answer says the date was kept because the
+   owner changed it by hand later, leave it: the owner's change stands unless a newer mail says otherwise. Where a deal is clearly off, `calendar_remove_event`.
 4. For an open video whose deadline you now know and that has none on the board, `jobs_update`
    its deadline.
 5. Never put mail addresses, prices or contract text beyond that one quoted line into the

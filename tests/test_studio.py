@@ -133,3 +133,39 @@ def test_a_tested_model_becomes_a_video_once(tmp_path, monkeypatch):
     lab_board.queue(tmp_path, "sdxl", "SDXL")
     with pytest.raises(Exception):
         asyncio.run(M.api_v1_models_to_video(M.PublishBody(slug="sdxl")))      # not tested yet
+
+
+def test_render_pages_get_their_pictures_inlined_and_stay_inside_the_folders(tmp_path, monkeypatch):
+    import asyncio
+    root = tmp_path / "yt"
+    job = root / "01_Open_Jobs" / "20261122_Thumb test"
+    (job / "upload").mkdir(parents=True)
+    (job / "upload" / "face.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    (root / "00_Library" / "Logo").mkdir(parents=True)
+    (root / "00_Library" / "Logo" / "logo.svg").write_text("<svg/>")
+    monkeypatch.setenv("YOUTUBE_ROOT", str(root))
+    jobs._cache.update(ts=0.0, root="")
+    from mcp.server.fastmcp import FastMCP
+    from tools import studio as tool_mod
+    monkeypatch.setattr(tool_mod, "_ROOT", tmp_path)
+    m = FastMCP("t")
+    tool_mod.register_studio_tools(m)
+    call = lambda name, args: asyncio.run(m.call_tool(name, {"params": args}))
+    text = lambda r: (r[0] if isinstance(r, tuple) else r)[0].text
+    monkeypatch.setattr(asyncio, "sleep", lambda s: asyncio.get_event_loop().create_future() if False else _noop())
+    html = '<img src="asset:upload/face.png"><img src="library:Logo/logo.svg">'
+    out = text(call("thumbnail_render", {"job": "20261122_Thumb test", "name": "concept A v1", "html": html}))
+    assert "did not pick the job up" in out                                  # nobody rendered: honest answer
+    from core import node_jobs
+    rj = node_jobs.jobs(tmp_path, "gpu-render")[0]
+    page = text(call("node_fetch_render", {"job_id": rj["id"]}))
+    assert "data:image/png;base64," in page and "data:image/svg+xml;base64," in page and "asset:" not in page
+    bad = text(call("thumbnail_render", {"job": "20261122_Thumb test", "name": "x", "html": '<img src="asset:../../x.png">'}))
+    assert bad.startswith("Error")
+    node_jobs.next_for(tmp_path, "gpu-render")                              # node picks it up
+    ok = text(call("node_put_render", {"job_id": rj["id"], "data_b64": __import__("base64").b64encode(b"\x89PNGdata").decode()}))
+    assert ok.startswith("✓") and (job / "upload" / "thumbs" / "concept A v1.png").read_bytes() == b"\x89PNGdata"
+
+
+async def _noop():
+    return None

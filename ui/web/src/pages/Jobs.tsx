@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Archive, ArchiveRestore, ChevronRight, File, Folder, Pin, Plus, RefreshCw, ChevronUp } from 'lucide-react'
 import { api } from '@/lib/api'
@@ -110,7 +110,39 @@ const dayLabel = (ts: number) =>
   new Date(ts * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
 
 /** The pipeline as arrows: finished stages tinted, the current one solid, the rest empty. */
-function Stepper({ job }: { job: Job }) {
+/** Which stage an agent's task works on, so that stage can show it is being worked on. */
+const TASK_STAGE: Record<string, string> = {
+  research: 'research',
+  script: 'script',
+  edit_plan: 'edit',
+  motion: 'edit',
+  thumbnail: 'packaging',
+  upload_pack: 'packaging',
+  shorts: 'shorts',
+}
+
+/** Something inside the row that acts on its own without opening the row. */
+function inner(onAct: () => void) {
+  return {
+    role: 'button',
+    tabIndex: 0,
+    onClick: (e: React.MouseEvent) => {
+      e.stopPropagation()
+      onAct()
+    },
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault()
+        e.stopPropagation()
+        onAct()
+      }
+    },
+  }
+}
+
+function Stepper({ job, onShorts }: { job: Job; onShorts: () => void }) {
+  const working = new Set(job.tasks.filter((t) => t.status === 'running' || t.status === 'queued').map((t) => TASK_STAGE[t.kind]))
+  const canShorts = job.actions.some((a) => a.id === 'shorts')
   return (
     <div className="flex min-w-0 flex-1" role="list" aria-label={`Stages of ${job.title}`}>
       {job.stages.map((s, i) => {
@@ -118,22 +150,32 @@ function Stepper({ job }: { job: Job }) {
         // The first stage that is not finished: coloured once work on it has started,
         // light grey while it is only ready to be picked up.
         const skipped = s.status === 'skipped'
-        const started = current && s.status === 'active'
-        const ready = current && s.status === 'todo'
+        const live = working.has(s.id)
+        const started = (current && s.status === 'active') || live
+        const ready = current && s.status === 'todo' && !live
         const color = STAGE_COLOR[s.id]
         const first = i === 0
+        // Live and no Shorts yet: the Shorts arrow is the button that makes them.
+        const makeShorts = s.id === 'shorts' && canShorts && !live
         return (
           <div
             key={s.id}
+            {...(makeShorts ? inner(onShorts) : {})}
             role="listitem"
             title={`${s.label}: ${skipped ? 'not needed for this video' : s.status === 'done' ? 'done' : started ? 'working on it' : ready ? 'ready to start' : s.status === 'active' ? 'started' : 'not started'}`}
-            className="relative flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium"
+            className={cn(
+              'relative flex h-7 min-w-0 flex-1 items-center justify-center text-[11px] font-medium',
+              live && 'stage-live',
+              makeShorts && 'cursor-pointer hover:brightness-110',
+            )}
             style={{
               marginLeft: first ? 0 : -7,
               clipPath: first
                 ? 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%)'
                 : 'polygon(0 0, calc(100% - 9px) 0, 100% 50%, calc(100% - 9px) 100%, 0 100%, 9px 50%)',
-              background: started
+              background: makeShorts
+                ? 'var(--accent)'
+                : started
                 ? color
                 : ready
                   ? '#D3D1C7'
@@ -142,13 +184,17 @@ function Stepper({ job }: { job: Job }) {
                     : s.status === 'active'
                       ? `color-mix(in srgb, ${color} 14%, var(--surface-2))`
                       : 'var(--surface-hover)',
-              color: started ? '#fff' : ready ? '#2C2C2A' : s.status === 'todo' || skipped ? 'var(--ink-3)' : 'var(--ink)',
+              color: started || makeShorts ? '#fff' : ready ? '#2C2C2A' : s.status === 'todo' || skipped ? 'var(--ink-3)' : 'var(--ink)',
               textDecoration: skipped ? 'line-through' : undefined,
             }}
           >
             <span className="truncate px-3">
-              {s.status === 'done' ? '✓ ' : ''}
-              {s.label}
+              {makeShorts ? '+ Make Shorts' : (
+                <>
+                  {s.status === 'done' ? '✓ ' : ''}
+                  {s.label}
+                </>
+              )}
             </span>
           </div>
         )
@@ -169,6 +215,7 @@ function JobRow({
   onAction: (job: Job, action: Job['actions'][number]) => void
 }) {
   const label = labels.find((l) => l.id === job.label)
+  const thumbBusy = job.tasks.some((t) => t.kind === 'thumbnail' && (t.status === 'running' || t.status === 'queued'))
   const [open, setOpen] = useState(false)
   return (
     <div className="border-b border-border last:border-b-0">
@@ -189,8 +236,19 @@ function JobRow({
             referrerPolicy="no-referrer"
             className="h-9 w-16 shrink-0 rounded-[4px] object-cover"
           />
+        ) : thumbBusy ? (
+          // The Thumbnail Maker is on it: the empty spot breathes.
+          <div title="The Thumbnail Maker is working on it" className="stage-live h-9 w-16 shrink-0 rounded-[4px]" style={{ background: STAGE_COLOR.packaging }} />
         ) : (
-          <div className="h-9 w-16 shrink-0 rounded-[4px] bg-surface-hover" />
+          // No thumbnail: the empty spot is the button that drafts one.
+          <div
+            {...inner(() => onAction(job, { id: 'thumbnail', label: 'Draft a thumbnail' }))}
+            title="Draft a thumbnail"
+            className="flex h-9 w-16 shrink-0 cursor-pointer items-center justify-center rounded-[4px] border border-dashed border-border-strong text-[10.5px] font-medium text-ink-3 hover:border-accent hover:text-accent"
+            style={label ? { borderColor: 'rgba(255,255,255,.6)', color: '#fff' } : undefined}
+          >
+            + Draft
+          </div>
         )}
         <div className="w-[200px] shrink-0">
           <div className={cn('truncate text-[13px] font-semibold', label ? 'text-white' : 'text-ink')}>{job.title}</div>
@@ -198,7 +256,7 @@ function JobRow({
             <div className={cn('text-[11px]', label ? 'font-semibold text-white' : 'text-danger')}>due {job.deadline.slice(5)}</div>
           )}
         </div>
-        <Stepper job={job} />
+        <Stepper job={job} onShorts={() => onAction(job, { id: 'shorts', label: 'Make Shorts' })} />
       </button>
       {open && (
         <div className="border-t border-border bg-surface-2 px-4 py-3 pl-[52px]">
@@ -221,7 +279,7 @@ function JobRow({
               </div>
             ))}
             <div className="flex flex-wrap gap-1.5 pt-1">
-              {job.actions.map((a) => (
+              {job.actions.filter((a) => a.id !== 'thumbnail' && a.id !== 'shorts').map((a) => (
                 <Button key={a.id} size="sm" variant="primary" onClick={() => onAction(job, a)}>
                   {a.label}
                 </Button>

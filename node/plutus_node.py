@@ -374,7 +374,32 @@ def do_comfy_test(cfg: dict, payload: dict) -> dict:
     return result
 
 
-HANDLERS = {"wake": do_wake, "comfy_test": do_comfy_test}
+# ── job: render_html ─────────────────────────────────────────────────────────
+def do_render_html(cfg: dict, payload: dict, job_id: int = 0) -> dict:
+    """Render an HTML page (a thumbnail) to PNG with a headless browser and hand it back.
+
+    Needs the playwright package and its Chromium on this machine."""
+    import base64
+    from playwright.sync_api import sync_playwright
+    html = plutus(cfg, "node_fetch_render", {"job_id": job_id}, timeout=120)
+    if html.startswith("Error:"):
+        raise RuntimeError(html)
+    w, h = int(payload.get("width", 1280)), int(payload.get("height", 720))
+    with sync_playwright() as p:
+        browser = p.chromium.launch(args=["--no-sandbox"])
+        page = browser.new_page(viewport={"width": w, "height": h})
+        page.set_content(html, wait_until="networkidle", timeout=60000)
+        page.evaluate("document.fonts ? document.fonts.ready.then(() => true) : true")
+        page.wait_for_timeout(400)
+        png = page.screenshot(type="png", clip={"x": 0, "y": 0, "width": w, "height": h})
+        browser.close()
+    answer = plutus(cfg, "node_put_render", {"job_id": job_id, "data_b64": base64.b64encode(png).decode()}, timeout=120)
+    if not answer.startswith("✓"):
+        raise RuntimeError(answer)
+    return {"ok": True, "saved": payload.get("out", ""), "bytes": len(png)}
+
+
+HANDLERS = {"wake": do_wake, "comfy_test": do_comfy_test, "render_html": do_render_html}
 
 
 # ── the loop ─────────────────────────────────────────────────────────────────
@@ -406,7 +431,8 @@ def tick(cfg: dict, doing: str = "") -> str:
     try:
         if kind not in HANDLERS or kind not in cfg["kinds"]:
             raise RuntimeError(f"this node does not do {kind!r}")
-        result = HANDLERS[kind](cfg, job["payload"])
+        handler = HANDLERS[kind]
+        result = handler(cfg, job["payload"], job["id"]) if kind == "render_html" else handler(cfg, job["payload"])
         ok = bool(result.get("ok", True))
     except Exception as e:
         result, ok = {"error": str(e)[:600]}, False

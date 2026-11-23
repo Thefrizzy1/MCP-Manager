@@ -45,19 +45,72 @@ def check_token(root: Path, candidate: str) -> bool:
     return bool(candidate) and secrets.compare_digest(candidate, token(root))
 
 
+def _when(value) -> int:
+    """A moment as unix time from an ISO date/time string or a number; 0 if unknown."""
+    if not value:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    try:
+        dtv = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return int(dtv.timestamp())
+    except ValueError:
+        return 0
+
+
 def add_event(root: Path, day: str, title: str, description: str = "", link: str = "",
-              job: str = "", kind: str = "other", ref: str = "") -> dict:
-    """Add a dated entry. The same ``ref`` again replaces the earlier entry."""
+              job: str = "", kind: str = "other", ref: str = "", by: str = "agent",
+              evidence: str = "", evidence_at="") -> dict:
+    """Add a dated entry, or change one with the same ``ref``.
+
+    Every change is kept in the entry's history with who made it and what it was
+    based on. The newest change wins, judged by when its evidence is from: a
+    change you make by hand counts from the moment you make it, an agent's
+    change counts from the date of the mail (or other source) it read. So an
+    agent re-reading an old mail cannot undo a date you moved; a newer mail can.
+    Returns the entry, with ``kept`` set when the change was not applied.
+    """
     date.fromisoformat(day)                                    # ValueError if malformed
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
+    now = int(time.time())
+    at = now if by == "you" else (_when(evidence_at) or now)
     data = _load(root)
-    row = {"id": ref or secrets.token_hex(6), "date": day, "title": title.strip()[:200],
-           "description": description.strip()[:3000], "link": link[:500], "job": job[:300],
-           "kind": kind, "added": int(time.time())}
+    old = next((e for e in data["events"] if ref and e["id"] == ref), None)
+    history = list((old or {}).get("history") or [])
+    if old and not history:                    # entries from before history existed
+        history = [{"ts": old.get("added", now), "at": old.get("added", now), "date": old["date"],
+                    "by": "agent", "evidence": ""}]
+    if old:
+        current_at = max((h.get("at", 0) for h in history), default=0)
+        if at < current_at and day != old["date"]:
+            last = max(history, key=lambda h: h.get("at", 0))
+            kept = dict(old, kept=f"kept {old['date']}: {'you' if last.get('by') == 'you' else last.get('by')} changed it "
+                                  f"based on something newer ({datetime.fromtimestamp(current_at):%d %b %H:%M})")
+            history.append({"ts": now, "at": at, "date": day, "by": by, "evidence": evidence[:300], "applied": False})
+            kept["history"] = history[-30:]
+            data["events"] = [e for e in data["events"] if e["id"] != old["id"]] + [{k: v for k, v in kept.items() if k != "kept"}]
+            write_json(_path(root), data)
+            return kept
+    history.append({"ts": now, "at": at, "date": day, "by": by, "evidence": evidence[:300], "applied": True})
+    row = {"id": ref or secrets.token_hex(6), "date": day,
+           "title": title.strip()[:200] or (old or {}).get("title", ""),
+           "description": (description.strip() or (old or {}).get("description", ""))[:3000],
+           "link": (link or (old or {}).get("link", ""))[:500], "job": (job or (old or {}).get("job", ""))[:300],
+           "kind": kind if not old or kind != "other" else old.get("kind", kind),
+           "added": (old or {}).get("added", now), "history": history[-30:]}
     data["events"] = [e for e in data["events"] if e["id"] != row["id"]] + [row]
     write_json(_path(root), data)
     return row
+
+
+def move_event(root: Path, event_id: str, day: str, note: str = "") -> dict:
+    """You moved an entry by hand. That is the newest truth until newer evidence comes."""
+    old = next((e for e in _load(root)["events"] if e["id"] == event_id), None)
+    if not old:
+        raise KeyError(f"no calendar entry {event_id!r}")
+    return add_event(root, day, old["title"], old.get("description", ""), old.get("link", ""), old.get("job", ""),
+                     old.get("kind", "other"), event_id, by="you", evidence=note or "moved by hand")
 
 
 def remove_event(root: Path, event_id: str) -> bool:
@@ -104,7 +157,7 @@ def collect(root: Path, jobs: list[dict], uploads: list[dict], lab: dict[str, di
 
 
 def _esc(text: str) -> str:
-    return (text or "").replace("\\", "\\\\").replace(";", "\;").replace(",", "\\,") \
+    return (text or "").replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,") \
         .replace("\r", "").replace("\n", "\\n")
 
 

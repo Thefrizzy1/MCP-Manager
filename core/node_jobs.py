@@ -18,7 +18,7 @@ from pathlib import Path
 from core import fleet
 from core.atomic_json import read_json, write_json
 
-KINDS = ("wake", "comfy_test")
+KINDS = ("wake", "comfy_test", "render_html")
 STALE_AFTER = 3 * 3600          # a job "running" this long was lost with its machine
 WAKE_EVERY = 15 * 60            # do not send another wake sooner than this
 WOKEN_WINDOW = 12 * 3600        # a wake counts as "we switched it on" for this long

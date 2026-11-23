@@ -373,6 +373,8 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         kind: str = Field(default="other", description="publish, deadline, review, film, sponsor, workflow or other")
         job: str = Field(default="", description="Video folder it belongs to, if any")
         ref: str = Field(default="", description="Stable id so the same entry is updated rather than duplicated")
+        evidence: str = Field(default="", description="What the date is based on, e.g. 'mail from Soundboost, 18 Nov'", max_length=300)
+        evidence_at: str = Field(default="", description="When that source is from, ISO date/time (the mail's sent date). Required when changing an existing date.")
 
     @mcp.tool(name="calendar_add_event", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def calendar_add_event(params: EventInput) -> str:
@@ -380,13 +382,18 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
 
         Published videos, video deadlines and published workflows appear on
         their own; add only what those do not cover. Reuse ``ref`` to move or
-        reword an entry.
+        reword an entry, and give ``evidence_at`` (when your source is from):
+        a date the owner moved by hand, or that newer mail set, is kept and
+        your change is recorded but not applied.
         """
         try:
             e = calendar_feed.add_event(_ROOT, params.date, params.title, params.description,
-                                        params.link, params.job, params.kind, params.ref)
+                                        params.link, params.job, params.kind, params.ref, "agent",
+                                        params.evidence, params.evidence_at)
         except ValueError as ex:
             return f"Error: {ex}"
+        if e.get("kept"):
+            return f"Not changed: {e['kept']}. Your change is recorded in the entry's history."
         return f"✓ {e['date']} {e['title']} (id {e['id']})"
 
     class EventRemoveInput(BaseModel):
@@ -402,7 +409,10 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
     async def calendar_events() -> str:
         """The entries added to the channel calendar by hand or by workers, oldest first."""
         rows = calendar_feed.custom_events(_ROOT)
-        return "\n".join(f"- {e['date']} [{e['kind']}] {e['title']} (id {e['id']})" for e in rows) or "No added entries."
+        def last(e):
+            h = [x for x in e.get("history") or [] if x.get("applied", True)]
+            return f" — last set by {h[-1]['by']}" + (f" ({h[-1]['evidence']})" if h[-1].get("evidence") else "") if h else ""
+        return "\n".join(f"- {e['date']} [{e['kind']}] {e['title']} (id {e['id']}){last(e)}" for e in rows) or "No added entries."
 
     # ── Nodes: the small program on each machine asks for work and reports back. ──
     from core import node_jobs

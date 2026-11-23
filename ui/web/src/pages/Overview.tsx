@@ -76,6 +76,8 @@ interface Event {
   id: string
   date: string
   title: string
+  kind: string
+  history?: { ts: number; at: number; date: string; by: string; evidence: string; applied?: boolean }[]
 }
 interface Data {
   machines: Machine[]
@@ -439,13 +441,41 @@ export function Overview() {
                 />
                 {data.calendar.upcoming.length > 0 && (
                   <ul className="mt-3 space-y-1 text-[12.5px] text-ink-2">
-                    {data.calendar.upcoming.map((e) => (
-                      <li key={e.id} className="flex items-center gap-2">
-                        <CalendarDays size={12} className="text-ink-3" />
-                        <span className="w-[82px] shrink-0 text-ink-3">{e.date}</span>
-                        <span className="truncate text-ink">{e.title}</span>
-                      </li>
-                    ))}
+                    {data.calendar.upcoming.map((e) => {
+                      // Published videos and workflows are facts; everything else can be moved.
+                      const movable = !e.id.startsWith('yt-') && !e.id.startsWith('wf-')
+                      const applied = (e.history ?? []).filter((h) => h.applied !== false)
+                      const last = applied[applied.length - 1]
+                      const ignored = (e.history ?? []).filter((h) => h.applied === false && h.ts > (last?.ts ?? 0))
+                      return (
+                        <li key={e.id} className="flex items-center gap-2">
+                          <CalendarDays size={12} className="shrink-0 text-ink-3" />
+                          {movable ? (
+                            <input
+                              type="date"
+                              aria-label={`Date of ${e.title}`}
+                              defaultValue={e.date}
+                              onBlur={(ev) => ev.target.value && ev.target.value !== e.date && post('/api/v1/calendar/move', { id: e.id, date: ev.target.value })}
+                              className="h-7 w-[132px] shrink-0 rounded-[var(--radius-sm)] border border-border bg-surface px-1.5 text-[12px] text-ink"
+                            />
+                          ) : (
+                            <span className="w-[132px] shrink-0 pl-1.5 text-ink-3">{e.date}</span>
+                          )}
+                          <span className="min-w-0 flex-1 truncate text-ink">{e.title}</span>
+                          {last && (
+                            <span
+                              className="shrink-0 text-[11px] text-ink-3"
+                              title={(e.history ?? [])
+                                .map((h) => `${new Date(h.ts * 1000).toLocaleString()}: ${h.by} set ${h.date}${h.evidence ? ` (${h.evidence})` : ''}${h.applied === false ? ', not applied' : ''}`)
+                                .join('\n')}
+                            >
+                              {last.by === 'you' ? 'moved by you' : 'from mail'}
+                              {ignored.length ? ' · kept over an older mail' : ''}
+                            </span>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
               </div>

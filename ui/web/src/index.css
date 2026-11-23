@@ -275,11 +275,11 @@ a {
 
 /* Something is being worked on right now: the colour breathes. */
 @keyframes stage-live {
-  0%, 100% { filter: brightness(1); opacity: 1; }
-  50% { filter: brightness(1.4) saturate(1.2); opacity: 0.62; }
+  0%, 100% { opacity: 1; filter: saturate(1.1); }
+  50% { opacity: 0.45; filter: saturate(0.85); }
 }
 @media (prefers-reduced-motion: no-preference) {
-  .stage-live { animation: stage-live 1.5s ease-in-out infinite; }
+  .stage-live { animation: stage-live 2.6s ease-in-out infinite; }
 }
 
 /* Overview: fans turn and LEDs blink on a machine that is on; a busy worker bobs. */

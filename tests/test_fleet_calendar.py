@@ -38,7 +38,7 @@ def test_calendar_collects_every_source_and_writes_valid_ics(tmp_path):
                {"id": "nodate", "title": "x", "published": "", "kind": "video"}]
     lab = {"k5": {"status": "published", "updated": 1795300000, "name": "Kandinsky 5", "pr": "https://x/pull/3"}}
     events = C.collect(tmp_path, jobs, uploads, lab)
-    assert [e["kind"] for e in events] == ["publish", "workflow", "other", "deadline"]
+    assert [e["kind"] for e in events] == ["publish", "workflow", "sponsor", "deadline"]   # a re-add keeps the kind
     assert "1,270 views" in events[0]["description"] and "20261111_Local Relight" in events[0]["description"]
     ics = C.to_ics(events)
     assert ics.startswith("BEGIN:VCALENDAR\r\n") and ics.count("BEGIN:VEVENT") == 4
@@ -71,3 +71,19 @@ def test_machine_work_hours_and_worker_settings(tmp_path):
     assert ws["manager"]["model"] == "opus" and ws["manager"]["home"] == "gpu-server"
     with pytest.raises(ValueError):
         F.set_worker(tmp_path, "manager", model="gpt")
+
+
+def test_the_newest_change_wins_and_a_hand_move_survives_old_mail(tmp_path):
+    C.add_event(tmp_path, "2026-11-27", "Soundboost: preview due", ref="sb", evidence="mail", evidence_at="2026-11-18T10:00")
+    assert C.move_event(tmp_path, "sb", "2026-11-24")["date"] == "2026-11-24"
+    kept = C.add_event(tmp_path, "2026-11-27", "Soundboost: preview due", ref="sb", evidence="same old mail",
+                       evidence_at="2026-11-18T10:00")
+    assert kept["date"] == "2026-11-24" and "kept" in kept
+    newer = C.add_event(tmp_path, "2026-11-26", "Soundboost: preview due", ref="sb", evidence="new mail",
+                        evidence_at="2099-01-01T09:00")
+    assert newer["date"] == "2026-11-26"
+    h = newer["history"]
+    assert [(x["by"], x["date"], x["applied"]) for x in h] == [
+        ("agent", "2026-11-27", True), ("you", "2026-11-24", True), ("agent", "2026-11-27", False), ("agent", "2026-11-26", True)]
+    with pytest.raises(KeyError):
+        C.move_event(tmp_path, "nope", "2026-11-24")

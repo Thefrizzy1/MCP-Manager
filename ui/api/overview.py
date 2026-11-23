@@ -105,6 +105,30 @@ async def api_v1_overview_worker(body: WorkerBody):
     return await api_v1_overview()
 
 
+class MoveBody(BaseModel):
+    id: str = Field(..., max_length=80)
+    date: str = Field(..., max_length=10)
+    note: str = Field(default="", max_length=300)
+
+
+@router.post("/api/v1/calendar/move")
+async def api_v1_calendar_move(body: MoveBody):
+    """You moved an entry. It stays there until something newer than your change says otherwise."""
+    if body.id.startswith("due-"):                 # a video deadline lives on the video
+        try:
+            jobs.update_job(ROOT, body.id[4:], {"deadline": body.date})
+        except (KeyError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        return await api_v1_overview()
+    try:
+        calendar_feed.move_event(ROOT, body.id, body.date, body.note)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await api_v1_overview()
+
+
 class TokenBody(BaseModel):
     confirm: bool = Field(default=False)
 
