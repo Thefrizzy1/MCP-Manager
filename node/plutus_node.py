@@ -305,14 +305,35 @@ def find_model(models: Path, dest: str, name: str) -> Path | None:
     return hit
 
 
+def use_paths(prompt: dict, renames: dict[str, str]) -> dict:
+    """The prompt with every loader input that names a file found in a subfolder
+    pointed at that subfolder path."""
+    out = {}
+    for node_id, node in prompt.items():
+        node = dict(node)
+        node["inputs"] = {k: (renames.get(v, v) if isinstance(v, str) else v)
+                          for k, v in (node.get("inputs") or {}).items()}
+        out[node_id] = node
+    return out
+
+
 def do_comfy_test(cfg: dict, payload: dict) -> dict:
     cdir = Path(cfg["comfy_dir"])
     fetched: list[Path] = []
     started = None
     result: dict = {"runs": [], "gpu": gpu_now().get("gpu", "")}
+    renames: dict[str, str] = {}
     try:
         for m in payload.get("models") or []:
-            if not m.get("required", True) or find_model(cdir / "models", m["dest"], m["name"]):
+            found = find_model(cdir / "models", m["dest"], m["name"]) if m.get("name") else None
+            if found:
+                # Already here, maybe in a subfolder. ComfyUI then lists it as
+                # "Sub\\name", so the prompt has to ask for it that way.
+                rel = found.relative_to(cdir / "models" / m["dest"])
+                if len(rel.parts) > 1:
+                    renames[m["name"]] = ("\\" if WIN else "/").join(rel.parts)
+                continue
+            if not m.get("required", True):
                 continue
             target = cdir / "models" / m["dest"] / m["name"]
             log(f"downloading {m['name']}")
@@ -325,6 +346,10 @@ def do_comfy_test(cfg: dict, payload: dict) -> dict:
             if not (cdir / "input" / name).is_file():
                 shutil.copy2(src, cdir / "input" / name)
         started = start_comfy(cfg)
+        if renames:
+            payload = dict(payload, prompts=[dict(p, prompt=use_paths(p["prompt"], renames))
+                                             for p in payload.get("prompts") or []])
+            result["renamed"] = renames
         for p in payload.get("prompts") or []:
             run = {"name": p.get("name", "run"), "ok": False}
             t0 = time.time()

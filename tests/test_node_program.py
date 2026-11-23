@@ -52,3 +52,31 @@ def test_a_failed_run_reports_failure(monkeypatch):
     node.tick(CFG)
     done = [a for t, a in calls if t == "node_job_done"][0]
     assert done["ok"] is False and "out of memory" in done["result_json"]
+
+
+def test_a_model_found_in_a_subfolder_is_asked_for_by_its_subfolder_path(tmp_path, monkeypatch):
+    comfy = tmp_path / "ComfyUI"
+    (comfy / "models" / "vae" / "Krea-2").mkdir(parents=True)
+    (comfy / "models" / "vae" / "Krea-2" / "qwen_image_vae.safetensors").write_bytes(b"x")
+    (comfy / "input").mkdir()
+    sent = []
+    monkeypatch.setattr(node, "start_comfy", lambda cfg: None)
+    monkeypatch.setattr(node, "download", lambda url, dest: (_ for _ in ()).throw(AssertionError("must not download")))
+    class Resp:
+        def __init__(self, body): self.body = body
+        def read(self): return self.body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def fake_open(req, timeout=0):
+        sent.append(json.loads(req.data.decode())["prompt"])
+        return Resp(b'{"prompt_id": "p1"}')
+    monkeypatch.setattr(node.urllib.request, "urlopen", fake_open)
+    monkeypatch.setattr(node, "comfy_get", lambda cfg, path, timeout=10: {"p1": {"status": {"status_str": "success"}}})
+    monkeypatch.setattr(node, "gpu_now", lambda: {})
+    payload = {"slug": "anima", "models": [{"name": "qwen_image_vae.safetensors", "dest": "vae", "url": "u", "required": True}],
+               "prompts": [{"name": "s1", "prompt": {"10": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+                                                    "11": {"class_type": "X", "inputs": {"steps": 30, "other": "keep"}}}}]}
+    res = node.do_comfy_test(dict(node.DEFAULTS, comfy_dir=str(comfy)), payload)
+    expected = ("Krea-2\\" if node.WIN else "Krea-2/") + "qwen_image_vae.safetensors"
+    assert sent[0]["10"]["inputs"]["vae_name"] == expected and sent[0]["11"]["inputs"] == {"steps": 30, "other": "keep"}
+    assert res["ok"] and res["renamed"] == {"qwen_image_vae.safetensors": expected}
