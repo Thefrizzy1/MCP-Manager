@@ -163,3 +163,9 @@ def test_readme_conflicts_keep_both_sides_and_this_branch_wins_a_shared_row():
     out = lab.union_conflicts(text).split("\n")
     assert out == ["top", "| a | [SDXL](workflows/sdxl/sdxl) | 12 GB |", "| m | [Music](workflows/audio/m) | 12 GB measured |",
                    "| b | [Bernini](workflows/bernini/b) | 12 GB |", "bottom"]
+
+
+def test_tokens_never_reach_logs(capsys):
+    lab.log("git push https://x-access-token:gho_ABC123secret@github.com/o/r.git failed, also ghp_XYZ789")
+    out = capsys.readouterr().out
+    assert "ABC123secret" not in out and "XYZ789" not in out and "x-access-token:***" in out

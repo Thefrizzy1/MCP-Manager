@@ -86,7 +86,7 @@ def load_config() -> dict:
 
 
 def log(msg: str) -> None:
-    print(f"[{dt.datetime.now():%H:%M:%S}] {msg}", flush=True)
+    print(f"[{dt.datetime.now():%H:%M:%S}] {redact(str(msg))}", flush=True)
 
 
 # ── Plutus over MCP (streamable HTTP), enough to call one tool ───────────────
@@ -360,10 +360,18 @@ def read_json(path: Path, default):
         return default
 
 
+_SECRET = re.compile(r"(x-access-token:|gh[opsu]_)[A-Za-z0-9_]+")
+
+
+def redact(text: str) -> str:
+    """Never let a token reach a log or an error message."""
+    return _SECRET.sub(lambda m: m.group(1) + "***", text)
+
+
 def git(repo: Path, *args: str, check: bool = True) -> str:
     r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True)
     if check and r.returncode:
-        raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:300]}")
+        raise RuntimeError(redact(f"git {' '.join(args)}: {r.stderr.strip()[:300]}"))
     return r.stdout.strip()
 
 
@@ -470,7 +478,15 @@ def merge_main_into(repo: Path, branch: str, token: str, remote: str) -> bool:
 
 
 def process_approvals(cfg: dict) -> list[str]:
-    """Merge pull requests whose request was approved in the dashboard."""
+    """Merge pull requests whose request was approved in the dashboard.
+
+    One at a time across processes (the timer and a running night share it)."""
+    import fcntl
+    lock = open(Path(cfg["state_dir"]) / "approvals.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return []
     done = []
     try:
         text = plutus(cfg, "studio_permissions")
