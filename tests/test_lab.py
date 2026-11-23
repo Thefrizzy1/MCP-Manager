@@ -153,3 +153,13 @@ def test_a_status_report_is_retried_and_its_review_stays_valid_json(monkeypatch)
     calls.clear()
     monkeypatch.setattr(lab, "plutus", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
     lab.tell({}, "just a progress line", "anima")                 # no status: one try, never raises
+
+
+def test_readme_conflicts_keep_both_sides_and_this_branch_wins_a_shared_row():
+    text = "\n".join(["top", "<<<<<<< HEAD", "| a | [SDXL](workflows/sdxl/sdxl) | 12 GB |",
+                      "| m | [Music](workflows/audio/m) | 12 GB measured |", "=======",
+                      "| b | [Bernini](workflows/bernini/b) | 12 GB |", "| m | [Music](workflows/audio/m) | 12 GB |",
+                      ">>>>>>> origin/main", "bottom"])
+    out = lab.union_conflicts(text).split("\n")
+    assert out == ["top", "| a | [SDXL](workflows/sdxl/sdxl) | 12 GB |", "| m | [Music](workflows/audio/m) | 12 GB measured |",
+                   "| b | [Bernini](workflows/bernini/b) | 12 GB |", "bottom"]

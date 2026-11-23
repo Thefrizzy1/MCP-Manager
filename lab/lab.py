@@ -416,6 +416,59 @@ def stop_comfy(proc: subprocess.Popen) -> None:
     proc.wait(timeout=30)
 
 
+def union_conflicts(text: str) -> str:
+    """Resolve merge conflicts in an index file (the README's tables and tree) by
+    keeping the lines of both sides. A row both sides changed (same link) keeps
+    this branch's version, which is the newer one."""
+    out, i, lines = [], 0, text.split("\n")
+    while i < len(lines):
+        if not lines[i].startswith("<<<<<<<"):
+            out.append(lines[i])
+            i += 1
+            continue
+        mine, theirs = [], []
+        i += 1
+        side = "mine"
+        while i < len(lines) and not lines[i].startswith(">>>>>>>"):
+            if lines[i].startswith("======="):
+                side = "theirs"
+            else:
+                (mine if side == "mine" else theirs).append(lines[i])
+            i += 1
+        i += 1
+        key = lambda l: (re.search(r"\]\(([^)]+)\)", l) or re.search(r"(\S+/)\s", l) or [None, l.strip()])[1]
+        mine_keys = {key(l) for l in mine}
+        out += mine + [l for l in theirs if key(l) not in mine_keys and l not in mine]
+    return "\n".join(out)
+
+
+def merge_main_into(repo: Path, branch: str, token: str, remote: str) -> bool:
+    """Bring a pull request branch up to date with main. Conflicts limited to the
+    README are resolved by keeping both sides; anything else is left to a person.
+    Returns whether the branch was updated and pushed."""
+    git(repo, "fetch", "-q", "origin")
+    git(repo, "checkout", "-q", "-B", f"merge-{branch}", f"origin/{branch}")
+    r = subprocess.run(["git", "-C", str(repo), "-c", "user.name=model-lab", "-c", "user.email=lab@users.noreply.github.com",
+                        "merge", "-q", "--no-edit", "origin/main"], capture_output=True, text=True)
+    if r.returncode:
+        conflicted = git(repo, "diff", "--name-only", "--diff-filter=U", check=False).split()
+        if conflicted != ["README.md"]:
+            git(repo, "merge", "--abort", check=False)
+            git(repo, "checkout", "-q", "main", check=False)
+            return False
+        readme = repo / "README.md"
+        text = union_conflicts(readme.read_text())
+        count = sum(1 for _ in repo.glob("workflows/*/*/models.json"))
+        text = re.sub(r"badge/workflows-\d+-", f"badge/workflows-{count}-", text)
+        readme.write_text(text)
+        git(repo, "add", "README.md")
+        git(repo, "-c", "user.name=model-lab", "-c", "user.email=lab@users.noreply.github.com",
+            "commit", "-q", "--no-edit")
+    git(repo, "push", "-q", f"https://x-access-token:{token}@{remote}", f"HEAD:{branch}")
+    git(repo, "checkout", "-q", "main", check=False)
+    return True
+
+
 def process_approvals(cfg: dict) -> list[str]:
     """Merge pull requests whose request was approved in the dashboard."""
     done = []
@@ -428,7 +481,17 @@ def process_approvals(cfg: dict) -> list[str]:
     for rid, link in re.findall(r"#(\d+) `lab\.merge_pr` approved: .*?(https://github\.com/\S+/pull/\d+)", text):
         try:
             gh(repo, "pr", "ready", link)
-            gh(repo, "pr", "merge", link, "--squash", "--delete-branch")
+            try:
+                gh(repo, "pr", "merge", link, "--squash", "--delete-branch")
+            except RuntimeError as e:
+                if "conflict" not in str(e).lower():
+                    raise
+                # Another workflow landed first and both touched the README: bring the
+                # branch up to date and try once more.
+                branch = json.loads(gh(repo, "pr", "view", link, "--json", "headRefName"))["headRefName"]
+                if not merge_main_into(repo, branch, os.environ.get("LAB_GH_TOKEN", ""), cfg["workflows_remote"]):
+                    raise RuntimeError(f"{link} conflicts outside the README; it needs a person") from e
+                gh(repo, "pr", "merge", link, "--squash", "--delete-branch")
             plutus(cfg, "studio_approval_done", {"params": {"request_id": int(rid)}})
             done.append(link)
             log(f"merged {link}")
