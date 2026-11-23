@@ -47,13 +47,15 @@ async def api_v1_models():
 class QueueBody(BaseModel):
     slug: str = Field(..., min_length=1, max_length=120)
     name: str = Field(default="", max_length=200)
-    status: str = Field(default="queued", max_length=12)   # queued | skipped | "" (remove)
+    status: str = Field(default="queued", max_length=12)   # queued | front | skipped | "" (remove)
 
 
 @router.post("/api/v1/models/set")
 async def api_v1_models_set(body: QueueBody):
     try:
-        if body.status == "queued":
+        if body.status == "front":
+            lab_board.to_front(ROOT, body.slug, body.name)
+        elif body.status == "queued":
             lab_board.queue(ROOT, body.slug, body.name)
         else:
             lab_board.set_status(ROOT, body.slug.strip().lower(), body.status)

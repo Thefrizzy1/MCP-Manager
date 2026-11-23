@@ -52,6 +52,18 @@ def queue(root: Path, slug: str, name: str = "", note: str = "") -> dict:
     return row
 
 
+def to_front(root: Path, slug: str, name: str = "") -> dict:
+    """Make a model the next one the lab tests (queues it if needed). The lab
+    takes the oldest queued model, so this dates it before every other row."""
+    slug = (slug or "").strip().lower()
+    row = queue(root, slug, name)
+    data = _load(root)
+    others = [r.get("added", 0) for s, r in data["models"].items() if s != slug]
+    data["models"][slug]["added"] = min([row.get("added", 0)] + [a - 1 for a in others])
+    write_json(_path(root), data)
+    return data["models"][slug]
+
+
 def next_queued(root: Path) -> dict | None:
     """Oldest queued model, or None. A model already being tested is returned
     again so an interrupted night resumes it instead of starting another."""

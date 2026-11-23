@@ -296,15 +296,18 @@ def register_job_tools(mcp: FastMCP, *, allow: "set[str] | None" = None):
         slug: str = Field(..., description="Model slug, e.g. ltx-2.5 (the Trend Radar's slug when it has one)")
         name: str = Field(default="", description="Display name")
         note: str = Field(default="", description="Why, or what to focus on", max_length=300)
+        front: bool = Field(default=False, description="Test it next, ahead of everything already queued")
 
     @mcp.tool(name="lab_queue", annotations={"readOnlyHint": False, "destructiveHint": False})
     async def lab_queue(params: LabQueueInput) -> str:
         """Put a model on the model lab's list to be built and tested."""
         try:
             row = lab_board.queue(_ROOT, params.slug, params.name, params.note)
+            if params.front:
+                row = lab_board.to_front(_ROOT, params.slug)
         except ValueError as e:
             return f"Error: {e}"
-        return f"✓ Queued {row['slug']}."
+        return f"✓ Queued {row['slug']}" + (" — it is next." if params.front else ".")
 
     # ── Machines, workers and the calendar: how the platform sees its own fleet. ──
     from core import calendar_feed, fleet

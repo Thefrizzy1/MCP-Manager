@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Clapperboard, ExternalLink, FlaskConical, Plus, X } from 'lucide-react'
+import { ArrowUpToLine, Clapperboard, ExternalLink, FlaskConical, Plus, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { PageHead, PageBody } from '@/components/PageHead'
 import { Card, CardHeader } from '@/components/ui/Card'
@@ -14,6 +14,7 @@ interface LabEntry {
   status: 'queued' | 'testing' | 'built' | 'failed' | 'waiting' | 'published' | 'skipped'
   pr: string
   note?: string
+  added?: number
   updated: number
   log: { ts: number; text: string }[]
   publish_requested?: boolean
@@ -276,6 +277,11 @@ function Row({
               </Button>
             </a>
           ) : null}
+          {lab?.status === 'queued' && (
+            <Button size="sm" variant="ghost" title="Test this one next" onClick={() => onSet(model.slug, model.name, 'front')}>
+              <ArrowUpToLine size={13} /> Next
+            </Button>
+          )}
           {(!lab || lab.status === 'queued') && (
             <Button size="icon-sm" variant="ghost" aria-label={`Skip ${model.name}`} onClick={() => onSet(model.slug, model.name, 'skipped')}>
               <X size={14} />
@@ -342,7 +348,14 @@ export function Models() {
   const all = data?.models ?? []
   const inLab = all
     .filter((m) => m.lab && m.lab.status !== 'skipped')
-    .sort((a, b) => (a.lab!.status === 'testing' ? -1 : 0) - (b.lab!.status === 'testing' ? -1 : 0) || b.lab!.updated - a.lab!.updated)
+    .sort((a, b) => {
+      // testing first, then the queue in the order the lab will take it, then the rest by recency
+      const rank = (s: string) => (s === 'testing' ? 0 : s === 'queued' ? 1 : 2)
+      const ra = rank(a.lab!.status), rb = rank(b.lab!.status)
+      if (ra !== rb) return ra - rb
+      if (ra === 1) return (a.lab!.added ?? 0) - (b.lab!.added ?? 0)
+      return b.lab!.updated - a.lab!.updated
+    })
   const fresh = all
     .filter((m) => !m.lab && !m.covered && (showAll || (m.released && m.age_days <= 45)))
     .sort((a, b) => a.age_days - b.age_days || b.hot - a.hot)

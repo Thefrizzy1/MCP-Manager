@@ -41,3 +41,13 @@ def test_the_3060_result_arrives_later_and_offers_an_update(tmp_path):
     assert row["update_pr"].endswith("/9") and row["publish_requested"] is False
     with pytest.raises(ValueError):
         B.report(tmp_path, "sdxl", gpu3060="maybe")
+
+
+def test_to_front_makes_a_model_next(tmp_path):
+    for s in ("a", "b", "flux-3"):
+        B.queue(tmp_path, s)
+    assert B.next_queued(tmp_path)["slug"] == "a"
+    B.to_front(tmp_path, "flux-3")
+    assert B.next_queued(tmp_path)["slug"] == "flux-3"
+    B.to_front(tmp_path, "new-one", "New One")          # not on the list yet: queued and first
+    assert B.next_queued(tmp_path)["slug"] == "new-one"
