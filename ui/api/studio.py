@@ -7,7 +7,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core import jobs, studio
+from core import jobs, prompter, studio
 from ui.api.deps import verify_auth
 from ui.runtime import ROOT
 
@@ -107,6 +107,12 @@ _READ_OFF = (re.compile(r"^read off\b.*\.md$", re.I), re.compile(r"^filming\b.*\
              re.compile(r"^script\.md$", re.I))
 
 
+def read_off_files(folder) -> list[str]:
+    """Documents to read from while filming, best first."""
+    names = sorted(p.name for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".md")
+    return [n for pat in _READ_OFF for n in names if pat.match(n)]
+
+
 @router.get("/api/v1/studio/script")
 async def api_studio_script(job: str):
     """The text to read while filming, split into sections. Prefers a read-off
@@ -114,22 +120,7 @@ async def api_studio_script(job: str):
     folder = jobs.job_folder(job)
     if not folder:
         raise HTTPException(404, "No such video")
-    names = sorted(p.name for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".md")
-    pick = next((n for pat in _READ_OFF for n in names if pat.match(n)), "")
-    if not pick:
+    files = read_off_files(folder)
+    if not files:
         return {"job": job, "file": "", "sections": [], "files": []}
-    text = jobs.read_doc(job, pick)
-    sections, cur = [], {"title": "", "text": []}
-    for line in text.splitlines():
-        m = re.match(r"^#{1,3}\s+(.*)", line)
-        if m:
-            if cur["title"] or any(x.strip() for x in cur["text"]):
-                sections.append(cur)
-            cur = {"title": m.group(1).strip(), "text": []}
-        else:
-            cur["text"].append(line)
-    if cur["title"] or any(x.strip() for x in cur["text"]):
-        sections.append(cur)
-    out = [{"title": s["title"], "text": "\n".join(s["text"]).strip()} for s in sections]
-    candidates = [n for n in names if any(p.match(n) for p in _READ_OFF)]
-    return {"job": job, "file": pick, "sections": [s for s in out if s["title"] or s["text"]], "files": candidates}
+    return {"job": job, "file": files[0], "sections": prompter.sections(jobs.read_doc(job, files[0])), "files": files}

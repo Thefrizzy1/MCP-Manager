@@ -293,3 +293,6 @@ a {
   .px-led.on { animation: led-blink 1.2s ease-in-out infinite; }
   .px-bob { animation: robot-bob 0.9s ease-in-out infinite; }
 }
+
+.prompter-scroll { scrollbar-width: none; overscroll-behavior: none; overflow-anchor: none; }
+.prompter-scroll::-webkit-scrollbar { display: none; }

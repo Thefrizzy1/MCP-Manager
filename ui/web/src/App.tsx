@@ -8,6 +8,7 @@ import { Trends } from '@/pages/Trends'
 import { Jobs } from '@/pages/Jobs'
 import { Chat } from '@/pages/Chat'
 import { Film } from '@/pages/Film'
+import { Prompter } from '@/pages/Prompter'
 import { Overview } from '@/pages/Overview'
 import { Models } from '@/pages/Models'
 import { Permissions } from '@/pages/Permissions'
@@ -67,6 +68,13 @@ const TITLES: Record<string, string> = {
 
 export function App() {
   const route = useRoute()
+  // The teleprompter owns the whole screen: no sidebar, no banners.
+  if (route === 'prompter')
+    return (
+      <ErrorBoundary label="Teleprompter">
+        <Prompter />
+      </ErrorBoundary>
+    )
   return (
     <Shell route={route}>
       {/* Keyed by route: the boundary resets when you navigate away, so a page

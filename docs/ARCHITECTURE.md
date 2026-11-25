@@ -168,6 +168,7 @@ core/                Cross-cutting logic, deliberately UI/transport-agnostic.
     calendar_feed.py       The subscribable iCalendar feed and its added entries.
     studio.py              Tasks per video, chat threads and agent runs (SQLite).
     node_jobs.py           The queue of work for machines, work hours, wake planning.
+    prompter.py            Teleprompter scripts, uploads and the remote-control link.
     organiser.py           Moves videos that are live from the open jobs to the archive.
     lab_board.py           Models the lab should test and how far each got.
     jobs.py                Job board: one job per NAS video folder, stage read off

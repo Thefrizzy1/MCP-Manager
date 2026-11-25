@@ -37,3 +37,13 @@ touched mouse or keyboard for `idle_minutes`.
 
 Wake-on-LAN also needs the machine itself to allow it: enabled in the BIOS and
 on the network adapter, and on Windows with Fast Startup switched off.
+
+## Teleprompter tablet on USB (macOS)
+
+`tablet_usb.py` opens the teleprompter on an Android tablet whenever it is plugged in, keeps its screen on
+while the cable is in, and shows the tablet in a window the Mac's mouse and keyboard can control.
+
+1. `brew install scrcpy` and `brew install --cask android-platform-tools`
+2. On the tablet: Settings, About tablet, Software information, tap *Build number* seven times; then
+   Settings, Developer options, *USB debugging* on. Plug it in and allow this computer.
+3. `python3 node/tablet_usb.py --plutus HOST:8766 --install` (undo with `--remove`)
