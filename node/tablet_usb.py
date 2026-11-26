@@ -97,8 +97,10 @@ def set_up(serial: str, mirror: bool) -> "subprocess.Popen | None":
     adb("-s", serial, "reverse", f"tcp:{PORT}", f"tcp:{PORT}")
     adb("-s", serial, "shell", "svc", "power", "stayon", "usb")
     adb("-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
+    # Straight to Chrome when it is there: otherwise Android may ask which browser to use.
+    chrome = "package:com.android.chrome" in adb("-s", serial, "shell", "pm", "list", "packages", "com.android.chrome")
     adb("-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW",
-        "-d", f"http://localhost:{PORT}/app#/prompter")
+        *(["-p", "com.android.chrome"] if chrome else []), "-d", f"http://localhost:{PORT}/app#/prompter")
     if mirror and tool("scrcpy"):
         env = {**os.environ, "ADB": tool("adb")}
         return subprocess.Popen([tool("scrcpy"), "-s", serial, "--stay-awake", "--keyboard=uhid", "--no-audio",
