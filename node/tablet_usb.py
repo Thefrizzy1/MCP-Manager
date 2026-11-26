@@ -6,8 +6,8 @@
     python3 tablet_usb.py --remove                      undo --install
 
 When the tablet is plugged in: the screen stays on while the cable is in, the
-teleprompter opens in the tablet's browser (over the cable, so no Wi-Fi is
-needed), and a window with the tablet's screen opens on the computer, which
+teleprompter opens in the tablet's browser (over Wi-Fi, so a loose cable does
+not stop it; --over-usb uses the cable instead), and a window with the tablet's screen opens on the computer, which
 mouse and keyboard can control. Needs adb and scrcpy, and USB debugging allowed
 once on the tablet. No passwords are stored: the tablet signs in to Plutus itself.
 """
@@ -93,14 +93,24 @@ def adb(*args: str) -> str:
         return ""
 
 
-def set_up(serial: str, mirror: bool) -> "subprocess.Popen | None":
+def on_screen(serial: str) -> str:
+    """The app in front on the tablet."""
+    out = adb("-s", serial, "shell", "dumpsys", "window")
+    line = next((l for l in out.splitlines() if "mCurrentFocus" in l), "")
+    return line.split("/")[0].split()[-1] if "/" in line else ""
+
+
+def set_up(serial: str, mirror: bool, url: str) -> "subprocess.Popen | None":
     adb("-s", serial, "reverse", f"tcp:{PORT}", f"tcp:{PORT}")
     adb("-s", serial, "shell", "svc", "power", "stayon", "usb")
     adb("-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
-    # Straight to Chrome when it is there: otherwise Android may ask which browser to use.
+    # A cable that drops for a moment must not reload the page in the middle of a take.
     chrome = "package:com.android.chrome" in adb("-s", serial, "shell", "pm", "list", "packages", "com.android.chrome")
-    adb("-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW",
-        *(["-p", "com.android.chrome"] if chrome else []), "-d", f"http://localhost:{PORT}/app#/prompter")
+    if not (chrome and on_screen(serial) == "com.android.chrome"):
+        # Straight to Chrome (Android may otherwise ask which browser), reusing the same tab every time.
+        adb("-s", serial, "shell", "am", "start", "-a", "android.intent.action.VIEW",
+            *(["-p", "com.android.chrome"] if chrome else []),
+            "--es", "com.android.browser.application_id", "plutus-prompter", "-d", url)
     if mirror and tool("scrcpy"):
         env = {**os.environ, "ADB": tool("adb")}
         return subprocess.Popen([tool("scrcpy"), "-s", serial, "--stay-awake", "--keyboard=uhid", "--no-audio",
@@ -109,8 +119,10 @@ def set_up(serial: str, mirror: bool) -> "subprocess.Popen | None":
     return None
 
 
-def run(plutus: str, mirror: bool) -> None:
+def run(plutus: str, mirror: bool, over_usb: bool = False) -> None:
     host, _, port = plutus.rpartition(":")
+    # Over Wi-Fi by default: the page keeps working when the cable drops for a moment.
+    url = f"http://localhost:{PORT}/app#/prompter" if over_usb else f"http://{plutus}/app#/prompter"
     server = socket.create_server(("127.0.0.1", PORT))
     threading.Thread(target=serve, args=(server, host, int(port)), daemon=True).start()
     here: dict[str, "subprocess.Popen | None"] = {}
@@ -124,7 +136,7 @@ def run(plutus: str, mirror: bool) -> None:
                 here.pop(serial)
             for serial in ready:
                 if serial not in here:           # once per plug-in: a window you close stays closed
-                    here[serial] = set_up(serial, mirror)
+                    here[serial] = set_up(serial, mirror, url)
             say = (f"tablet connected ({len(here)})" if here else
                    "allow USB debugging on the tablet's screen" if waiting else "no tablet plugged in")
         if say != said:
@@ -133,12 +145,13 @@ def run(plutus: str, mirror: bool) -> None:
         time.sleep(3)
 
 
-def install(plutus: str, mirror: bool) -> None:
+def install(plutus: str, mirror: bool, over_usb: bool = False) -> None:
     HOME_DIR.mkdir(parents=True, exist_ok=True)
     script = HOME_DIR / "tablet_usb.py"
     if Path(__file__).resolve() != script.resolve():
         shutil.copy(__file__, script)
-    args = ["/usr/bin/python3", str(script), "--plutus", plutus] + ([] if mirror else ["--no-window"])
+    args = ["/usr/bin/python3", str(script), "--plutus", plutus] + ([] if mirror else ["--no-window"]) \
+        + (["--over-usb"] if over_usb else [])
     PLIST.parent.mkdir(parents=True, exist_ok=True)
     PLIST.write_bytes(plistlib.dumps({
         "Label": LABEL, "ProgramArguments": args, "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 20,
@@ -153,6 +166,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plutus", default="", help="HOST:PORT of the Plutus dashboard")
     ap.add_argument("--no-window", action="store_true", help="do not show the tablet's screen on the computer")
+    ap.add_argument("--over-usb", action="store_true",
+                    help="load the page through the cable instead of Wi-Fi (no Wi-Fi needed, but a loose cable stops it)")
     ap.add_argument("--install", action="store_true")
     ap.add_argument("--remove", action="store_true")
     a = ap.parse_args()
@@ -163,7 +178,7 @@ def main() -> None:
         return
     if not a.plutus.rpartition(":")[2].isdigit() or not a.plutus.rpartition(":")[0]:
         sys.exit("--plutus HOST:PORT is needed, for example --plutus 10.0.0.5:8766")
-    (install if a.install else run)(a.plutus, not a.no_window)
+    (install if a.install else run)(a.plutus, not a.no_window, a.over_usb)
 
 
 if __name__ == "__main__":

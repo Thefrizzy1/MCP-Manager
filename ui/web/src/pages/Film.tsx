@@ -77,7 +77,10 @@ export function Film() {
       await qc.invalidateQueries({ queryKey: ['prompter'] })
       setJob(`upload:${d.id}`)
       setAt(0)
-      toast.success(d.note || `Added ${d.name}`)
+      // Straight onto the prompter: uploading a script means you are about to read it.
+      await api.post('/api/v1/prompter/command', { cmd: 'load', source: `upload:${d.id}` })
+      setTimeout(() => prompter.refetch(), 400)
+      toast.success(d.note || (screen?.on ? `${d.name} is on the prompter.` : `Added ${d.name}. It shows on the prompter when the tablet opens it.`))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -167,6 +170,12 @@ export function Film() {
           </>
         }
       />
+      {prompter.data && !screen?.on && (
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-[12.5px] text-ink-3">
+          <span className="h-2 w-2 shrink-0 rounded-full bg-warn" />
+          No prompter is listening. Open the teleprompter on the tablet (plug it in, or go to /app#/prompter there).
+        </div>
+      )}
       {screen?.on && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-4 py-2 text-[12.5px] text-ink-2">
           <span className="mr-2 flex min-w-0 items-center gap-2">
