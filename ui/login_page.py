@@ -155,7 +155,11 @@ def render_login_page(*, default_active: bool = False, error: str = "") -> str:
         }}),
       }});
       const data = await res.json().catch(() => ({{}}));
-      if (res.ok) {{ window.location.assign('/app'); return; }}
+      if (res.ok) {{
+        // Back to the page you were sent from (e.g. #/prompter), not always the start page.
+        const h = /^#\\/[\\w-]+(\\?[^#<>"']*)?$/.test(window.location.hash) ? window.location.hash : '';
+        window.location.assign('/app' + h); return;
+      }}
       showError(data.detail || 'Sign in failed. Check your username and password.');
     }} catch (err) {{
       showError('Could not reach the server. Is Plutus running?');
