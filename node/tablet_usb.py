@@ -102,7 +102,11 @@ def on_screen(serial: str) -> str:
 
 def set_up(serial: str, mirror: bool, url: str) -> "subprocess.Popen | None":
     adb("-s", serial, "reverse", f"tcp:{PORT}", f"tcp:{PORT}")
-    adb("-s", serial, "shell", "svc", "power", "stayon", "usb")
+    # On while the cable is in, and a long timeout for when the cable's power drops for a moment.
+    adb("-s", serial, "shell", "settings", "put", "global", "stay_on_while_plugged_in", "7")
+    timeout = adb("-s", serial, "shell", "settings", "get", "system", "screen_off_timeout").strip()
+    if not timeout.isdigit() or int(timeout) < 600000:
+        adb("-s", serial, "shell", "settings", "put", "system", "screen_off_timeout", "600000")
     adb("-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
     # A cable that drops for a moment must not reload the page in the middle of a take.
     chrome = "package:com.android.chrome" in adb("-s", serial, "shell", "pm", "list", "packages", "com.android.chrome")
